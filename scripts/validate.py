@@ -67,7 +67,8 @@ def dependency_boundary(offline, environment, output):
     allowed = {
         "devguard-contract": set(),
         "devguard-core": {"devguard-contract"},
-        "devguard-daemon": {"devguard-contract", "devguard-core"},
+        "devguard-daemon": {"devguard-contract", "devguard-core", "devguard-client"},
+        "devguard-client": {"devguard-contract"},
     }
     if roots != set(allowed):
         raise RuntimeError("unexpected workspace graph; update explicit boundaries with new crates")

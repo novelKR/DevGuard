@@ -1,16 +1,26 @@
 # 구현된 authority 계약
 
-이 문서는 DG-0 authority와 C01 서비스·저장소 경계를 설명한다. 실제 제공 명령은 [운영 문서](operations.md)에 있다. Native launch, OS 정책 적용과 CodeSpace 결합은 아직 구현하지 않았다. [영문 정본](../contracts.md).
+이 문서는 구현된 DG-0 authority와 C01/C02 서비스·저장소·transport 동작을 설명한다. PR과 병합 후 main 전달 증거는 구현과 별도로 추적한다. 실제 제공 명령은 [운영 문서](operations.md)에 있다. Native 등록·launch, OS 정책 적용과 CodeSpace 결합은 아직 구현하지 않았다. [영문 정본](../contracts.md).
 
 ## Authority와 transport 경계
 
-Core는 Rust 라이브러리다. Authority::register는 후속 transport가 OS peer 자격을 관측하여 만든 TrustedPeer를 받고, 설정 UID·소비자 자격·generation·정확한 프로세스 정체성을 Backend로 검증한다. 성공하면 불투명 Principal을 반환하며 workload는 공개 API로 control-service Principal을 만들 수 없다. Workload 소비자는 제어 예약을 설정할 수 없다. 관리 대조와 generation 폐기는 신뢰하는 daemon·운영자 경로의 책임이며 workload RPC로 공개하면 안 된다.
+Core는 Rust 라이브러리다. Authority::register는 TrustedPeer를 받고, 설정 UID·소비자 자격·generation·정확한 프로세스 정체성을 Backend로 검증한다. 성공하면 불투명 Principal을 반환하며 workload는 공개 API로 control-service Principal을 만들 수 없다. Workload 소비자는 제어 예약을 설정할 수 없다. 관리 대조와 generation 폐기는 신뢰하는 daemon·운영자 경로의 책임이며 workload RPC로 공개하면 안 된다.
 
-DG-0는 가짜 peer·backend로 이 라이브러리 경계를 검증한다. UDS 인증·자격 FD 전달·동일 UID 공격자 격리·network client의 구현 증거가 아니다. DG-1은 실제 경계를 제공한 뒤에만 운영 서비스로 표시해야 한다.
+DG-0는 가짜 peer·backend로 라이브러리 등록 경계를 검증한다. C02는 실제 로컬 UDS 인증과 작은 client를 제공하지만 native 등록은 활성화하지 않는다. 서버는 OS socket 자격으로 peer UID/PID를 관측하고, client는 handshake의 authority UID/PID와 자기 정체성을 독립적으로 대조한다. 호출자가 선언한 peer 정체성을 신뢰하지 않는다. Daemon이 완전한 등록 관측을 구성하려면 C03의 boot/start 정체성이 추가로 필요하다. 인증만으로 Principal·instance 슬롯·lease·호스트 예산을 발급하지 않는다. 현재 workload/control-service 등록은 ResourceControlUnavailable을 반환하고 관리 자격으로는 등록할 수 없다.
 
-Authority는 journal 부모 디렉터리에 no-follow 배타 잠금을 보유한다. 같은 디렉터리의 모든 journal은 그 잠금을 공유한다. C01은 caller HOME·XDG가 아니라 OS 계정으로 정상 경로를 결정하고 state·socket override를 거절한다. 프로젝트 설정에는 authority 자격이나 호스트 용량을 둘 수 없다. 운영 후보 경로는 C10의 부모 lease 경계가 제공될 때까지 사용할 수 없다.
+Handshake는 contract 호환성과 wire version 1을 확인하며 C02는 runtime capability를 광고하지 않는다. Consumer generation과 자격 digest가 workload/control-service 역할을 결정하며 별도 관리 digest는 명시적으로 공개한 관리 역할에만 사용한다. 모든 consumer·관리 digest는 서로 달라야 한다. Caller 자격, 후속 일회성 helper permit과 관리 작업은 별도 경계이며 helper 자격 variant를 caller 인증으로 받지 않는다. 이는 협조적인 운영 계정 모델이며 악의적인 동일 UID 프로세스를 격리하지 않는다.
+
+Authority는 journal 부모 디렉터리에 no-follow 배타 잠금을 보유한다. 같은 디렉터리의 모든 journal은 그 잠금을 공유한다. 잠금은 O_NONBLOCK으로 열고 열린 descriptor가 현재 UID 소유의 private 일반 파일이며 링크가 정확히 하나인지 명시 초기화 때도 확인한다. FIFO·링크된 파일은 잠금 대신 사용할 수 없다. C01은 caller HOME·XDG가 아니라 OS 계정으로 정상 경로를 결정하고 state·socket override를 거절한다. 프로젝트 설정에는 authority 자격이나 호스트 용량을 둘 수 없다. 운영 후보 경로는 C10의 부모 lease 경계가 제공될 때까지 사용할 수 없다.
 
 AuthorityStorage는 boot clock을 만들거나 attempt를 복구하거나 capability를 부여하지 않고 journal의 배타 열기·검사만 수행한다. Authority::from_storage는 실제 Backend·Clock으로 활성화하며 복구 transaction 안에서 회계 인덱스를 다시 검증한다. 기존 Authority::open도 같은 경로로 기존 복구 동작을 유지한다. 명시 bootstrap과 일반 open은 별개이며 누락·손상·미래 schema를 자동 수리하지 않는다.
+
+## 제한된 로컬 protocol과 자격 전달
+
+Frame은 4-byte 길이와 최대 64 KiB JSON payload로 구성한다. Frame·message variant·중첩 wire type은 알 수 없는 필드를 거절하고 version·request identity·필수 capability는 따로 확인한다. 필드 추가를 자동 하위 호환으로 취급하지 않는다. 서버의 활성 session worker는 최대 32개다. 각 frame read/write의 절대 기한은 250 ms이며 다음 frame을 기다리는 idle 시간도 포함한다. Byte를 더 받아도 기한은 연장하지 않고 idle 기한을 넘긴 세션은 닫는다. 이 transport 경계가 후속 end-to-end admission 예산이나 C12 응답성 qualification을 입증하지는 않는다.
+
+Framing은 poll·descriptor O_NONBLOCK·호출별 nonblocking socket I/O를 사용한다. Darwin에서는 호출별 flag만으로 큰 write가 제한되지 않을 수 있으므로 descriptor nonblocking도 적용한다. Peer 종료 후 Darwin timeout 옵션 변경이 EINVAL로 실패할 수 있어 옵션을 바꾸지 않고 버퍼에 남은 마지막 데이터를 읽는다. 잘못되거나 잘린 응답, 만료·통신 장애에서 실행이나 회수를 추정하지 않는다. Client는 자동 재시도나 비관리 authority·실행 fallback을 하지 않는다.
+
+CredentialHandoff는 전용 상속 descriptor로 caller secret 하나를 전달하고 부모의 복사본에는 close-on-exec을 유지한다. take_inherited/read_owned는 제한된 길이와 250 ms 읽기 기한을 적용하며 성공·실패 모두 receiver descriptor를 소비하고 닫는다. Secret은 로컬 인증 교환을 위해 명시 직렬화하고 debug·파서 오류에서는 정제한다. Subprocess 시험은 후속 exec 전에 FD가 닫히고 argv·환경·출력에 secret이 없음을 관측한다. 이는 transport 위생 검증이며 C05 helper 권한·READY·사용자 프로그램 시작·격리의 qualification이 아니다.
 
 ## 내구성 admission과 launch
 
@@ -44,7 +54,7 @@ Journal은 instance의 등록 정책을 기록한다. Active/suspect instance가
 
 ## 후속 마일스톤의 책임
 
-- 남은 DG-1: host probe, 실제 UDS 자격·framing, helper, 실행 CLI, Cargo, bounded 자기 적용, update·repair, 측정한 macOS SLO.
+- 남은 DG-1: native boot/start 정체성과 등록, host probe, 자원 정책 적용, helper, 실행 CLI, Cargo, bounded 자기 적용, update·repair, 측정한 macOS SLO.
 - CS-RG: Runner 슬롯·전송 lane, 승인 migration, client pin, 상태 결합과 회귀 qualification.
 - DG-LINUX: 실제 cgroup 계층·controller·ancestor와 sandbox·proxy 포함.
 - DG-CACHE·DG-ADAPTERS: 등록 cache 회수와 추가 도구 제어.

@@ -2,7 +2,7 @@
 
 [English](../operations.md) | [한국어](operations.md)
 
-DG1-C01은 명시적 bootstrap, 고정 운영 경로, 설정·저장소 검사를 제공한다. 실제 실행은 아직 닫혀 있다. native 호스트 관측, 인증 transport, launch·대조는 별도 구현 단위다. 정상 authority는 현재 macOS만 지원하며 Linux CI는 이식 가능한 계약과 제한된 fixture를 검사한다. DG-LINUX 자격을 부여하지 않는다.
+C01은 명시 bootstrap·고정 저장소를, C02는 인증된 로컬 transport를 제공한다. PR과 병합 후 main 전달 증거는 구현과 별도로 추적한다. devguardd serve는 foreground 서비스를 실행하지만 native 등록·Principal·자원 lease·실행은 P2/P3의 실제 호스트 정체성·probe·launch·대조가 제공될 때까지 닫혀 있다. 정상 authority는 현재 macOS만 지원하며 Linux CI는 이식 가능한 계약과 제한된 fixture를 검사한다. DG-LINUX 제어 자격을 부여하지 않는다.
 
 ## 제공 명령
 
@@ -13,11 +13,14 @@ CARGO_BUILD_JOBS=1 cargo build --locked -p devguard-daemon
 target/debug/devguardd paths
 target/debug/devguardd init
 target/debug/devguardd check
+target/debug/devguardd serve
 ```
 
 `paths`는 운영 계정의 경로를 조회한다. `init`은 최초 bootstrap에만 쓰며 새 journal, 운영자 설정, 분리된 CLI·관리 자격을 생성한다. 기존 상태는 거절하고 덮어쓰지 않는다. `check`는 저장소 배타 소유권과 설정·journal을 검사하며 `runtime_ready: false`를 보고한다. 가짜 boot clock을 만들거나 복구·적용 완료를 주장하지 않는다. 다른 소유자가 잠금을 보유하면 두 번째 authority를 얻을 수 없다.
 
-`serve`, 일반 명령 실행, 설치, LaunchAgent와 repair는 후속 작업에서 제공한다. 설정만으로 명령이 관리되지는 않으며 필수 bootstrap 빌드는 자기 적용 증거가 아니다.
+`serve`는 기존 journal을 검증하여 열고 배타 소유권을 얻은 뒤 정상 private UDS endpoint를 연다. Ctrl-C나 SIGTERM으로 foreground 프로세스를 중지한다. 종료는 세션과 자기 socket inode만 정리하며 journal·lock·자격은 보존한다. 남은 socket은 배타 authority lock을 얻고 연결 시도가 명시적인 connection refused를 반환하며 inode가 그대로일 때만 제거한다. 살아 있거나 busy이거나 관측할 수 없는 endpoint는 지우지 않는다.
+
+인증된 status는 storage_validated: true, registration_ready: false, execution_ready: false, 이유와 설정 fingerprint를 보고한다. 일반 실행·설치·LaunchAgent·repair는 후속 작업이다. 설정이나 handshake 성공만으로 명령이 관리되지는 않으며 bootstrap 빌드는 자기 적용 증거가 아니다. 영속 서비스는 제거 가능한 target 경로를 사용하지 않는다. 보호된 설치는 C09의 범위다.
 
 ## 정상 소유권과 경로
 
@@ -29,18 +32,22 @@ target/debug/devguardd check
 | 영속 원장 | `~/Library/Application Support/DevGuard/state/authority.sqlite` |
 | 영속 배타 잠금 | `~/Library/Application Support/DevGuard/state/authority.lock` |
 | 등록·관리 자격 | `~/Library/Application Support/DevGuard/credentials/` 아래 별도 파일 |
-| runtime endpoint | `/private/tmp/devguard-<uid>/authority.sock` (C02에서 transport 제공) |
+| runtime endpoint | `/private/tmp/devguard-<uid>/authority.sock` |
 | 후속 cache | `~/Library/Caches/DevGuard/` |
 
 DevGuard 디렉터리는 0700, 파일은 0600이며 소유자·종류·symlink를 검사한다. 부모 경로 이동, 안전하지 않은 상위 디렉터리, 링크된 private 파일과 공유 권한은 거절하고 사용자 경로를 자동 chmod하지 않는다. 공유 sticky tmp는 private runtime 디렉터리의 상위 경로로만 허용한다. journal·lock은 tmp 밖에 둔다.
+
+잠금은 O_NONBLOCK으로 열고 열린 descriptor의 metadata로 현재 UID 소유·private 일반 파일·링크 하나를 명시 초기화 때도 확인한다. FIFO·hard-link fixture는 blocking이나 authority 소유권 획득 없이 실패해야 한다.
 
 일반 시작에는 기존 영속 디렉터리·journal·lock이 필요하다. 누락·손상·미지원 상태를 자동 초기화하지 않는다. 명시 bootstrap의 부분 실패는 진단과 명시 repair를 위해 보존한다. init 재실행은 repair가 아니다. 시작을 통과시키려고 활성 lock·journal·자격·복구 artifact를 제거하지 않는다.
 
 ## 설정 권한
 
-운영자 파일은 크기가 제한된 UTF-8 TOML schema 1이며 알 수 없는 필드를 거절한다. 정책 revision, interactive profile, 소비자의 generation·자격 digest·역할·최대 인스턴스·정적 제어 예약과 프로젝트 root를 정의한다. 평문 자격은 별도 private 파일에만 둔다. 관리와 등록 자격은 달라야 하며 workload 역할은 제어 예약을 부여할 수 없다. 파서 오류에 설정 원문이나 자격을 출력하지 않는다.
+운영자 파일은 크기가 제한된 UTF-8 TOML schema 1이며 알 수 없는 필드를 거절한다. 정책 revision, interactive profile, 소비자의 generation·자격 digest·역할·최대 인스턴스·정적 제어 예약과 프로젝트 root를 정의한다. 평문 자격은 별도 private 파일에만 둔다. 모든 consumer·관리 자격 digest는 서로 달라야 하며 workload 역할은 제어 예약을 부여할 수 없다. 파서 오류에 설정 원문이나 자격을 출력하지 않는다.
 
-최초 `dev-cli`는 인스턴스 8개를 허용하고 인스턴스마다 제어 예약을 추가하지 않는다. 승인된 CLI 관제 풀은 실제 회계가 제공될 때 중앙에서 한 번 계산한다. task 설정의 초기값은 용량 256, 호스트 여유 64, 시스템 예약 16의 **회계 추정치**다. 운영자가 설정하는 상한이며 macOS kernel 제한이나 측정된 충분성이 아니다. C12에서 선택한 값을 기록·검증해야 한다. CPU·메모리의 여유분과 제어 기본값은 승인 설계를 유지하고 C03에서 실제 용량을 사용한다. 추가 여유분은 용량을 줄일 수만 있다.
+최초 `dev-cli`는 인스턴스 8개를 허용하고 인스턴스마다 제어 예약을 추가하지 않는다. 승인된 CLI 관제 풀은 실제 회계가 제공될 때 중앙에서 한 번 계산한다. task 설정의 초기값은 용량 256, 호스트 여유 64, 시스템 예약 48의 **회계 추정치**다. system_tasks는 제한된 session worker 32개와 서비스·관제 여유 task 16개를 포함하여 최소 48이어야 한다. 운영자가 설정하는 상한이며 macOS kernel 제한이나 측정된 충분성이 아니다. C12에서 선택한 값을 기록·검증해야 한다. CPU·메모리의 여유분과 제어 기본값은 승인 설계를 유지하고 C03에서 실제 용량을 사용한다. 추가 여유분은 용량을 줄일 수만 있다.
+
+이전 system_tasks = 16 기본값을 사용하는 C01 설정은 C02에서 거절한다. 설정 schema는 1을 유지하며 이는 더 엄격한 의미 검증이지 자동 호환성이나 migration이 아니다. C02 시작 전에 운영자는 전체 task 용량·여유분·모든 예약을 검토하고 해당 용량 안에서 system_tasks >= 48을 명시 선택해야 한다. 기존 journal·자격을 보존한다. 검증을 통과시키려고 init을 다시 실행하거나 호스트 용량을 자동 확대하거나 live 예약을 줄이면 안 된다.
 
 프로젝트 `.devguard.toml`은 schema, project ID, profile, adapter와 더 낮은 Budget 상한(cpu_milli, memory_bytes, tasks)만 가진다. 자격·역할·별도 authority·소비자 사칭·호스트 용량은 지정할 수 없다. 프로젝트 상한은 운영자 상한에 들어가야 하며 미지원 필드·adapter·버전은 거절한다. 프로젝트별 설정은 authority core에 들어가지 않는다.
 
@@ -58,15 +65,26 @@ tasks = 32
 
 이 예시는 실행이 이미 lease를 소비한다는 증거가 아니다. 후속 CLI 도입 전에 실제 절대 프로젝트 root를 운영자 설정에 등록한다. 프로젝트나 자격은 추가 호스트 예산을 만들지 않는다.
 
+## Client 인증과 transport 제한
+
+Client library는 정상 endpoint에 연결하고 OS가 관측한 authority UID/PID를 확인하며 wire version 1과 handshake의 자기 UID/PID를 대조한다. Consumer ID·generation·secret으로 설정된 workload/control-service 역할을 인증하고 별도 secret으로 관리 역할을 인증한다. UID 일치만으로 역할을 얻지 않는다. Helper permit은 caller 자격으로 사용할 수 없고 동일 UID의 악의적인 프로세스를 격리하지 않는다.
+
+Wire는 4-byte 길이, JSON payload 최대 64 KiB, 활성 세션 최대 32개와 frame read/write마다 절대 250 ms 기한을 사용한다. 다음 frame을 기다리는 idle 시간도 포함하므로 idle 연결은 만료된다. 나중에 별도 작업을 명시적으로 시작할 때 새 인증 세션을 사용한다. Client가 자동으로 재접속하거나 재시도하지는 않는다. Poll·nonblocking descriptor I/O는 부분 frame·느린 reader·마지막 응답 버퍼를 처리하고 peer 종료 뒤 Darwin timeout 옵션을 바꾸지 않는다. 응답 유실로 실행·미실행·자원 회수를 입증했다고 판단하지 않는다.
+
+Private-FD API는 시작 metadata에 descriptor 식별자만 전달한다. Receiver는 이후 exec 전에 자격 FD를 소비하고 닫으며 실제 subprocess로 이 경계를 시험한다. Secret을 argv·환경·debug·payload 상속 descriptor에 두면 안 된다. 이 시험은 C05 helper 권한이나 사용자 프로그램 시작의 증거가 아니다. OS UID/PID 관측은 현재 제공하지만 native boot/start 정체성과 instance 등록은 C03이 필요하다. C02의 인증 caller는 Principal·lease·실행 권한을 받을 수 없다.
+
+SDK 조회 예제는 CARGO_BUILD_JOBS=1 cargo build --locked -p devguard-client --example inspect로 빌드한다. 인터페이스는 inspect SOCKET UID CONSUMER GENERATION CREDENTIAL_FD다. 부모가 전용 상속 FD로 secret byte를 제공해야 하며 인자는 FD 번호와 비밀이 아닌 연결 metadata만 전달한다. 관측 peer와 인증된 status를 출력하는 예제이며 후속 일반 실행 CLI는 아니다.
+
 ## 호환성·검사·복귀
 
-Core의 AuthorityStorage는 기존 배타 잠금을 보유하고 schema 1 journal을 검사하되 attempt 상태를 바꾸지 않는다. 실제 Backend·Clock으로 활성화할 때 boot 기반 복구와 같은 transaction 안에서 회계를 다시 검증한다. 기존 Authority::open의 복구 동작과 DG-0 시험을 유지하며 C01은 journal·contract wire 형식을 바꾸지 않는다.
+Core의 AuthorityStorage는 기존 배타 잠금을 보유하고 schema 1 journal을 검사하되 attempt 상태를 바꾸지 않는다. 실제 Backend·Clock으로 활성화할 때 boot 기반 복구와 같은 transaction 안에서 회계를 다시 검증한다. 기존 Authority::open의 복구 동작과 DG-0 시험을 유지하며 C01/C02는 journal·기존 contract 직렬화 형식을 바꾸지 않는다. 새 로컬 protocol은 미지 필드·버전·필수 capability 미지원을 엄격히 거절하며 필드 추가도 명시적 호환성 시험이 필요하다.
 
 ```sh
 python3 scripts/qualify.py dg1-authority --offline
+python3 scripts/qualify.py dg1-auth --offline
 python3 scripts/validate.py --offline
 ```
 
-기능 suite는 0개 실행을 실패로 처리하고 source fingerprint·toolchain·bootstrap 모드·로그를 남긴다. 배타 시작, 경로 별칭·권한, 누락·손상·미래 journal, 활성화 사이의 회계 손상, 엄격한 설정 버전, 프로젝트 권한 상승과 동시 bootstrap을 검사한다. Native launch·Linux 강제·자기 적용·foreground SLO는 not_run이다. 전체 검증은 기존 44개 시험을 유지하고 daemon/TOML 계층의 명시적 의존 그래프를 추가한다. Core·contract는 서비스·설정 의존성과 독립적이다.
+기능 suite는 0개 실행을 실패로 처리하고 source fingerprint·toolchain·bootstrap 모드·로그를 남긴다. dg1-authority는 배타 시작, 경로 별칭·권한, 누락·손상·미래 journal, 활성화 사이의 회계 손상, 엄격한 설정 버전, 프로젝트 권한 상승과 동시 bootstrap을 검사한다. dg1-auth는 실제 peer 관측·인증 역할·엄격한 frame·제한된 통신·private FD 위생과 등록이 닫힌 상태의 동시 요청을 검사한다. Native 등록·launch·Linux 강제·자기 적용·foreground SLO는 not_run이다. 전체 검증은 기존 44개 시험과 workspace crate 4개의 명시적 전체 의존 그래프를 검사한다. Core·contract는 daemon 설정과 독립적이며 client는 core에 의존하지 않는다.
 
-복귀할 때 작업 소유 foreground 프로세스를 중지하고 호환되는 이전 source/artifact를 선택하며 영속 상태·자격을 보존한다. C01을 통해 시작한 workload는 없다. 후속 live lease의 복귀에는 실제 대조가 필요하므로 이 초기 빈 상태 가정을 재사용할 수 없다.
+복귀할 때 작업 소유 foreground 프로세스를 중지하고 보존한 설정과 schema 1 journal에 호환되는 source/artifact를 선택하며 영속 상태·자격을 유지한다. C01/C02를 통해 시작한 workload는 없다. 후속 live lease의 복귀에는 실제 대조가 필요하므로 이 초기 빈 상태 가정을 재사용할 수 없다.

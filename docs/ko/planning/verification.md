@@ -8,7 +8,7 @@
 | --- | --- | --- | --- |
 | V-DOC-DG | 이번 DevGuard 문서/메타데이터 | checksum·license·ID·DAG·링크·46작업/23묶음·필수 항목·상태 보존 | 문서 검토 및 아래 재현 검사 가능 |
 | V-DG0 | contract/core, DevGuard | Rust1.95.0 fmt/clippy·44개 계약·의존 graph·source fingerprint | 기존 validator 제공 |
-| V-DG1-FUNCTION | 실제 auth/probe/launch/reconcile/CLI | DG1-C01~C11 정상·실패·경쟁 및 기준 artifact | 미구현; DG1 각 작업에서 suite 제공 |
+| V-DG1-FUNCTION | 실제 auth/probe/launch/reconcile/CLI/운영 | DG1-C01~C11 정상·실패·경쟁 및 기능 artifact | C01 authority·C02 로컬 인증/transport 제공; 후속 범위는 각 묶음에서 제공 |
 | V-DG1-SLO | 독립 CLI/daemon·개발·self-use | DG1-C12 개발/foreground 및 standalone control 측정 | 미구현; CS-RG 기능을 선행 요구하지 않음 |
 | V-CS-DOC | CodeSpace 한·영 registry/site | paired hash·기존 docs tests·고정 환경 build·integrity·화면 검토 | 기존 명령 제공 |
 | V-CS-UPSTREAM | CodeSpace 기존 Codex qualification | pin/policy/format/dependency/adapter/PTY/filesystem/platform gates | 기존 제공, 실제 platform별 수행 |
@@ -24,7 +24,10 @@
 DevGuard root, Rust **1.95.0**(rustfmt/Clippy 포함), Python 3.11 이상:
 
 ```sh
+python3 scripts/check_docs.py
 python3 scripts/validate.py --offline
+python3 scripts/qualify.py dg1-authority --offline
+python3 scripts/qualify.py dg1-auth --offline
 git diff --check
 ```
 
@@ -66,7 +69,11 @@ V-DOC-DG는 scripts/check_docs.py와 수동 의미 검토로 영어/한국어 ha
 
 ## 향후 suite와 장애 주입 계약
 
-`scripts/qualify.py dg1-authority --offline`은 C01 설정·저장소를 현재 검증한다. 그 밖의 DevGuard suite와 CodeSpace `scripts/qualify-devguard.py`는 해당 작업에서 제공할 **예정 인터페이스**다. 각 구현 PR이 실제 CLI·case inventory·nonzero case assertion·timeout·log 수집·격리 cleanup을 구현하고 문서의 명령을 최종 형태로 고정해야 한다.
+scripts/qualify.py dg1-authority --offline은 C01 설정·저장소, scripts/qualify.py dg1-auth --offline은 C02 인증·transport 검증을 제공한다. 그 밖의 DevGuard suite와 CodeSpace scripts/qualify-devguard.py는 해당 작업에서 제공할 예정 인터페이스다. 각 구현 PR이 실제 CLI·case inventory·nonzero case assertion·timeout·log 수집·격리 cleanup을 구현하고 제공 명령을 갱신해야 한다. macOS/Ubuntu CI는 전체 validator를 유지하며 두 기능 suite도 실행하고 각각의 report·log를 보존한다.
+
+C02 증거는 양쪽 실제 OS socket UID/PID 관측, 분리된 consumer·관리 자격, helper-role 인증 거절, 현재·미래 wire fixture의 엄격한 decoding, 64 KiB frame, 세션 32개 제한, idle 대기를 포함한 frame별 절대 250 ms 기한, 부분·느린·마지막 응답과 private 자격 FD 전달을 포함한다. 전용 subprocess helper는 후속 exec 전 FD 닫기를 관측하고 argv·환경·debug·출력의 secret 누출을 확인한다. Parent test가 helper를 실행하며 별도의 ignored test를 독립 qualification 성공으로 세지 않는다. 0개가 아닌 parent case 수와 프로세스 정리를 함께 기록한다.
+
+Framing은 poll·descriptor O_NONBLOCK·호출별 nonblocking I/O로 Darwin timeout 옵션 변경 없이 peer 종료 뒤 버퍼 데이터를 보존한다. 느린 writer와 느린 reader를 모두 시험한다. 인증과 닫힌 등록 응답은 boot/start 정체성, native 등록/Principal, lease, OS 정책, helper 권한·launch를 입증하지 않으며 해당 범위는 P2/P3까지 미검증이다. system_tasks >= 48도 검증된 회계 추정치이지 kernel task 제한이나 측정된 충분성이 아니다. 같은 schema 1에서 이전 값 16을 거절하는 시험을 명시하며 자동 migration을 의미하지 않는다.
 
 | 시험 영역 | 주입 지점/반드시 보존할 불변 조건 | 담당 작업 |
 | --- | --- | --- |

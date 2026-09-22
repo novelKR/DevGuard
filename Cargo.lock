@@ -71,6 +71,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "devguard-client"
+version = "0.1.0"
+dependencies = [
+ "devguard-contract",
+ "libc",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "devguard-contract"
 version = "0.1.0"
 dependencies = [
@@ -96,6 +107,7 @@ dependencies = [
 name = "devguard-daemon"
 version = "0.1.0"
 dependencies = [
+ "devguard-client",
  "devguard-contract",
  "devguard-core",
  "libc",

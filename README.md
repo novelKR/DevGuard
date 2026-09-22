@@ -2,7 +2,7 @@
 
 DevGuard centralizes resource admission for development workloads while preserving the resources needed to inspect and stop them.
 
-The repository implements **DG-0 contracts and a durable authority core**, with DG-1 now in progress. C01 adds canonical service paths, explicit bootstrap and configuration/storage checks. Execution remains closed: user-command launch, macOS resource policies and Linux cgroups are not yet available. Use the operating guide for actual command availability; the design also contains future interfaces.
+The repository implements **DG-0 contracts and a durable authority core**, with DG-1 now in progress. C01 supplies canonical paths/bootstrap/storage checks; C02 supplies authenticated, bounded local communication with a small client and private credential-FD transfer. PR and post-merge main delivery evidence is tracked separately from implementation. Native registration, principals, leases and execution remain closed until the required native evidence and launch work in P2/P3; macOS resource policies and Linux cgroups are not yet available. Use the operating guide for actual command availability; the design also contains future interfaces.
 
 - [Authoritative design reference](docs/design.md) · [Korean translation](docs/ko/design.md)
 - [Historical approved design (Korean, immutable)](docs/design.ko.md)
@@ -12,17 +12,19 @@ The repository implements **DG-0 contracts and a durable authority core**, with 
 - [Detailed execution plans, adoption gates and PR delivery](docs/planning/README.md)
 - [Machine-readable milestone state](milestones.json)
 
-## Validate DG-0
+## Validate the current implementation
 
 Use Rust **1.95.0**, including rustfmt and Clippy, and Python 3.11 or newer. A rustup installation honors `rust-toolchain.toml`. A standalone toolchain can be placed first in `PATH`. The validator checks the compiler it actually executes.
 
 ```sh
 python3 scripts/validate.py --offline
+python3 scripts/qualify.py dg1-authority --offline
+python3 scripts/qualify.py dg1-auth --offline
 ```
 
 Omit `--offline` when the locked crates have not been downloaded. Builds and tests use one Cargo job and one test thread by default. Results, source fingerprints and logs are written under `target/qualification/`. A newer compiler can be used with `--allow-toolchain-mismatch` for a supplemental check, which never counts as qualification for 1.95.0.
 
-DG-0 tests use an explicitly fake OS backend. A passing report establishes the tested accounting, persistence and state-transition contracts. macOS launch, Linux enforcement, browser responsiveness and self-governed execution remain `not_run`.
+DG-0 tests use an explicitly fake OS backend. Their passing reports establish accounting, persistence and state-transition contracts. The additional C01/C02 suites check actual local storage, peer observations and credential transport within bounded fixtures. They do not qualify native registration or launch, Linux enforcement, browser responsiveness or self-governed execution; these remain `not_run`.
 
 ## Repository boundaries
 
@@ -30,7 +32,9 @@ DG-0 tests use an explicitly fake OS backend. A passing report establishes the t
 
 The approved local checkout is `/Volumes/DevData/Projects/IdeaProjects/DevGuard`. Existing `.codex` settings are preserved locally and ignored by Git. Build output, journals, qualification evidence and local toolchains are also ignored. The approved design is preserved byte-for-byte; its checksum is recorded in `docs/design-source.json`.
 
-The public source repository is [novelKR/DevGuard](https://github.com/novelKR/DevGuard). CodeSpace runtime consumption begins at CS-RG after DG-1 qualification. The foundation does not publish crates or install a running host service.
+`devguard-daemon` provides the canonical configuration/storage boundary and foreground `devguardd serve`. `devguard-client` supplies versioned UDS communication and private credential handoff without depending on the authority core. Successful authentication is not an instance registration or a workload lease, and does not isolate malicious processes sharing the operating UID.
+
+The public source repository is [novelKR/DevGuard](https://github.com/novelKR/DevGuard). CodeSpace runtime consumption begins at CS-RG after DG-1 qualification. Crates are not published, and no installer or LaunchAgent is available yet.
 
 The detailed plan defines 46 proposed implementation commit units in 23 logical PR groups. It records single registration by the execution-owning Runner and opt-in Gateway restart recovery while an independent Runner remains alive. Planning completion does not change runtime milestone status. See the [consumer readiness gates](docs/planning/consumer-readiness.md), [CodeSpace mapping](docs/planning/codespace-integration.md), and [verification and evidence rules](docs/planning/verification.md).
 

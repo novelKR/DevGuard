@@ -21,6 +21,13 @@ SUITES = {
         ("configuration", ["-p", "devguard-daemon", "--lib", "config::tests"]),
         ("entrypoint", ["-p", "devguard-daemon", "--test", "entrypoint"]),
     ],
+    "dg1-auth": [
+        ("framing", ["-p", "devguard-client", "--lib"]),
+        ("credential-fd", ["-p", "devguard-client", "--test", "credentials"]),
+        ("native-peer", ["-p", "devguard-client", "--test", "native_peer"]),
+        ("wire-compatibility", ["-p", "devguard-client", "--test", "wire_compatibility"]),
+        ("service", ["-p", "devguard-daemon", "--lib", "server::tests"]),
+    ],
 }
 
 
@@ -37,7 +44,7 @@ def main():
     output.mkdir(parents=True,exist_ok=False)
     report={"schema":"devguard-functional-qualification/v1","suite":args.suite,"run_id":run_id,
             "status":"failed","execution_mode":"bootstrap-functional-tests","self_governed":False,
-            "scope":"canonical configuration, ownership and storage; no native resource-control or SLO qualification",
+            "scope":("canonical configuration, ownership and storage" if args.suite == "dg1-authority" else "native UDS peer/credential transport and closed readiness") + "; no native resource-control or SLO qualification",
             "runtime_qualification":{"macos_launch":"not_run","linux_cgroups":"not_run","foreground_slo":"not_run","candidate_self_use":"not_run"},"stages":[]}
     environment=os.environ.copy()
     environment.update(CARGO_BUILD_JOBS="1",RUST_TEST_THREADS="1")

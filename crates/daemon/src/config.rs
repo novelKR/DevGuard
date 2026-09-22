@@ -2,7 +2,7 @@ use crate::paths::{read_private, write_new_private, AuthorityPaths};
 use devguard_contract::{validate_digest, validate_id, Budget, Error, ErrorCode, Result, Secret};
 use devguard_core::{AuthorityStorage, ConsumerRole};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use uuid::Uuid;
 
@@ -76,6 +76,11 @@ impl HostConfig {
         }
         validate_id(&self.policy_revision)?;
         validate_digest(&self.admin_credential_sha256)?;
+        if self.system_tasks < devguard_client::protocol::MAX_SESSIONS as u64 + 16 {
+            return Err(invalid(
+                "system task accounting must cover bounded sessions and CLI control",
+            ));
+        }
         if self.task_capacity == 0
             || self
                 .task_headroom
@@ -90,6 +95,7 @@ impl HostConfig {
             return Err(invalid("configuration inventory exceeds supported bounds"));
         }
         let mut reservations = Budget::ZERO;
+        let mut credentials = BTreeSet::from([self.admin_credential_sha256.clone()]);
         for (id, consumer) in &self.consumers {
             validate_id(id)?;
             validate_id(&consumer.generation)?;
@@ -97,9 +103,9 @@ impl HostConfig {
             if consumer.max_instances == 0 || consumer.max_instances > 64 {
                 return Err(invalid("consumer instance count must be 1..64"));
             }
-            if consumer.credential_sha256 == self.admin_credential_sha256 {
+            if !credentials.insert(consumer.credential_sha256.clone()) {
                 return Err(invalid(
-                    "administrative and registration credentials must differ",
+                    "credentials must differ across administration and consumers",
                 ));
             }
             match consumer.role {
@@ -225,7 +231,7 @@ pub fn initialize(paths: &AuthorityPaths) -> Result<HostConfig> {
         admin_credential_sha256: admin.digest(),
         task_capacity: 256,
         task_headroom: 64,
-        system_tasks: 16,
+        system_tasks: 48,
         additional_headroom: Budget::ZERO,
         consumers: BTreeMap::from([(
             "dev-cli".into(),
@@ -347,6 +353,75 @@ mod tests {
         assert_eq!(results.iter().filter(|r| r.is_ok()).count(), 1);
         HostConfig::load(&paths).unwrap();
         paths.validate_existing().unwrap();
+    }
+
+    #[test]
+    fn authority_configuration_rejects_prior_insufficient_session_reserves() {
+        let (_dir, paths) = fixture();
+        let config = initialize(&paths).unwrap();
+        assert_eq!(config.system_tasks, 48);
+        for system_tasks in [16, 47] {
+            let mut prior = config.clone();
+            prior.system_tasks = system_tasks;
+            let encoded = toml::to_string_pretty(&prior).unwrap();
+            assert_eq!(
+                HostConfig::parse(encoded.as_bytes()).unwrap_err().code,
+                ErrorCode::InvalidRequest,
+                "configuration with reserve {system_tasks} was accepted"
+            );
+        }
+        for system_tasks in [48, 49] {
+            let mut sufficient = config.clone();
+            sufficient.system_tasks = system_tasks;
+            let encoded = toml::to_string_pretty(&sufficient).unwrap();
+            assert_eq!(
+                HostConfig::parse(encoded.as_bytes()).unwrap().system_tasks,
+                system_tasks
+            );
+        }
+    }
+
+    #[test]
+    fn authority_configuration_requires_distinct_admin_and_consumer_credentials() {
+        let (_dir, paths) = fixture();
+        let config = initialize(&paths).unwrap();
+        let mut control = config.consumers["dev-cli"].clone();
+        control.generation = "independent-generation".into();
+        control.role = ConsumerRole::ControlService;
+        control.control_reservation = Budget {
+            cpu_milli: 100,
+            memory_bytes: 64 * 1024 * 1024,
+            tasks: 4,
+        };
+        let mut duplicated = config.clone();
+        duplicated
+            .consumers
+            .insert("control-service".into(), control.clone());
+        assert_eq!(
+            duplicated.validate().unwrap_err().code,
+            ErrorCode::InvalidRequest
+        );
+
+        control.credential_sha256 = config.admin_credential_sha256.clone();
+        duplicated
+            .consumers
+            .insert("control-service".into(), control.clone());
+        assert_eq!(
+            duplicated.validate().unwrap_err().code,
+            ErrorCode::InvalidRequest
+        );
+
+        control.credential_sha256 = new_secret().unwrap().digest();
+        let mut distinct = config;
+        distinct.consumers.insert("control-service".into(), control);
+        let encoded = toml::to_string_pretty(&distinct).unwrap();
+        assert_eq!(
+            HostConfig::parse(encoded.as_bytes())
+                .unwrap()
+                .consumers
+                .len(),
+            2
+        );
     }
 
     #[test]

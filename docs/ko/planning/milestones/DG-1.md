@@ -1,10 +1,10 @@
 # DG-1 — macOS 개발 적용과 자기 적용
 
-소유 저장소: DevGuard. 상태: `not-started` / qualification `not-run`. 진입: DG-0 정확한 source의 계약 검증. 종료: 실제 macOS 실행·회수, generic/Cargo 소비, 상위 예산 안의 후보 시험, 독립 복구, 개발·foreground SLO를 통과한 artifact/정책/환경 조합 확보.
+소유 저장소: DevGuard. 현재 구현 상태: `in-progress` / qualification `not-run`. 진입: DG-0 정확한 source의 계약 검증. 종료: 실제 macOS 실행·회수, generic/Cargo 소비, 상위 예산 안의 후보 시험, 독립 복구, 개발·foreground SLO를 통과한 artifact/정책/환경 조합 확보.
 
-아래 ID·제목·PR 묶음은 **예정 값**이다. 실제 SHA나 GitHub PR 번호가 아니다. `crates/daemon`, `crates/client`, `crates/launcher`, `crates/platform-macos`, `crates/cli`, `crates/adapters`는 책임을 나타내는 **예정 경로**이며 현재 존재하지 않는다. crate 추가는 해당 PR에서 `scripts/validate.py`의 두-root allowlist와 전체 의존 그래프 검증을 함께 확장한다. 검사를 제거하지 않는다.
+아래 ID·제목·PR 묶음은 **예정 값**이다. 실제 SHA나 GitHub PR 번호가 아니다. 모듈 경로는 구현 전까지 예정 책임을 나타낸다. 현재 daemon/client crate는 존재하며 launcher·platform-macos·cli·adapters는 후속 책임이다. crate 추가는 해당 PR에서 명시적 의존 allowlist와 전체 그래프 검증을 함께 확장하고 검사를 제거하지 않는다. 실제 상태는 ledger가 소유한다.
 
-현재 C01은 정상 경로·명시 bootstrap·배타 journal 검사를 제공한다. P1은 진행 중이며 C02 transport와 후속 native·launch는 별도다. [운영 문서](../../operations.md)를 참조한다.
+구현된 C01은 정상 경로·명시 bootstrap·배타 journal 검사를 제공한다. C02는 foreground devguardd serve, 제한된 인증 UDS 통신, OS UID/PID 관측, 엄격한 client 호환성과 private 자격 FD 전달을 추가한다. PR과 병합 후 main 전달 증거는 별도로 추적한다. Native boot/start 정체성·등록/Principal·lease·정책·실행은 각 P2/P3 선행 조건이 구현될 때까지 닫혀 있다. [운영 문서](../../operations.md)를 참조한다.
 
 ## PR 순서와 활성화 경계
 
@@ -17,7 +17,9 @@
 | DG1-P5 | DG1-C09, DG1-C10, DG1-C11 | DG1-P4 | 설치·후보·독립 복구를 묶어 자기 적용 활성화 |
 | DG1-P6 | DG1-C12 | DG1-P5 | 기능 기준 artifact와 SLO 안정 artifact를 구분해 승격 |
 
-공통 현재 명령 `python3 scripts/validate.py --offline`은 DG-0 회귀를 확인한다. C01의 `python3 scripts/qualify.py dg1-authority --offline`은 현재 제공한다. 나머지 아래 suite는 **미제공 예정 명령**이며 각 작업이 suite와 재현 fixture를 함께 구현해야 한다. 이름만 있는 테스트나 0개 실행을 통과로 처리하지 않는다. 공통 toolchain/증거/SLO 규칙은 상위 검증 문서에서 정의한다.
+공통 현재 명령 python3 scripts/validate.py --offline은 Rust 1.95.0 계약 회귀를 확인하며 fake backend로 native 동작을 입증하지 않는다. C01 authority와 C02 인증·transport suite는 현재 제공한다. 아래에서 예정이라고 명시한 나머지 명령은 미제공이며 각 PR에서 fixture·실행 case 수·log·정리를 함께 구현하고 제공 상태를 갱신한다. 이름만 있는 테스트나 0개 실행을 통과로 처리하지 않는다. 공통 toolchain·증거·SLO 규칙은 상위 검증 문서에 있다.
+
+P1은 runtime을 닫아 두고 P2는 실제 probe, P3는 launch·안전 정리, P4는 개발 진입점, P5는 설치·부모 예산·repair, P6는 측정·승격을 제공한다. C08까지 foreground daemon과 최소 단일 Cargo job·test thread bootstrap을 사용한다. P4 bundle은 삭제할 build 경로 밖에 보존한다. C10에서 부모 예산을 포함한 artifact를 먼저 기능 시험·동결한 직후 제한된 실제 자기 적용을 시작하며 SLO qualification은 C12에서 확립한다.
 
 ### DG1-C01 — 운영 설정과 authority 경로
 
@@ -37,13 +39,13 @@
 - 소유/예정 PR: DevGuard / DG1-P1. 예정 제목: `feat(client): authenticate local peers and transfer scoped credentials`.
 - 문제 → 동작: 호출자가 선언한 PID/UID 대신 OS peer 관측을 사용하고 version/capability를 검증한 client protocol을 제공한다.
 - 선행: DG1-C01. 실제 UDS peer 확인 가능 환경, consumer generation·secret 설치 경로. 아직 사용자 명령 실행은 제공하지 않는다.
-- 대상/산출물: 예정 daemon/client framing, credential FD API, handshake fixture; `TrustedPeer` 생성은 daemon 내부에 제한한다.
-- 불변 조건: payload에 peer identity/관리 Principal 선언 불가; UID만으로 권한 획득 불가; secret은 argv/env/journal/debug에 저장하지 않는다.
-- 시험: 정상 같은 consumer 인증; 잘못된 UID/PID·credential·generation·wire/capability 거절; 재접속·동시 슬롯 등록·요청 재전송; FD/로그 secret 누출 확인.
-- 검증 명령: 현재 공통 회귀 + 예정 `python3 scripts/qualify.py dg1-auth`.
-- 완료 증거: peer 관측과 등록 identity 대응, 권한 오류 표, N/N+1 decoding fixture 결과. 필드 추가의 호환성도 실제 시험한다.
+- 대상/산출물: daemon/client framing·foreground 서비스·private credential FD API·handshake와 strict-decoding fixture. C02는 peer UID/PID를 관측한다. Daemon은 C03이 Backend를 통해 boot/start 증거를 제공한 뒤에만 TrustedPeer를 native 등록에 연결하며 TrustedPeer 자체에는 UID/PID만 있다.
+- 불변 조건: payload에 peer identity/관리 Principal 선언 불가; UID만으로 역할 획득 불가; 모든 consumer·관리 digest 분리; helper permit을 caller 자격으로 사용 금지. Secret을 argv/env/journal/debug에 남기지 않고 payload 64 KiB·세션 32개·idle 대기를 포함한 frame별 절대 250 ms 기한을 지킨다. 인증은 동일 UID 공격자를 격리하거나 Principal·lease를 발급하지 않는다.
+- 시험: 정상 인증·status·재접속; 잘못된 UID/PID·credential·generation·wire/capability 거절; 동시 등록 요청은 모두 닫힌 상태 유지; 부분·느린·마지막 frame과 포화·후속 exec 전 private FD 닫기. C05 helper qualification은 아니다.
+- 검증 명령: 현재 공통 회귀 + 현재 제공되는 python3 scripts/qualify.py dg1-auth --offline. Transport·저장소 동작을 입증하며 native 자원·SLO 자격은 부여하지 않는다.
+- 완료 증거: 양 끝에서 대조한 OS peer 관측, 권한 오류 표, 필드 추가 비호환성을 포함한 구신 decoding 결과. Native 등록은 not_run이다. 설정 schema 1에서 이전 시스템 task 예약 16은 거절하고 최소 48(session 32+서비스/관제 여유 16)을 요구한다. 자동 migration·kernel 제한 주장이 아닌 명시적 운영자 용량 검토를 문서화한다.
 - rollback: 신규 연결/admission을 닫고 기존 lease를 유지; 자격 회전은 live generation 대조 이후 수행한다.
-- 인계: DG1-C03~C06이 신뢰할 client principal과 private FD API. 인증과 canonical 경로를 분리 활성화하지 않는다.
+- 인계: DG1-C03~C06에 OS 인증 세션·private FD API를 전달하고 C03이 boot/start 정체성을 제공한 뒤 native Principal을 생성한다. 인증과 canonical 경로를 분리 활성화하거나 통신 장애로 실행·회수를 추정하지 않는다.
 
 ### DG1-C03 — 호스트 probe와 프로세스 정체성
 

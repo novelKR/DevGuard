@@ -6,7 +6,7 @@ use devguard_contract::*;
 use rusqlite::{params, OptionalExtension, Transaction};
 use std::fs::{File, OpenOptions};
 use std::os::fd::AsRawFd;
-use std::os::unix::fs::OpenOptionsExt;
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::path::Path;
 use uuid::Uuid;
 
@@ -88,10 +88,23 @@ impl AuthorityStorage {
             .write(true)
             .create(true)
             .truncate(false)
-            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK)
             .mode(0o600)
             .open(parent.join("authority.lock"))
             .map_err(|_| Error::new(ErrorCode::JournalInvalid, "cannot open authority lock"))?;
+        let metadata = lock
+            .metadata()
+            .map_err(|_| Error::new(ErrorCode::JournalInvalid, "cannot observe authority lock"))?;
+        if !metadata.is_file()
+            || metadata.uid() != unsafe { libc::geteuid() }
+            || metadata.mode() & 0o077 != 0
+            || metadata.nlink() != 1
+        {
+            return Err(Error::new(
+                ErrorCode::JournalInvalid,
+                "authority lock must be a private owned regular file",
+            ));
+        }
         // SAFETY: flock operates on the valid File descriptor; File retains ownership.
         if unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
             return Err(Error::new(
