@@ -69,13 +69,15 @@ pub struct Authority<B: Backend, C: Clock> {
     _authority_lock: File,
 }
 
-impl<B: Backend, C: Clock> Authority<B, C> {
-    pub fn initialize_journal(path: &Path) -> Result<()> {
-        Journal::initialize(path)
-    }
+/// Exclusive, validated storage before a real boot clock/backend is available.
+/// Opening storage neither recovers attempts nor grants an execution capability.
+pub struct AuthorityStorage {
+    journal: Journal,
+    authority_lock: File,
+}
 
-    pub fn open(path: &Path, policy: Policy, backend: B, clock: C) -> Result<Self> {
-        policy.validate()?;
+impl AuthorityStorage {
+    fn lock(path: &Path) -> Result<File> {
         let parent = path.parent().ok_or_else(|| {
             Error::new(
                 ErrorCode::JournalInvalid,
@@ -97,9 +99,56 @@ impl<B: Backend, C: Clock> Authority<B, C> {
                 "another authority owns this state directory",
             ));
         }
+        Ok(lock)
+    }
+
+    pub fn open(path: &Path) -> Result<Self> {
+        Self::open_locked(path, Self::lock(path)?)
+    }
+
+    /// Explicit first bootstrap only. Existing/missing/corrupt state is never reset.
+    pub fn initialize(path: &Path) -> Result<Self> {
+        let lock = Self::lock(path)?;
+        Journal::initialize(path)?;
+        Self::open_locked(path, lock)
+    }
+
+    fn open_locked(path: &Path, authority_lock: File) -> Result<Self> {
         let mut journal = Journal::open(path)?;
+        journal.transaction(journal::validate_index)?;
+        Ok(Self {
+            journal,
+            authority_lock,
+        })
+    }
+}
+
+impl<B: Backend, C: Clock> Authority<B, C> {
+    pub fn initialize_journal(path: &Path) -> Result<()> {
+        Journal::initialize(path)
+    }
+
+    pub fn open(path: &Path, policy: Policy, backend: B, clock: C) -> Result<Self> {
+        policy.validate()?;
+        Self::from_storage(AuthorityStorage::open(path)?, policy, backend, clock)
+    }
+
+    /// Activate exclusively held storage using actual backend/boot observations.
+    pub fn from_storage(
+        storage: AuthorityStorage,
+        policy: Policy,
+        backend: B,
+        clock: C,
+    ) -> Result<Self> {
+        policy.validate()?;
+        let AuthorityStorage {
+            mut journal,
+            authority_lock,
+        } = storage;
         let now = clock.now();
         journal.transaction(|tx| {
+            // Storage may have waited for host readiness. Recheck atomically with
+            // recovery so intervening corruption cannot hide a charged attempt.
             journal::validate_index(tx)?;
             validate_registration_policies(tx, &policy)?;
             journal::expire_prepared(tx, &now)?;
@@ -122,7 +171,7 @@ impl<B: Backend, C: Clock> Authority<B, C> {
             backend,
             clock,
             pressure: PressureController::default(),
-            _authority_lock: lock,
+            _authority_lock: authority_lock,
         })
     }
 

@@ -63,7 +63,7 @@ For the preparation PRs, preserve runtime/Cargo/journal state. Documentation che
 
 ## Planned suites and fault injection
 
-`scripts/qualify.py <suite>` and CodeSpace `scripts/qualify-devguard.py <suite>` are planned interfaces, not currently runnable commands. Each implementation PR supplies the actual interface, nonzero case inventory, timeouts, logs, isolation and cleanup, then updates its task command documentation.
+`scripts/qualify.py dg1-authority --offline` is available for C01 configuration/storage. Other DevGuard suites and CodeSpace `scripts/qualify-devguard.py <suite>` remain planned interfaces until supplied by their work units. Each implementation PR supplies the actual interface, nonzero case inventory, timeouts, logs, isolation and cleanup, then updates its task command documentation.
 
 | Area | Required faults/invariants | Work |
 | --- | --- | --- |

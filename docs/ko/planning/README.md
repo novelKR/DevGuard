@@ -36,7 +36,7 @@ DG-1은 독립 CLI/daemon·개발 workload·자기 적용을 검증한다. CS-RG
 | 마일스톤 | 소유 | 예정 작업 commit 수 | 예정 PR 묶음 수 | 현재 구현 |
 | --- | --- | --- | --- | --- |
 | [DG-0](milestones/DG-0.md) | DevGuard | 실제 초기 commit 1개에 대한 이행 기록 | 과거 PR 재구성 없음 | 계약·fake backend 구현 |
-| [DG-1](milestones/DG-1.md) | DevGuard | 12 | 6 | 미착수 |
+| [DG-1](milestones/DG-1.md) | DevGuard | 12 | 6 | 진행 중: C01 설정·저장소 경계; 실행 닫힘 |
 | [CS-RG](milestones/CS-RG.md) | CodeSpace | 8 | 4 | 미착수 |
 | [P1-RECOVERY](milestones/P1-RECOVERY.md) | CodeSpace | 6 | 3 | 미착수 |
 | [DG-LINUX](milestones/DG-LINUX.md) | DevGuard + CodeSpace | 6 | 3 | 미착수; 전체 제품 필수 |
@@ -50,7 +50,7 @@ VM/container는 작업 단위에서 실제 Linux qualification 등 추가 조건
 
 `DG1-C01` 같은 ID는 안정적인 예정 작업 ID이고 제목도 예정 값이다. 실제 commit SHA·PR URL은 생성 후 PR과 검증 report에서 연결한다. 이번 문서 작성의 DGP-D01~D04, CSP-D01~D02는 후속 runtime 46개에 포함하지 않는다.
 
-각 작업의 현재 제공 명령은 기존 계약/회귀 범위만 확인한다. `scripts/qualify.py`와 `scripts/qualify-devguard.py`는 후속 구현이 제공할 예정 명령으로 지금 실행할 수 없다. 명령 이름이나 설정 파일만으로 실행이 governor를 통과했다고 판단하지 않는다.
+각 작업의 현재 제공 명령은 기존 계약/회귀 범위만 확인한다. `scripts/qualify.py dg1-authority`는 C01 경계를 현재 검증한다. 그 밖의 suite와 CodeSpace `scripts/qualify-devguard.py`는 후속 구현이 제공할 예정 명령이다. 명령 이름이나 설정 파일만으로 실행이 governor를 통과했다고 판단하지 않는다.
 
 의존 등록은 실제 실행 소유자 Runner 한 곳에서 완료한다. source/client pin, 설치 daemon/helper artifact, 제품 wire, 이 계획을 인용하는 문서 revision을 별도 값으로 기록한다. 현재 pinned Codex `6b9826e3aa83b1a5947db50f4332cb9c65f1b340`과 Apache-2.0 라이선스는 유지한다.
 

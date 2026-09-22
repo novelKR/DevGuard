@@ -15,7 +15,7 @@
 | DG0-R05 | `pressure.rs`, `tests/pressure_contract.rs` | 첫 유효 probe 전 closed; 압력 상승·단계 회복 | stale/future/reboot sample, 관측 실패, 30초 회복, disk watermark |
 | DG0-R06 | `scripts/validate.py`, CI, 설계·계약·ledger | 정확한 source/toolchain/dependency 증거를 남김 | checksum·의존 경계·fmt·clippy·44개 계약 시험, runtime `not_run` |
 
-진입 조건은 승인 설계와 Apache-2.0 저장소 설립, Rust 1.95.0/Python 3.11 이상이었다. 현재 workspace는 contract/core 두 crate다. `Backend`는 OS 증거를 받아들이는 추상 경계이며 시험 구현은 가짜다. transport 인증, daemon, helper, CLI, macOS 정책 적용, 실제 cgroup, 자기 적용, CodeSpace 런타임은 이행 범위 밖이다.
+진입 조건은 승인 설계와 Apache-2.0 저장소 설립, Rust 1.95.0/Python 3.11 이상이었다. 초기 기준 workspace는 contract/core 두 crate다. `Backend`는 OS 증거를 받아들이는 추상 경계이며 시험 구현은 가짜다. transport 인증, daemon, helper, CLI, macOS 정책 적용, 실제 cgroup, 자기 적용, CodeSpace 런타임은 이행 범위 밖이다.
 
 ## 확인된 검증과 재현
 

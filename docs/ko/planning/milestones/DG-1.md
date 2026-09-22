@@ -4,6 +4,8 @@
 
 아래 ID·제목·PR 묶음은 **예정 값**이다. 실제 SHA나 GitHub PR 번호가 아니다. `crates/daemon`, `crates/client`, `crates/launcher`, `crates/platform-macos`, `crates/cli`, `crates/adapters`는 책임을 나타내는 **예정 경로**이며 현재 존재하지 않는다. crate 추가는 해당 PR에서 `scripts/validate.py`의 두-root allowlist와 전체 의존 그래프 검증을 함께 확장한다. 검사를 제거하지 않는다.
 
+현재 C01은 정상 경로·명시 bootstrap·배타 journal 검사를 제공한다. P1은 진행 중이며 C02 transport와 후속 native·launch는 별도다. [운영 문서](../../operations.md)를 참조한다.
+
 ## PR 순서와 활성화 경계
 
 | 예정 PR | 작업 | 선행 PR | 함께 제공할 경계 |
@@ -15,7 +17,7 @@
 | DG1-P5 | DG1-C09, DG1-C10, DG1-C11 | DG1-P4 | 설치·후보·독립 복구를 묶어 자기 적용 활성화 |
 | DG1-P6 | DG1-C12 | DG1-P5 | 기능 기준 artifact와 SLO 안정 artifact를 구분해 승격 |
 
-공통 현재 명령 `python3 scripts/validate.py --offline`은 DG-0 회귀를 확인한다. 아래 `python3 scripts/qualify.py <suite>`는 **미제공 예정 명령**이며 각 작업이 suite와 재현 fixture를 함께 구현해야 한다. 이름만 있는 테스트나 0개 실행을 통과로 처리하지 않는다. 공통 toolchain/증거/SLO 규칙은 상위 검증 문서에서 정의한다.
+공통 현재 명령 `python3 scripts/validate.py --offline`은 DG-0 회귀를 확인한다. C01의 `python3 scripts/qualify.py dg1-authority --offline`은 현재 제공한다. 나머지 아래 suite는 **미제공 예정 명령**이며 각 작업이 suite와 재현 fixture를 함께 구현해야 한다. 이름만 있는 테스트나 0개 실행을 통과로 처리하지 않는다. 공통 toolchain/증거/SLO 규칙은 상위 검증 문서에서 정의한다.
 
 ### DG1-C01 — 운영 설정과 authority 경로
 
@@ -25,7 +27,7 @@
 - 대상/산출물: 예정 daemon 설정 loader·경로 결정기·doctor 진단, 기존 `Authority::open` 경계와 설정 예시. symlink/소유권 검사를 포함한다.
 - 불변 조건: core 예산 산식·기존 journal init/open 분리·정적 예약·실행 capability closed. 설정 변경이 live consumer를 새 슬롯으로 취급하지 않는다.
 - 시험: 정상 단일 시작; 잘못된 권한/경로 별칭/누락 journal 거절; 동시 두 프로세스와 다른 socket 이름이 하나의 정상 authority만 얻는 경쟁.
-- 검증 명령: 현재 공통 회귀 + 예정 `python3 scripts/qualify.py dg1-authority`.
+- 검증 명령: 현재 공통 회귀 + 제공되는 `python3 scripts/qualify.py dg1-authority --offline`. 설정·저장소 검증이며 native 제어 자격은 아니다.
 - 완료 증거: 경로·UID·lock 소유 관측, 중복 시작 거절 로그, 설정 fingerprint. credentials와 전체 개인 경로 로그는 정제한다.
 - rollback: 서비스 시작을 중지하고 기존 journal을 보존; live instance 설정을 임의 축소하지 않는다.
 - 인계: DG1-C02에 정상 transport endpoint와 관리/시험 모드 판별을 전달. C02와 함께 PR을 제출한다.

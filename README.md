@@ -2,11 +2,12 @@
 
 DevGuard centralizes resource admission for development workloads while preserving the resources needed to inspect and stop them.
 
-The repository currently implements **DG-0: contracts and a durable authority core**. It does not yet install a daemon, launch user commands, apply macOS policies, or enforce Linux cgroups. The CLI examples in the approved design describe DG-1 and later work.
+The repository implements **DG-0 contracts and a durable authority core**, with DG-1 now in progress. C01 adds canonical service paths, explicit bootstrap and configuration/storage checks. Execution remains closed: user-command launch, macOS resource policies and Linux cgroups are not yet available. Use the operating guide for actual command availability; the design also contains future interfaces.
 
 - [Authoritative design reference](docs/design.md) · [Korean translation](docs/ko/design.md)
 - [Historical approved design (Korean, immutable)](docs/design.ko.md)
 - [Implemented contracts and trust boundaries](docs/contracts.md)
+- [Service boundary operations](docs/operations.md)
 - [Milestones and the CodeSpace dependency path](docs/milestones.md)
 - [Detailed execution plans, adoption gates and PR delivery](docs/planning/README.md)
 - [Machine-readable milestone state](milestones.json)

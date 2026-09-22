@@ -14,8 +14,8 @@
       "id": "planning-readme",
       "source": "docs/planning/README.md",
       "translation": "docs/ko/planning/README.md",
-      "reviewed_source_sha256": "303629cb277193896176f3f2d0d199f2a52374d81fbe4f7ac4da86a21710b24f",
-      "reviewed_translation_sha256": "077c1c952c624d21eb85042610a17d4941ad3248a3d1fc56f0eb2bcfe0e8d5ce"
+      "reviewed_source_sha256": "8388589d98cc3529894211da709acb6348721b2a1d5a22b1f6f02b9f3188f2d4",
+      "reviewed_translation_sha256": "db79b416f977b9d8b0bf71ad14211599cff223a917ea953d07863da8dbccb338"
     },
     {
       "id": "planning-codespace-integration",
@@ -50,14 +50,14 @@
       "source": "docs/planning/milestones/DG-0.md",
       "translation": "docs/ko/planning/milestones/DG-0.md",
       "reviewed_source_sha256": "abe48a99b4b5c360b785c0f1bc0fbb3ad9b039533085d6ce857f2af40ac7370d",
-      "reviewed_translation_sha256": "82af5021faef3730e17d76c28a60bd73b2b74bf3b8b544249c15024fc1e4ade3"
+      "reviewed_translation_sha256": "cd40e42e483160f2d2e6ce24da24505b3cb564fa7d132fcfd88d26d72a98e4fc"
     },
     {
       "id": "planning-milestones-dg-1",
       "source": "docs/planning/milestones/DG-1.md",
       "translation": "docs/ko/planning/milestones/DG-1.md",
-      "reviewed_source_sha256": "a1017967f9040497f59f856bf0b2ff4cb4c8a3adc121141e226e76832d4e0b4a",
-      "reviewed_translation_sha256": "0ec8487cdf8c6cd5763ab5ca7c29ccd0c790e3974f025d2455aa1323fe88b2cf"
+      "reviewed_source_sha256": "78c11d911c57e1ecb115ad20de546d516b71a5ec6f0a1fb4d229ca9142203301",
+      "reviewed_translation_sha256": "7a71ea99c7d76947f0c2cd3c1265cfb7c0e4691e415f48cb9421a5e120588899"
     },
     {
       "id": "planning-milestones-dg-adapters",
@@ -98,8 +98,22 @@
       "id": "planning-verification",
       "source": "docs/planning/verification.md",
       "translation": "docs/ko/planning/verification.md",
-      "reviewed_source_sha256": "03a647f9126c3cb12ef68e4732d11545982432d2d0f5f00b90cef00bc30f0109",
-      "reviewed_translation_sha256": "c2e70f5e5e385d04d0efb0e379b2659986717bee24a8f3229cba93db5c50d249"
+      "reviewed_source_sha256": "c0914c73272a510796847a90850c800099f8ecb8b823f6d06c4c8586a369946c",
+      "reviewed_translation_sha256": "460a4d3e963218d064d0835feb808cf9f8108325e14b38a6e6ce26f3005bc554"
+    },
+    {
+      "id": "operations",
+      "source": "docs/operations.md",
+      "translation": "docs/ko/operations.md",
+      "reviewed_source_sha256": "a71270b9aa2aeac30b0920acec1ba61dcea56ece0b8147a05641ad77c5fcda15",
+      "reviewed_translation_sha256": "fbce360c1af132b134dbcc12ac3c693c47c7a09e24dfd70bc5ef522cbbf771c7"
+    },
+    {
+      "id": "contracts",
+      "source": "docs/contracts.md",
+      "translation": "docs/ko/contracts.md",
+      "reviewed_source_sha256": "2272d186bd013997027a662ab3cf25a720150ebd374af9df1f154bade196d410",
+      "reviewed_translation_sha256": "e3cff97ae89c0d3335444a359279e319f6485dcbae66e157cab3e66581d38332"
     }
   ]
 }

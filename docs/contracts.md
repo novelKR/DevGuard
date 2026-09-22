@@ -1,6 +1,6 @@
-# DG-0 implementation contract
+# Implemented authority contract
 
-This document clarifies the approved design without claiming that its daemon, launcher, CodeSpace integration or OS-specific milestones are implemented.
+This document describes the DG-0 authority and the C01 service/storage boundary. [Operations](operations.md) lists actual command availability; native launch, OS policies and CodeSpace integration remain unimplemented. [Korean translation](ko/contracts.md).
 
 ## Authority and transport boundaries
 
@@ -8,7 +8,9 @@ The core is a Rust library. `Authority::register` receives a `TrustedPeer` from 
 
 DG-0 proves this library boundary with a fake peer and backend. It does not implement UDS authentication, credential-FD transfer, same-UID adversary isolation or a network client. DG-1 must supply these real boundaries before advertising a production service.
 
-The authority holds an exclusive no-follow lock in the journal's parent directory. All journals in that authority directory share the lock. DG-1 must use the canonical normal-service state directory and restrict alternate directories to a bounded parent-lease test mode; changing a socket or state argument must not create a second full-host authority.
+The authority holds an exclusive no-follow lock in the journal's parent directory. All journals in that authority directory share the lock. C01 derives canonical normal-service paths from the OS account rather than caller HOME/XDG values and refuses state/socket overrides. Project configuration cannot carry authority credentials or capacity. Production candidate paths remain unavailable until C10 supplies a parent-lease boundary.
+
+`AuthorityStorage` exclusively opens and validates a journal without inventing a boot clock, recovering attempts or granting capabilities. `Authority::from_storage` activates it with an actual Backend/Clock and revalidates the accounting index inside the recovery transaction. `Authority::open` preserves that behavior through the same path. Explicit bootstrap remains separate from ordinary open; missing/corrupt/future-schema state is not repaired automatically.
 
 ## Durable admission and launch
 
@@ -42,7 +44,7 @@ Every resource carries its own level and method. Accounting is not an OS memory 
 
 ## Boundaries deliberately left to later milestones
 
-- DG-1: host probes, canonical service paths, real UDS credentials, daemon/client framing, launch helper, CLI, Cargo adaptation, bounded self-use, update/repair and measured macOS SLOs.
+- Remaining DG-1: host probes, real UDS credentials, daemon/client framing, launch helper, execution CLI, Cargo adaptation, bounded self-use, update/repair and measured macOS SLOs.
 - CS-RG: Runner slots and transport lanes, approval migration, pinned client, process status integration and regression qualification.
 - DG-LINUX: actual cgroup hierarchy, controllers, ancestor constraints and sandbox/proxy inclusion.
 - DG-CACHE / DG-ADAPTERS: registered cache reclamation and additional tool-specific controls.

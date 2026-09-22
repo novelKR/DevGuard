@@ -6,6 +6,29 @@ use std::sync::{Arc, Barrier, Mutex};
 use support::*;
 
 #[test]
+fn storage_activation_revalidates_accounting_in_the_recovery_transaction() {
+    let h = Harness::new();
+    let (mut authority, principal) = h.ready();
+    h.prepare(&mut authority, &principal, "activation-gap");
+    drop(authority);
+    let storage = AuthorityStorage::open(&h.path).unwrap();
+    let fault = Connection::open(&h.path).unwrap();
+    fault.execute("UPDATE attempts SET charged=0", []).unwrap();
+    assert!(matches!(
+        TestAuthority::from_storage(
+            storage,
+            h.policy.clone(),
+            h.backend.clone(),
+            h.clock.clone()
+        ),
+        Err(Error {
+            code: ErrorCode::JournalInvalid,
+            ..
+        })
+    ));
+}
+
+#[test]
 fn admission_reply_loss_and_policy_change_replay_one_durable_reservation() {
     let mut h = Harness::new();
     let (mut a, p) = h.ready();

@@ -4,6 +4,8 @@ Owner: DevGuard. Baseline implementation: `not-started`; qualification: `not-run
 
 All work IDs, commit titles and logical PR labels below are **proposed values**, not future SHAs or GitHub numbers. Module paths describe planned responsibilities until implemented. Each added workspace crate updates the explicit dependency allowlist in the same PR without removing full-graph validation. The ledger owns actual status.
 
+Current delivery: C01 provides canonical paths, explicit bootstrap and locked journal validation. DG1-P1 remains in progress; C02 transport and later native/launch work are separate. See [operations](../../operations.md).
+
 ## PR sequence and activation
 
 | Proposed group | Units | Predecessor |
@@ -15,7 +17,7 @@ All work IDs, commit titles and logical PR labels below are **proposed values**,
 | DG1-P5 | DG1-C09, DG1-C10, DG1-C11 | DG1-P4 |
 | DG1-P6 | DG1-C12 | DG1-P5 |
 
-Available regression: `python3 scripts/validate.py --offline` (Rust 1.95.0 contract regression; fake backends do not prove native behavior). The task-specific qualification commands below are **planned and unavailable until implemented**. Each PR must supply real fixtures, nonzero case counts, logs and cleanup, then update command availability. See [verification](../verification.md).
+Available regression: `python3 scripts/validate.py --offline` (Rust 1.95.0 contract regression; fake backends do not prove native behavior). The C01 authority suite is now available; commands explicitly labelled planned below remain unavailable until implemented. Each PR must supply real fixtures, nonzero case counts, logs and cleanup, then update command availability. See [verification](../verification.md).
 
 DG1-P1 keeps runtime readiness closed; P2 provides actual probes; P3 ships launch with safe cleanup; P4 provides development entrypoints; P5 installation/parent-budget/repair; P6 measures and promotes. Through C08 use foreground daemons and minimum one-job/one-thread bootstrap. Preserve the P4 bundle outside disposable output. At C10, first test and freeze a parent containing parent-budget support, then immediately begin bounded real self-use; C12 alone establishes SLO qualification.
 
@@ -30,7 +32,7 @@ DG1-P1 keeps runtime readiness closed; P2 provides actual probes; P3 ships launc
 - Completion evidence: Observed paths/UID/lock owner, rejected duplicate-start logs and configuration fingerprint; redact credentials and private path detail.
 - Rollback: Stop service startup while preserving the journal; do not shrink live-instance policy arbitrarily.
 - Handoff: DG1-C02 receives the canonical endpoint and administrative/test-mode boundary; deliver both in DG1-P1.
-- Verification command: available regression above plus **planned, not yet provided** `python3 scripts/qualify.py dg1-authority`.
+- Verification command: available regression above plus **available** `python3 scripts/qualify.py dg1-authority --offline`. This checks configuration/storage, not native controls.
 
 ### DG1-C02 — authenticate local peers and transfer scoped credentials
 

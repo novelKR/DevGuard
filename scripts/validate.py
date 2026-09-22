@@ -64,8 +64,18 @@ def dependency_boundary(offline, environment, output):
     if forbidden:
         raise RuntimeError("independent graph includes product dependencies: " + ", ".join(forbidden))
     roots = {p["name"] for p in packages if p["id"] in metadata["workspace_members"]}
-    if roots != {"devguard-contract", "devguard-core"}:
-        raise RuntimeError("unexpected DG-0 workspace graph")
+    allowed = {
+        "devguard-contract": set(),
+        "devguard-core": {"devguard-contract"},
+        "devguard-daemon": {"devguard-contract", "devguard-core"},
+    }
+    if roots != set(allowed):
+        raise RuntimeError("unexpected workspace graph; update explicit boundaries with new crates")
+    for package in packages:
+        if package["name"] in allowed:
+            edges = {d["name"] for d in package["dependencies"]} & roots
+            if edges != allowed[package["name"]]:
+                raise RuntimeError("workspace dependency boundary changed: " + package["name"])
     contract = next(p for p in packages if p["name"] == "devguard-contract")
     if {d["name"] for d in contract["dependencies"]} != {"serde", "serde_json", "sha2"}:
         raise RuntimeError("contract must remain independent of persistence and host adapters")

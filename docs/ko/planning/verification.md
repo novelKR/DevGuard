@@ -66,7 +66,7 @@ V-DOC-DG는 scripts/check_docs.py와 수동 의미 검토로 영어/한국어 ha
 
 ## 향후 suite와 장애 주입 계약
 
-마일스톤의 `scripts/qualify.py` 및 CodeSpace `scripts/qualify-devguard.py` 명령은 **예정 인터페이스**다. 현재 파일이 없으므로 지금 실행할 수 없다. 각 구현 PR이 실제 CLI·case inventory·nonzero case assertion·timeout·log 수집·격리 cleanup을 구현하고 문서의 명령을 최종 형태로 고정해야 한다.
+`scripts/qualify.py dg1-authority --offline`은 C01 설정·저장소를 현재 검증한다. 그 밖의 DevGuard suite와 CodeSpace `scripts/qualify-devguard.py`는 해당 작업에서 제공할 **예정 인터페이스**다. 각 구현 PR이 실제 CLI·case inventory·nonzero case assertion·timeout·log 수집·격리 cleanup을 구현하고 문서의 명령을 최종 형태로 고정해야 한다.
 
 | 시험 영역 | 주입 지점/반드시 보존할 불변 조건 | 담당 작업 |
 | --- | --- | --- |
