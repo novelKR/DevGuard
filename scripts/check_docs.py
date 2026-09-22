@@ -63,6 +63,7 @@ def registry(root):
         local_path(root, pair["translation"])
     expected = {p.relative_to(root).as_posix() for p in (root / "docs/planning").rglob("*.md")}
     expected.add("docs/design.md")
+    expected.update({"docs/contracts.md", "docs/operations.md"})
     if not expected <= sources:
         raise ValueError("unpaired authoritative documents: " + str(sorted(expected - sources)))
     return data
@@ -75,7 +76,7 @@ def check_translations(root):
             if digest(root / pair[field]) != pair["reviewed_" + field + "_sha256"]:
                 raise ValueError("unreviewed " + field + ": " + pair["id"])
         source = (root / pair["source"]).read_text()
-        if re.search(r"[가-힣]", source):
+        if re.search(r"[가-힣]", source.replace("[한국어](", "[Korean](")):
             raise ValueError("authoritative prose must be English: " + pair["source"])
         source_ids = re.findall(r"^### (" + WORK_ID + r")\b", source, re.M)
         translated_ids = re.findall(r"^### (" + WORK_ID + r")\b",

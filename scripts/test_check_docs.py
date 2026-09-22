@@ -43,6 +43,14 @@ class DocumentationChecks(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "duplicate"):
             check_docs.check_translations(self.root)
 
+    def test_runtime_guide_pair_cannot_be_dropped_to_bypass_review(self):
+        path = self.root / "docs/translations.json"
+        data = json.loads(path.read_text())
+        data["pairs"] = [p for p in data["pairs"] if p["id"] != "operations"]
+        path.write_text(json.dumps(data))
+        with self.assertRaisesRegex(ValueError, "unpaired"):
+            check_docs.check_translations(self.root)
+
     def test_broken_local_link_fails(self):
         with (self.root / "README.md").open("a") as stream:
             stream.write("\n[missing](docs/missing.md)\n")

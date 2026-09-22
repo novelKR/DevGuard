@@ -1,14 +1,26 @@
-# DG-0 implementation contract
+# Implemented authority contract
 
-This document clarifies the approved design without claiming that its daemon, launcher, CodeSpace integration or OS-specific milestones are implemented.
+This document describes the implemented DG-0 authority and C01/C02 service, storage and transport behavior. PR and post-merge main delivery evidence is tracked separately from implementation. [Operations](operations.md) lists actual command availability; native registration/launch, OS policies and CodeSpace integration remain unimplemented. [Korean translation](ko/contracts.md).
 
 ## Authority and transport boundaries
 
-The core is a Rust library. `Authority::register` receives a `TrustedPeer` from a future transport's OS peer-credential check and verifies the configured UID, consumer credential, generation and exact process identity through `Backend`. Registration returns an opaque `Principal`; a workload cannot construct a control-service principal through the public API. A workload consumer cannot configure a control reservation. The administrative reconciliation and generation-retirement methods belong to a trusted daemon/operator path and must not be exposed as workload RPCs.
+The core is a Rust library. `Authority::register` accepts a `TrustedPeer` and verifies the configured UID, consumer credential, generation and exact process identity through `Backend`. Registration returns an opaque `Principal`; a workload cannot construct a control-service principal through the public API. A workload consumer cannot configure a control reservation. The administrative reconciliation and generation-retirement methods belong to a trusted daemon/operator path and must not be exposed as workload RPCs.
 
-DG-0 proves this library boundary with a fake peer and backend. It does not implement UDS authentication, credential-FD transfer, same-UID adversary isolation or a network client. DG-1 must supply these real boundaries before advertising a production service.
+DG-0 proves the library registration boundary with a fake peer and backend. C02 supplies real local UDS authentication and a small client, but does not activate native registration. The server observes peer UID/PID through OS socket credentials; the client independently corroborates the authority UID/PID and its own identity in the handshake. Neither accepts caller-declared peer identity. C03 must still provide boot/start identity before the daemon may construct a complete trusted registration observation. Authentication alone issues no `Principal`, instance slot, lease or host budget. Workload/control-service registration requests currently return `ResourceControlUnavailable`; administrative credentials cannot perform registration.
 
-The authority holds an exclusive no-follow lock in the journal's parent directory. All journals in that authority directory share the lock. DG-1 must use the canonical normal-service state directory and restrict alternate directories to a bounded parent-lease test mode; changing a socket or state argument must not create a second full-host authority.
+The handshake negotiates contract compatibility and wire version 1, with no runtime capabilities advertised by C02. Consumer generation and credential digest determine workload/control-service roles; an independent administrative digest grants only the explicitly exposed administrative role. All consumer and administrative digests must differ. Caller credentials, future one-time helper permits and administrative operations are separate boundaries: a helper credential variant is not accepted as caller authentication. This remains a cooperative operating-account model, not isolation from a malicious same-UID process.
+
+The authority holds an exclusive no-follow lock in the journal's parent directory. All journals in that authority directory share the lock. The lock is opened with `O_NONBLOCK`, and its opened descriptor must identify a private, current-UID regular file with exactly one link, including during explicit initialization. A FIFO or linked file cannot stand in for the lock. C01 derives canonical normal-service paths from the OS account rather than caller HOME/XDG values and refuses state/socket overrides. Project configuration cannot carry authority credentials or capacity. Production candidate paths remain unavailable until C10 supplies a parent-lease boundary.
+
+`AuthorityStorage` exclusively opens and validates a journal without inventing a boot clock, recovering attempts or granting capabilities. `Authority::from_storage` activates it with an actual Backend/Clock and revalidates the accounting index inside the recovery transaction. `Authority::open` preserves that behavior through the same path. Explicit bootstrap remains separate from ordinary open; missing/corrupt/future-schema state is not repaired automatically.
+
+## Bounded local protocol and credential transport
+
+A frame has a four-byte length prefix and at most 64 KiB of JSON payload. Frames, message variants and nested wire types reject unknown fields; version/request identity and required capabilities are checked separately. Added fields are not automatically backward compatible. The server accepts at most 32 active session workers. Each frame read or write has an absolute 250 ms deadline, including idle waiting before the next frame; receiving another byte does not restart the deadline. An expired idle session is closed. These transport bounds do not establish the later end-to-end admission budget or C12 responsiveness qualification.
+
+Framing uses `poll`, descriptor `O_NONBLOCK` and per-call nonblocking socket I/O. Descriptor nonblocking mode also bounds large writes on Darwin, where a per-call flag alone is insufficient. It drains buffered final data on peer closure without changing socket timeout options, which can fail with `EINVAL` on Darwin after the peer has closed. A malformed, truncated, expired or unavailable response cannot imply execution or release. The client does not retry automatically, and never substitutes an unmanaged authority or execution.
+
+`CredentialHandoff` transfers one caller secret through a dedicated inherited descriptor, keeping the parent copy close-on-exec. `take_inherited`/`read_owned` consume and close the receiver descriptor on success or error, with bounded length and a 250 ms read deadline. Secret serialization is deliberate for the local authentication exchange; debugging and parser errors redact credentials. Subprocess tests observe that the FD is closed before a subsequent `exec` and the secret is absent from argv/environment/output. They validate transport hygiene, not C05 helper authorization, READY, payload startup or containment.
 
 ## Durable admission and launch
 
@@ -42,7 +54,7 @@ Every resource carries its own level and method. Accounting is not an OS memory 
 
 ## Boundaries deliberately left to later milestones
 
-- DG-1: host probes, canonical service paths, real UDS credentials, daemon/client framing, launch helper, CLI, Cargo adaptation, bounded self-use, update/repair and measured macOS SLOs.
+- Remaining DG-1: native boot/start identity and registration, host probes, resource policy application, launch helper, execution CLI, Cargo adaptation, bounded self-use, update/repair and measured macOS SLOs.
 - CS-RG: Runner slots and transport lanes, approval migration, pinned client, process status integration and regression qualification.
 - DG-LINUX: actual cgroup hierarchy, controllers, ancestor constraints and sandbox/proxy inclusion.
 - DG-CACHE / DG-ADAPTERS: registered cache reclamation and additional tool-specific controls.

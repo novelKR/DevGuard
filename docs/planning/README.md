@@ -3,7 +3,7 @@
 Reference date: 2026-09-22. Repository: `/Volumes/DevData/Projects/IdeaProjects/DevGuard`.
 English is the authoritative editorial source. [Reviewed Korean translations](../ko/planning/README.md) are maintained through the [translation registry](../translations.json).
 
-The implemented baseline is DG-0: contracts, accounting, persistence and fake-backend tests. The six DG-1 implementation PRs are authorized for sequential delivery; authorization does not establish implementation or qualification. The [ledger](../../milestones.json) owns milestone IDs, dependencies and status. Individual milestone documents own work IDs, commit boundaries, tests, evidence and rollback.
+The contract baseline is DG-0: accounting, persistence and fake-backend tests. DG-1 now includes C01 canonical configuration/storage and C02 authenticated foreground transport; native registration, workload execution and resource-control qualification remain closed. The six DG-1 implementation PRs are authorized for sequential delivery; authorization does not establish implementation or qualification. The [ledger](../../milestones.json) owns milestone IDs, dependencies and status. Individual milestone documents own work IDs, commit boundaries, tests, evidence and rollback.
 
 ## Reading order and ownership
 
@@ -35,7 +35,7 @@ DG-1 qualifies standalone daemon/CLI, development workloads and bounded self-use
 | Milestone | Owner | Proposed work commits | Logical PR groups | Baseline state |
 | --- | --- | --- | --- | --- |
 | [DG-0](milestones/DG-0.md) | DevGuard | One actual initial commit, documented retrospectively | No invented historical PRs | Implemented contract/fake scope |
-| [DG-1](milestones/DG-1.md) | DevGuard | 12 | 6 | Not started |
+| [DG-1](milestones/DG-1.md) | DevGuard | 12 | 6 | In progress: C01 configuration/storage and C02 authenticated transport; execution closed |
 | [CS-RG](milestones/CS-RG.md) | CodeSpace | 8 | 4 | Not started |
 | [P1-RECOVERY](milestones/P1-RECOVERY.md) | CodeSpace | 6 | 3 | Not started |
 | [DG-LINUX](milestones/DG-LINUX.md) | DevGuard and CodeSpace | 6 | 3 | Not started; required overall |
@@ -47,7 +47,7 @@ DG-1 qualifies standalone daemon/CLI, development workloads and bounded self-use
 
 IDs such as `DG1-C01`, commit titles and logical PR labels are proposed values. Record real SHAs and PR URLs only after creation. Documentation work DGP-D01–D04 and CSP-D01–D02 is separate from these 46 units; append-only preparation changes preserve their history and immutable links.
 
-`scripts/qualify.py` and CodeSpace's `scripts/qualify-devguard.py` are planned interfaces until their implementation PR provides them. A configuration file alone does not prove that a command consumes the central budget.
+`scripts/qualify.py dg1-authority` verifies the C01 boundary, and `scripts/qualify.py dg1-auth` verifies C02 local authentication/transport. Other qualification suites and CodeSpace's `scripts/qualify-devguard.py` remain planned until their implementation PR provides them. A configuration file or authenticated session alone does not prove that a command consumes the central budget.
 
 For DG-1, complete one PR through review, current-head checks, normal merge, push-triggered main checks and cleanup before beginning the next. Use one Cargo job and one test thread for necessary bootstrap work. At DG1-C10, validate and freeze a parent artifact containing the new parent-budget capability, then immediately start bounded real self-use. A C08/C09 functional artifact is not presumed to implement C10 operations, and the C10 parent is not an SLO-qualified release until C12 passes.
 

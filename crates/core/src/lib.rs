@@ -6,7 +6,9 @@ mod journal;
 mod policy;
 mod pressure;
 
-pub use authority::{Authority, LaunchDecision, Principal, Registration, RunDecision, TrustedPeer};
+pub use authority::{
+    Authority, AuthorityStorage, LaunchDecision, Principal, Registration, RunDecision, TrustedPeer,
+};
 pub use policy::{ConsumerDefinition, ConsumerRole, Policy};
 pub use pressure::{MemoryPressure, PressureController, PressureSample, PressureState};
 

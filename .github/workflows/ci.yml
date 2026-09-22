@@ -1,4 +1,4 @@
-name: DG-0 contracts
+name: Contracts and service boundary
 
 on:
   push:
@@ -24,14 +24,18 @@ jobs:
           persist-credentials: false
       - name: Select the qualification toolchain
         run: rustup toolchain install 1.95.0 --profile minimal --component clippy --component rustfmt
-      - name: DG-0 qualification (fake backend only)
+      - name: Contract regression and workspace validation
         run: python3 scripts/validate.py --output target/qualification/ci
+      - name: Canonical authority functional checks
+        run: python3 scripts/qualify.py dg1-authority --output target/qualification/dg1-authority
+      - name: Native local authentication functional checks
+        run: python3 scripts/qualify.py dg1-auth --output target/qualification/dg1-auth
       - name: Preserve qualification evidence
         if: always()
         uses: actions/upload-artifact@v6
         with:
           name: dg0-${{ matrix.os }}-${{ github.run_attempt }}
-          path: target/qualification/ci/
+          path: target/qualification/
           if-no-files-found: error
       - name: Summarize qualification
         if: always()
@@ -39,10 +43,10 @@ jobs:
           python3 - <<'PY'
           import json, os
           from pathlib import Path
-          path = Path('target/qualification/ci/report.json')
-          if path.exists():
-              report = json.loads(path.read_text())
-              with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as out:
-                  out.write('DG-0: ' + report['status'] + '\n\n')
-                  out.write('Fake-backend contracts only. Runtime/OS/SLO qualification is not run.\n')
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as out:
+              for name in ['ci', 'dg1-authority', 'dg1-auth']:
+                  path = Path('target/qualification') / name / 'report.json'
+                  status = json.loads(path.read_text())['status'] if path.exists() else 'not_run'
+                  out.write(name + ': ' + status + '\n\n')
+              out.write('Contract regression and service/UDS functional checks only. Workload launch, OS resource control, self-use and foreground SLO qualification are not run.\n')
           PY

@@ -8,7 +8,7 @@ Preserve the approved [design SLOs](../design.md#verification-and-promotion). De
 | --- | --- | --- | --- |
 | V-DOC-DG | DevGuard docs/metadata | Original checksum/license, English/Korean hashes, IDs/DAG/links, 46 units/23 groups, required fields | Documentation checker and review |
 | V-DG0 | Contract/core | Rust 1.95.0 fmt/Clippy, 44-test baseline, full dependency graph and source fingerprint | Existing validator |
-| V-DG1-FUNCTION | Real auth/probe/launch/reconcile/CLI/operations | DG1-C01–C11 normal/failure/race cases and functional artifacts | Supplied with each implementation group |
+| V-DG1-FUNCTION | Real auth/probe/launch/reconcile/CLI/operations | DG1-C01–C11 normal/failure/race cases and functional artifacts | C01 authority and C02 local authentication/transport available; later scopes supplied with each group |
 | V-DG1-SLO | Standalone daemon/CLI, development and self-use | DG1-C12 control and foreground measurements | Planned; no CS-RG prerequisite |
 | V-CS-DOC | CodeSpace bilingual registry/site | Reviewed hashes, existing tests, pinned build, integrity and visual review | Existing commands |
 | V-CS-UPSTREAM | Existing Codex integration | Pin/policy/format/dependencies/adapter/PTY/filesystem/platform gates | Existing; actual platforms required |
@@ -26,6 +26,8 @@ DevGuard requires Rust **1.95.0** with rustfmt/Clippy and Python 3.11 or later:
 ```sh
 python3 scripts/check_docs.py
 python3 scripts/validate.py --offline
+python3 scripts/qualify.py dg1-authority --offline
+python3 scripts/qualify.py dg1-auth --offline
 git diff --check
 ```
 
@@ -63,7 +65,11 @@ For the preparation PRs, preserve runtime/Cargo/journal state. Documentation che
 
 ## Planned suites and fault injection
 
-`scripts/qualify.py <suite>` and CodeSpace `scripts/qualify-devguard.py <suite>` are planned interfaces, not currently runnable commands. Each implementation PR supplies the actual interface, nonzero case inventory, timeouts, logs, isolation and cleanup, then updates its task command documentation.
+`scripts/qualify.py dg1-authority --offline` is available for C01 configuration/storage, and `scripts/qualify.py dg1-auth --offline` for C02 authentication/transport. Other DevGuard suites and CodeSpace `scripts/qualify-devguard.py <suite>` remain planned interfaces until supplied by their work units. Each implementation PR supplies the actual interface, nonzero case inventory, timeouts, logs, isolation and cleanup, then updates its task command documentation. macOS/Ubuntu CI retains the full validator and also runs both functional suites, preserving their separate reports and logs.
+
+C02 evidence covers actual OS socket UID/PID observations at both ends, distinct consumer/admin credentials, rejected helper-role authentication, strict current/future wire fixtures, 64 KiB frames, a 32-session limit, absolute 250 ms per-frame deadlines including idle waits, partial/slow/final responses and private credential-FD transport. Dedicated subprocess helpers verify FD closure before a subsequent exec and inspect argv/environment/debug/output for secret leakage. They are executed by parent tests and are not independent ignored qualification successes. Record process cleanup as well as the nonzero parent-case inventory.
+
+The framing implementation uses `poll` with descriptor `O_NONBLOCK` and per-call nonblocking I/O, preserving buffered data after peer closure without Darwin timeout-option mutation. Test slow readers as well as slow writers. Authentication and a closed registration response do not prove boot/start identity, native registration/principals, leases, OS policy application, helper authorization or launch. Those remain unqualified until P2/P3. Likewise, `system_tasks >= 48` is a validated accounting estimate, not a kernel task cap or a measured sufficiency claim. Explicitly test rejection of the previous value 16 under unchanged schema 1; no automatic migration is implied.
 
 | Area | Required faults/invariants | Work |
 | --- | --- | --- |

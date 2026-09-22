@@ -1,8 +1,10 @@
 # DG-1 — macOS development and bounded self-use
 
-Owner: DevGuard. Baseline implementation: `not-started`; qualification: `not-run`. Entry: DG-0. Completion: DG1-C12 qualifies actual macOS launch/reconciliation, generic/Cargo consumption, parent-budget self-use, independent repair and development/foreground SLO for the measured artifact/policy/environment.
+Owner: DevGuard. Current implementation: `in-progress`; qualification: `not-run`. Entry: DG-0. Completion: DG1-C12 qualifies actual macOS launch/reconciliation, generic/Cargo consumption, parent-budget self-use, independent repair and development/foreground SLO for the measured artifact/policy/environment.
 
 All work IDs, commit titles and logical PR labels below are **proposed values**, not future SHAs or GitHub numbers. Module paths describe planned responsibilities until implemented. Each added workspace crate updates the explicit dependency allowlist in the same PR without removing full-graph validation. The ledger owns actual status.
+
+Implemented behavior: C01 provides canonical paths, explicit bootstrap and locked journal validation. C02 adds foreground `devguardd serve`, authenticated bounded UDS communication, OS-observed UID/PID, strict client compatibility and private credential-FD transfer. PR and post-merge main delivery evidence is tracked separately. Native boot/start identity, registration/principals, leases, policies and execution remain closed until their P2/P3 prerequisites are implemented. See [operations](../../operations.md).
 
 ## PR sequence and activation
 
@@ -15,7 +17,7 @@ All work IDs, commit titles and logical PR labels below are **proposed values**,
 | DG1-P5 | DG1-C09, DG1-C10, DG1-C11 | DG1-P4 |
 | DG1-P6 | DG1-C12 | DG1-P5 |
 
-Available regression: `python3 scripts/validate.py --offline` (Rust 1.95.0 contract regression; fake backends do not prove native behavior). The task-specific qualification commands below are **planned and unavailable until implemented**. Each PR must supply real fixtures, nonzero case counts, logs and cleanup, then update command availability. See [verification](../verification.md).
+Available regression: `python3 scripts/validate.py --offline` (Rust 1.95.0 contract regression; fake backends do not prove native behavior). C01 authority and C02 authentication/transport suites are now available; commands explicitly labelled planned below remain unavailable until implemented. Each PR must supply real fixtures, nonzero case counts, logs and cleanup, then update command availability. See [verification](../verification.md).
 
 DG1-P1 keeps runtime readiness closed; P2 provides actual probes; P3 ships launch with safe cleanup; P4 provides development entrypoints; P5 installation/parent-budget/repair; P6 measures and promotes. Through C08 use foreground daemons and minimum one-job/one-thread bootstrap. Preserve the P4 bundle outside disposable output. At C10, first test and freeze a parent containing parent-budget support, then immediately begin bounded real self-use; C12 alone establishes SLO qualification.
 
@@ -30,20 +32,20 @@ DG1-P1 keeps runtime readiness closed; P2 provides actual probes; P3 ships launc
 - Completion evidence: Observed paths/UID/lock owner, rejected duplicate-start logs and configuration fingerprint; redact credentials and private path detail.
 - Rollback: Stop service startup while preserving the journal; do not shrink live-instance policy arbitrarily.
 - Handoff: DG1-C02 receives the canonical endpoint and administrative/test-mode boundary; deliver both in DG1-P1.
-- Verification command: available regression above plus **planned, not yet provided** `python3 scripts/qualify.py dg1-authority`.
+- Verification command: available regression above plus **available** `python3 scripts/qualify.py dg1-authority --offline`. This checks configuration/storage, not native controls.
 
 ### DG1-C02 — authenticate local peers and transfer scoped credentials
 
 - Owner / proposed PR: DevGuard / DG1-P1. Proposed commit: `feat(client): authenticate local peers and transfer scoped credentials`.
 - Problem → behavior: Authenticate OS-observed peers rather than caller-declared UID/PID, with bounded versioned client communication.
 - Prerequisites: DG1-C01. Real UDS peer inspection and installed generation/registration secrets; user execution is not yet enabled.
-- Modules / deliverables: Daemon/client framing, private credential FD API, handshake/strict-decoding fixtures; construct TrustedPeer only at the trusted daemon boundary.
-- Invariants: Caller payload cannot declare peer identity/admin Principal; UID alone grants no role; keep secrets out of argv/env/journal/debug and bound frames, sessions and deadlines.
-- Tests (normal / failure / race): Normal registration/reconnect; wrong UID/PID, secret, generation, wire or capability rejected; concurrent registration/retransmission and FD/log leakage tests.
-- Completion evidence: OS peer-to-instance correspondence, authorization error matrix and old/new decoding results, including added-field incompatibility.
+- Modules / deliverables: Daemon/client framing, foreground service, private credential FD API and handshake/strict-decoding fixtures. C02 observes peer UID/PID. The daemon connects TrustedPeer to native registration only after C03 supplies boot/start evidence through Backend; TrustedPeer itself contains only UID/PID.
+- Invariants: Caller payload cannot declare peer identity/admin Principal; UID alone grants no role; all consumer/admin digests differ; helper permits are not caller credentials. Keep secrets out of argv/env/journal/debug, bound payloads to 64 KiB and sessions to 32, and enforce an absolute 250 ms per-frame deadline including idle wait. Authentication does not isolate malicious same-UID programs or issue a principal/lease.
+- Tests (normal / failure / race): Normal authentication/status/reconnect; wrong UID/PID, secret, generation, wire or capability rejected; concurrent registration attempts all remain closed; partial/slow/final frames, saturation and private FD closure before subsequent exec. This is not C05 helper qualification.
+- Completion evidence: OS peer observations corroborated at both ends, authorization error matrix and old/new decoding results, including added-field incompatibility. Native registration stays `not_run`. Configuration schema 1 now rejects the former system task reservation 16 and requires at least 48 (32 sessions plus 16 service/control headroom); document explicit operator capacity review without migration or kernel-limit claims.
 - Rollback: Close new connections/admission, preserve existing leases and rotate credentials only after live-generation reconciliation.
-- Handoff: DG1-C03–C06 consume authenticated principals/private FD APIs; never activate auth separately from canonical ownership.
-- Verification command: available regression above plus **planned, not yet provided** `python3 scripts/qualify.py dg1-auth`.
+- Handoff: DG1-C03–C06 receive OS-authenticated sessions and private FD APIs; C03 supplies boot/start identity before creating native principals. Never activate auth separately from canonical ownership or infer execution/release from communication failure.
+- Verification command: available regression above plus **available** `python3 scripts/qualify.py dg1-auth --offline`. It establishes transport/storage behavior only; native resources and SLOs remain unqualified.
 
 ### DG1-C03 — observe boot identity and host pressure
 
