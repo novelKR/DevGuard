@@ -1,0 +1,675 @@
+mod support;
+use devguard_contract::*;
+use devguard_core::*;
+use rusqlite::Connection;
+use std::sync::{Arc, Barrier, Mutex};
+use support::*;
+
+#[test]
+fn admission_reply_loss_and_policy_change_replay_one_durable_reservation() {
+    let mut h = Harness::new();
+    let (mut a, p) = h.ready();
+    let first = h.prepare(&mut a, &p, "attempt-1");
+    let replay = a.admit(&p, request("attempt-1")).unwrap();
+    assert_eq!(first, replay);
+    assert_eq!(
+        a.committed_budget().unwrap(),
+        first.reservation.as_ref().unwrap().quantities
+    );
+    drop(a);
+    h.policy.revision = "policy-2".into();
+    let (mut restarted, p) = h.ready();
+    assert_eq!(first, restarted.admit(&p, request("attempt-1")).unwrap());
+    assert_eq!(first.policy_revision, "policy-1");
+}
+
+#[test]
+fn changed_execution_or_resources_conflict_even_if_transport_identity_is_reused() {
+    let h = Harness::new();
+    let (mut a, p) = h.ready();
+    h.prepare(&mut a, &p, "same");
+    let mut changed = request("same");
+    changed.execution_digest = digest_bytes(b"different argv");
+    assert_eq!(
+        a.admit(&p, changed).unwrap_err().code,
+        ErrorCode::AttemptConflict
+    );
+    let mut changed = request("same");
+    changed.intent.requested.cpu_milli += 1;
+    assert_eq!(
+        a.admit(&p, changed).unwrap_err().code,
+        ErrorCode::AttemptConflict
+    );
+}
+
+#[test]
+fn closed_attempt_keys_never_become_new_work() {
+    for expire in [false, true] {
+        let h = Harness::new();
+        let (mut a, p) = h.ready();
+        let r = h.prepare(&mut a, &p, "terminal");
+        if expire {
+            h.clock.advance(PREPARED_TTL_MS);
+        } else {
+            a.cancel(&p, &r.key).unwrap();
+        }
+        let replay = a.admit(&p, request("terminal")).unwrap();
+        assert_eq!(
+            replay.phase,
+            if expire {
+                AttemptPhase::Expired
+            } else {
+                AttemptPhase::Cancelled
+            }
+        );
+        assert!(a.begin_launch(&p, &r.key).unwrap().permit.is_none());
+        assert_eq!(a.committed_budget().unwrap(), Budget::ZERO);
+    }
+}
+
+#[test]
+fn no_job_is_forced_into_a_zero_remaining_budget() {
+    let mut h = Harness::new();
+    h.policy.host_headroom = h.policy.effective_capacity;
+    let (mut a, p) = h.ready();
+    let denied = a.admit(&p, request("full")).unwrap();
+    assert_eq!(denied.phase, AttemptPhase::Denied);
+    assert_eq!(denied.denial, Some(ErrorCode::ResourceUnavailable));
+    assert!(denied.reservation.is_none());
+    assert_eq!(a.committed_budget().unwrap(), Budget::ZERO);
+}
+
+#[test]
+fn simultaneous_consumers_cannot_overbook_or_duplicate_a_retry() {
+    let h = Harness::new();
+    let (a, p) = h.ready();
+    let a = Arc::new(Mutex::new(a));
+    let barrier = Arc::new(Barrier::new(16));
+    let handles: Vec<_> = (0..16)
+        .map(|n| {
+            let (a, p, barrier) = (a.clone(), p.clone(), barrier.clone());
+            std::thread::spawn(move || {
+                barrier.wait();
+                a.lock()
+                    .unwrap()
+                    .admit(&p, request(&format!("attempt-{}", n % 4)))
+                    .unwrap()
+            })
+        })
+        .collect();
+    let results: Vec<_> = handles.into_iter().map(|t| t.join().unwrap()).collect();
+    for pair in results
+        .iter()
+        .flat_map(|a| results.iter().map(move |b| (a, b)))
+    {
+        if pair.0.key == pair.1.key {
+            assert_eq!(pair.0, pair.1);
+        }
+    }
+    let committed = a.lock().unwrap().committed_budget().unwrap();
+    assert!(committed.fits(h.policy.work_capacity().unwrap()));
+    assert_eq!(committed.cpu_milli, 6_000);
+}
+
+#[test]
+fn rejected_attempt_is_sticky_when_other_capacity_is_returned() {
+    let h = Harness::new();
+    let (mut a, p) = h.ready();
+    let first = h.prepare(&mut a, &p, "a");
+    h.prepare(&mut a, &p, "b");
+    let denied = a.admit(&p, request("c")).unwrap();
+    assert_eq!(denied.phase, AttemptPhase::Denied);
+    a.cancel(&p, &first.key).unwrap();
+    assert_eq!(denied, a.admit(&p, request("c")).unwrap());
+    h.prepare(&mut a, &p, "d");
+}
+
+#[test]
+fn application_evidence_is_absent_at_prepare_and_required_before_authorization() {
+    let h = Harness::new();
+    let (mut a, p) = h.ready();
+    let r = h.prepare(&mut a, &p, "phases");
+    assert!(r.applied.is_none());
+    assert!(r.scope.is_none());
+    let permit = a.begin_launch(&p, &r.key).unwrap().permit.unwrap();
+    let scope = h.provide_binding(&r);
+    assert!(a.authorize_run(&p, &r.key, &permit, &scope.root).is_err());
+    let bound = a.bind_scope(&p, &r.key, &permit, &scope).unwrap();
+    assert_eq!(bound.phase, AttemptPhase::ScopeBound);
+    assert!(bound.applied.is_some());
+    let authorized = a.authorize_run(&p, &r.key, &permit, &scope.root).unwrap();
+    assert!(authorized.may_exec);
+    assert_eq!(authorized.attempt.phase, AttemptPhase::RunAuthorized);
+    // No field claims that the user's executable actually exec'd or succeeded.
+    assert!(
+        !a.authorize_run(&p, &r.key, &permit, &scope.root)
+            .unwrap()
+            .may_exec
+    );
+}
+
+#[test]
+fn commit_reply_loss_never_grants_a_second_spawn_and_restart_is_suspect() {
+    let h = Harness::new();
+    let (mut a, p) = h.ready();
+    let r = h.prepare(&mut a, &p, "lost");
+    assert!(a.begin_launch(&p, &r.key).unwrap().permit.is_some());
+    assert!(a.begin_launch(&p, &r.key).unwrap().permit.is_none());
+    drop(a);
+    let (mut a, p) = h.ready();
+    let replay = a.begin_launch(&p, &r.key).unwrap();
+    assert_eq!(replay.attempt.phase, AttemptPhase::Suspect);
+    assert!(replay.permit.is_none());
+    h.clock.advance(60_000);
+    assert_eq!(a.reconcile(&r.key).unwrap().phase, AttemptPhase::Suspect);
+    assert_eq!(
+        a.committed_budget().unwrap(),
+        r.reservation.unwrap().quantities
+    );
+}
+
+#[test]
+fn cancellation_fences_a_late_helper_before_any_reclamation() {
+    let h = Harness::new();
+    let (mut a, p) = h.ready();
+    let r = h.prepare(&mut a, &p, "late");
+    let permit = a.begin_launch(&p, &r.key).unwrap().permit.unwrap();
+    let scope = h.provide_binding(&r);
+    assert_eq!(a.cancel(&p, &r.key).unwrap().phase, AttemptPhase::Draining);
+    assert_eq!(
+        a.bind_scope(&p, &r.key, &permit, &scope).unwrap_err().code,
+        ErrorCode::InvalidTransition
+    );
+    assert_eq!(
+        a.committed_budget().unwrap(),
+        r.reservation.unwrap().quantities
+    );
+}
+
+#[test]
+fn cancellation_and_commit_races_cannot_spawn_after_a_returned_reservation() {
+    for commit_first in [true, false] {
+        let h = Harness::new();
+        let (mut a, p) = h.ready();
+        let r = h.prepare(&mut a, &p, "race");
+        if commit_first {
+            assert!(a.begin_launch(&p, &r.key).unwrap().permit.is_some());
+            assert_eq!(a.cancel(&p, &r.key).unwrap().phase, AttemptPhase::Draining);
+            assert_ne!(a.committed_budget().unwrap(), Budget::ZERO);
+        } else {
+            a.cancel(&p, &r.key).unwrap();
+            assert!(a.begin_launch(&p, &r.key).unwrap().permit.is_none());
+            assert_eq!(a.committed_budget().unwrap(), Budget::ZERO);
+        }
+    }
+}
+
+#[test]
+fn expiry_boundary_is_inclusive_and_does_not_expire_committed_work() {
+    let h = Harness::new();
+    let (mut a, p) = h.ready();
+    let r = h.prepare(&mut a, &p, "active");
+    h.clock.advance(PREPARED_TTL_MS - 1);
+    assert!(a.begin_launch(&p, &r.key).unwrap().permit.is_some());
+    h.clock.advance(10_000);
+    assert_eq!(
+        a.lookup(&p, &r.key).unwrap().phase,
+        AttemptPhase::LaunchCommitted
+    );
+    assert_ne!(a.committed_budget().unwrap(), Budget::ZERO);
+}
+
+#[test]
+fn root_reap_does_not_return_resources_while_descendants_remain() {
+    let h = Harness::new();
+    let (mut a, p) = h.ready();
+    let (r, _, scope) = h.bound(&mut a, &p, "descendants");
+    h.closed(&scope);
+    h.backend
+        .0
+        .lock()
+        .unwrap()
+        .observations
+        .get_mut(&scope.scope_id)
+        .unwrap()
+        .empty = false;
+    assert_ne!(a.reconcile(&r.key).unwrap().phase, AttemptPhase::Released);
+    assert_ne!(a.committed_budget().unwrap(), Budget::ZERO);
+    h.closed(&scope);
+    assert_eq!(a.reconcile(&r.key).unwrap().phase, AttemptPhase::Released);
+    assert_eq!(a.committed_budget().unwrap(), Budget::ZERO);
+    assert_eq!(a.lookup(&p, &r.key).unwrap().phase, AttemptPhase::Released);
+}
+
+#[test]
+fn known_escape_is_sticky_until_explicit_reconciliation_covers_it() {
+    let h = Harness::new();
+    let (mut a, p) = h.ready();
+    let (r, _, scope) = h.bound(&mut a, &p, "escape");
+    h.closed(&scope);
+    h.backend
+        .0
+        .lock()
+        .unwrap()
+        .observations
+        .get_mut(&scope.scope_id)
+        .unwrap()
+        .known_escape = true;
+    assert_eq!(a.reconcile(&r.key).unwrap().phase, AttemptPhase::Suspect);
+    h.closed(&scope);
+    assert_eq!(a.reconcile(&r.key).unwrap().phase, AttemptPhase::Suspect);
+    h.backend
+        .0
+        .lock()
+        .unwrap()
+        .observations
+        .get_mut(&scope.scope_id)
+        .unwrap()
+        .prior_tracking_loss_resolved = true;
+    assert_eq!(a.reconcile(&r.key).unwrap().phase, AttemptPhase::Released);
+}
+
+#[test]
+fn wrong_scope_stale_evidence_and_pid_reuse_never_authorize_or_release() {
+    let h = Harness::new();
+    let (mut a, p) = h.ready();
+    let r = h.prepare(&mut a, &p, "identity");
+    let permit = a.begin_launch(&p, &r.key).unwrap().permit.unwrap();
+    let scope = h.provide_binding(&r);
+    h.backend
+        .0
+        .lock()
+        .unwrap()
+        .processes
+        .get_mut(&scope.root.pid)
+        .unwrap()
+        .start_ticks += 1;
+    assert!(a.bind_scope(&p, &r.key, &permit, &scope).is_err());
+    h.backend
+        .0
+        .lock()
+        .unwrap()
+        .processes
+        .insert(scope.root.pid, scope.root.clone());
+    a.bind_scope(&p, &r.key, &permit, &scope).unwrap();
+    h.closed(&scope);
+    h.clock.advance(2_001);
+    assert_eq!(a.reconcile(&r.key).unwrap().phase, AttemptPhase::Suspect);
+    h.closed(&scope);
+    h.backend
+        .0
+        .lock()
+        .unwrap()
+        .observations
+        .get_mut(&scope.scope_id)
+        .unwrap()
+        .scope
+        .scope_id = "other".into();
+    assert_eq!(a.reconcile(&r.key).unwrap().phase, AttemptPhase::Suspect);
+    assert_ne!(a.committed_budget().unwrap(), Budget::ZERO);
+}
+
+#[test]
+fn unbound_spawn_requires_positive_absence_evidence_not_owner_death() {
+    let h = Harness::new();
+    let (mut a, p) = h.ready();
+    let r = h.prepare(&mut a, &p, "no-scope");
+    a.begin_launch(&p, &r.key).unwrap();
+    h.backend.0.lock().unwrap().processes.remove(&100);
+    assert_eq!(a.reconcile(&r.key).unwrap().phase, AttemptPhase::Suspect);
+    h.backend.0.lock().unwrap().unbound.insert(
+        r.key.clone(),
+        UnboundLaunchEvidence {
+            key: r.key.clone(),
+            owner: r.owner.clone(),
+            observed_at: h.clock.now(),
+            helper_creation_ruled_out: true,
+            no_pending_spawn: true,
+        },
+    );
+    assert_eq!(a.reconcile(&r.key).unwrap().phase, AttemptPhase::Released);
+}
+
+#[test]
+fn kernel_requirement_cannot_be_satisfied_by_a_macos_plan() {
+    let h = Harness::new();
+    let (mut a, p) = h.ready();
+    let mut req = request("kernel");
+    req.intent.minimum = ResourceLevels::KERNEL;
+    assert_eq!(
+        a.admit(&p, req).unwrap().denial,
+        Some(ErrorCode::ResourcePolicyUnsupported)
+    );
+    assert_eq!(a.committed_budget().unwrap(), Budget::ZERO);
+}
+
+#[test]
+fn cgroup_scope_uses_the_same_identity_and_termination_contract() {
+    let h = Harness::new();
+    h.backend.0.lock().unwrap().kernel = true;
+    let (mut a, p) = h.ready();
+    let (r, _, scope) = h.bound(&mut a, &p, "fake-linux");
+    assert_eq!(scope.kind, ScopeKind::ContainedCgroup);
+    h.closed(&scope);
+    assert_eq!(a.reconcile(&r.key).unwrap().phase, AttemptPhase::Released);
+    // This is a fake backend contract test, not Linux OS qualification.
+}
+
+#[test]
+fn static_control_reservation_survives_disconnect_and_registration_retries() {
+    let h = Harness::new();
+    let (mut a, p) = h.ready();
+    let available = a.available_budget().unwrap();
+    h.register(&mut a);
+    assert_eq!(a.available_budget().unwrap(), available);
+    a.disconnected(&p).unwrap();
+    assert_eq!(a.available_budget().unwrap(), available);
+    let mut second = h.registration.clone();
+    second.instance.instance_id = "second-instance".into();
+    assert_eq!(
+        a.register(TrustedPeer { uid: 501, pid: 100 }, second)
+            .unwrap_err()
+            .code,
+        ErrorCode::ResourceUnavailable
+    );
+    assert_eq!(
+        a.admit(&p, request("stale-session")).unwrap_err().code,
+        ErrorCode::Unauthorized
+    );
+    let p = h.register(&mut a);
+    h.prepare(&mut a, &p, "reconnected");
+}
+
+#[test]
+fn peer_uid_alone_does_not_grant_consumer_authority() {
+    let h = Harness::new();
+    let mut a = h.open();
+    let mut wrong = h.registration.clone();
+    wrong.credential = Secret::new("b".repeat(64)).unwrap();
+    assert_eq!(
+        a.register(TrustedPeer { uid: 501, pid: 100 }, wrong)
+            .unwrap_err()
+            .code,
+        ErrorCode::Unauthorized
+    );
+    assert_eq!(
+        a.register(TrustedPeer { uid: 502, pid: 100 }, h.registration.clone())
+            .unwrap_err()
+            .code,
+        ErrorCode::Unauthorized
+    );
+    assert_eq!(
+        a.register(TrustedPeer { uid: 501, pid: 101 }, h.registration.clone())
+            .unwrap_err()
+            .code,
+        ErrorCode::Unauthorized
+    );
+    let p = h.register(&mut a);
+    let mut other = request("other");
+    other.key.consumer_id = "dev-cli".into();
+    assert_eq!(
+        a.admit(&p, other).unwrap_err().code,
+        ErrorCode::Unauthorized
+    );
+}
+
+#[test]
+fn generation_retirement_cannot_clear_suspect_work_and_old_keys_stay_rejected() {
+    let h = Harness::new();
+    let (mut a, p) = h.ready();
+    let r = h.prepare(&mut a, &p, "old");
+    assert_eq!(
+        a.retire_generation("codespace-runtime", "generation-1")
+            .unwrap_err()
+            .code,
+        ErrorCode::ReconciliationRequired
+    );
+    a.cancel(&p, &r.key).unwrap();
+    h.backend.0.lock().unwrap().processes.remove(&100);
+    assert!(a
+        .reconcile_instance("codespace-runtime", "generation-1", "instance-1")
+        .unwrap());
+    a.retire_generation("codespace-runtime", "generation-1")
+        .unwrap();
+    h.backend
+        .0
+        .lock()
+        .unwrap()
+        .processes
+        .insert(100, h.registration.instance.process.clone());
+    assert_eq!(
+        a.register(TrustedPeer { uid: 501, pid: 100 }, h.registration.clone())
+            .unwrap_err()
+            .code,
+        ErrorCode::Unauthorized
+    );
+}
+
+#[test]
+fn shrinking_target_does_not_shrink_an_existing_lease() {
+    let h = Harness::new();
+    let (mut a, p) = h.ready();
+    let r = h.prepare(&mut a, &p, "running");
+    a.begin_launch(&p, &r.key).unwrap();
+    h.clock.advance(2_000);
+    let mut sample = healthy(h.clock.now());
+    sample.memory = MemoryPressure::Critical;
+    assert_eq!(a.observe_pressure(sample).unwrap(), PressureState::Critical);
+    assert_eq!(a.available_budget().unwrap(), Budget::ZERO);
+    assert_eq!(
+        a.committed_budget().unwrap(),
+        r.reservation.unwrap().quantities
+    );
+    assert_eq!(
+        a.admit(&p, request("new")).unwrap().phase,
+        AttemptPhase::Denied
+    );
+}
+
+#[test]
+fn failure_to_persist_launch_hash_rolls_back_phase_and_never_returns_a_permit() {
+    let h = Harness::new();
+    let (mut a, p) = h.ready();
+    let r = h.prepare(&mut a, &p, "durability");
+    let fault = Connection::open(&h.path).unwrap();
+    fault.execute_batch("CREATE TRIGGER fail_grant BEFORE UPDATE OF launch_hash ON attempts BEGIN SELECT RAISE(ABORT,'injected durable failure'); END;").unwrap();
+    assert_eq!(
+        a.begin_launch(&p, &r.key).unwrap_err().code,
+        ErrorCode::JournalInvalid
+    );
+    assert_eq!(a.lookup(&p, &r.key).unwrap().phase, AttemptPhase::Prepared);
+    fault.execute_batch("DROP TRIGGER fail_grant;").unwrap();
+    assert!(a.begin_launch(&p, &r.key).unwrap().permit.is_some());
+}
+
+#[test]
+fn missing_corrupt_or_existing_journal_is_never_silently_initialized() {
+    let h = Harness::new();
+    let missing = h.path.with_file_name("missing.sqlite");
+    assert!(TestAuthority::open(
+        &missing,
+        h.policy.clone(),
+        h.backend.clone(),
+        h.clock.clone()
+    )
+    .is_err());
+    assert!(!missing.exists());
+    assert!(TestAuthority::initialize_journal(&h.path).is_err());
+    let corrupt = h.path.with_file_name("corrupt.sqlite");
+    std::fs::write(&corrupt, b"not a database").unwrap();
+    assert!(TestAuthority::open(
+        &corrupt,
+        h.policy.clone(),
+        h.backend.clone(),
+        h.clock.clone()
+    )
+    .is_err());
+    assert_eq!(std::fs::read(corrupt).unwrap(), b"not a database");
+}
+
+#[test]
+fn authority_directory_lock_prevents_a_second_full_budget() {
+    let h = Harness::new();
+    let _first = h.open();
+    let other = h.path.with_file_name("another.sqlite");
+    TestAuthority::initialize_journal(&other).unwrap();
+    assert!(matches!(
+        TestAuthority::open(&other, h.policy.clone(), h.backend.clone(), h.clock.clone()),
+        Err(Error {
+            code: ErrorCode::ResourceControlUnavailable,
+            ..
+        })
+    ));
+}
+
+#[test]
+fn recovery_rejects_accounting_inconsistent_records() {
+    let h = Harness::new();
+    let (mut a, p) = h.ready();
+    h.prepare(&mut a, &p, "corrupt-row");
+    drop(a);
+    let db = Connection::open(&h.path).unwrap();
+    db.execute(
+        "UPDATE attempts SET record=json_set(record,'$.reservation',NULL)",
+        [],
+    )
+    .unwrap();
+    assert!(TestAuthority::open(
+        &h.path,
+        h.policy.clone(),
+        h.backend.clone(),
+        h.clock.clone()
+    )
+    .is_err());
+}
+
+#[test]
+fn a_reboot_resolves_unbound_old_processes_without_resetting_history() {
+    let h = Harness::new();
+    let (mut a, p) = h.ready();
+    let r = h.prepare(&mut a, &p, "reboot");
+    a.begin_launch(&p, &r.key).unwrap();
+    drop(a);
+    h.clock.reboot();
+    let mut a = h.open();
+    assert_eq!(a.reconcile(&r.key).unwrap().phase, AttemptPhase::Released);
+    assert_eq!(a.committed_budget().unwrap(), Budget::ZERO);
+    let db = Connection::open(&h.path).unwrap();
+    assert_eq!(
+        db.query_row("SELECT COUNT(*) FROM attempts", [], |r| r.get::<_, u32>(0))
+            .unwrap(),
+        1
+    );
+}
+
+#[test]
+fn accounting_index_corruption_cannot_hide_a_live_reservation_at_restart() {
+    let h = Harness::new();
+    let (mut a, p) = h.ready();
+    h.prepare(&mut a, &p, "index-corrupt");
+    drop(a);
+    let db = Connection::open(&h.path).unwrap();
+    db.execute("UPDATE attempts SET charged=0", []).unwrap();
+    assert!(TestAuthority::open(
+        &h.path,
+        h.policy.clone(),
+        h.backend.clone(),
+        h.clock.clone()
+    )
+    .is_err());
+}
+
+#[test]
+fn a_reclaimed_budget_is_not_automatically_a_retryable_execution() {
+    let h = Harness::new();
+    let (mut a, p) = h.ready();
+    let (r, _, scope) = h.bound(&mut a, &p, "finished");
+    h.closed(&scope);
+    let released = a.reconcile(&r.key).unwrap();
+    assert_eq!(
+        released.release_reason,
+        Some(ReleaseReason::ScopeTerminated)
+    );
+    assert!(!released.known_not_started());
+    let unbound = h.prepare(&mut a, &p, "never-created");
+    a.begin_launch(&p, &unbound.key).unwrap();
+    h.backend.0.lock().unwrap().unbound.insert(
+        unbound.key.clone(),
+        UnboundLaunchEvidence {
+            key: unbound.key.clone(),
+            owner: unbound.owner.clone(),
+            observed_at: h.clock.now(),
+            helper_creation_ruled_out: true,
+            no_pending_spawn: true,
+        },
+    );
+    assert!(a.reconcile(&unbound.key).unwrap().known_not_started());
+    assert!(a.begin_launch(&p, &unbound.key).unwrap().permit.is_none());
+}
+
+#[test]
+fn journal_and_debug_output_do_not_store_registration_or_launch_secrets() {
+    let h = Harness::new();
+    let (mut a, p) = h.ready();
+    let r = h.prepare(&mut a, &p, "secrets");
+    let grant = a.begin_launch(&p, &r.key).unwrap();
+    let permit = grant.permit.as_ref().unwrap();
+    assert!(!format!("{grant:?}").contains(permit.expose()));
+    assert!(!format!("{:?}", h.registration).contains(h.registration.credential.expose()));
+    let launch_secret = permit.expose().as_bytes().to_vec();
+    let registration_secret = h.registration.credential.expose().as_bytes().to_vec();
+    drop(a);
+    for entry in std::fs::read_dir(h.path.parent().unwrap()).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_file() {
+            let bytes = std::fs::read(path).unwrap();
+            assert!(!bytes
+                .windows(launch_secret.len())
+                .any(|s| s == launch_secret));
+            assert!(!bytes
+                .windows(registration_secret.len())
+                .any(|s| s == registration_secret));
+        }
+    }
+}
+
+#[test]
+fn live_control_registration_prevents_policy_rotation_from_underaccounting_it() {
+    for change in ["reservation", "generation", "remove"] {
+        let mut h = Harness::new();
+        let (a, _) = h.ready();
+        drop(a);
+        match change {
+            "reservation" => {
+                h.policy
+                    .consumers
+                    .get_mut("codespace-runtime")
+                    .unwrap()
+                    .control_reservation
+                    .memory_bytes /= 2
+            }
+            "generation" => {
+                h.policy
+                    .consumers
+                    .get_mut("codespace-runtime")
+                    .unwrap()
+                    .generation = "generation-2".into()
+            }
+            _ => {
+                h.policy.consumers.remove("codespace-runtime");
+            }
+        }
+        assert!(matches!(
+            TestAuthority::open(
+                &h.path,
+                h.policy.clone(),
+                h.backend.clone(),
+                h.clock.clone()
+            ),
+            Err(Error {
+                code: ErrorCode::ReconciliationRequired,
+                ..
+            })
+        ));
+    }
+}

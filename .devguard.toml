@@ -1,0 +1,4 @@
+schema = 1
+project_id = "devguard-dev"
+profile = "interactive"
+adapter = "auto"

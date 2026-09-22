@@ -1,0 +1,8 @@
+{
+  "schema": "devguard-approved-design/v1",
+  "approved_on": "2026-09-22",
+  "document": "docs/design.ko.md",
+  "sha256": "97b67a1f9518c1781156a4b3b26829b285f84f5c9a44da60f3c5dcf1bc768df8",
+  "codespace_baseline": "e94d21475643608ad2a466256fb57266b86faa47",
+  "local_repository": "/Volumes/DevData/Projects/IdeaProjects/DevGuard"
+}

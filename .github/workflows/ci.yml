@@ -1,0 +1,48 @@
+name: DG-0 contracts
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  contracts:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    env:
+      CARGO_BUILD_JOBS: "1"
+      RUST_TEST_THREADS: "1"
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: Select the qualification toolchain
+        run: rustup toolchain install 1.95.0 --profile minimal --component clippy --component rustfmt
+      - name: DG-0 qualification (fake backend only)
+        run: python3 scripts/validate.py --output target/qualification/ci
+      - name: Preserve qualification evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: dg0-${{ matrix.os }}-${{ github.run_attempt }}
+          path: target/qualification/ci/
+          if-no-files-found: error
+      - name: Summarize qualification
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          path = Path('target/qualification/ci/report.json')
+          if path.exists():
+              report = json.loads(path.read_text())
+              with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as out:
+                  out.write('DG-0: ' + report['status'] + '\n\n')
+                  out.write('Fake-backend contracts only. Runtime/OS/SLO qualification is not run.\n')
+          PY

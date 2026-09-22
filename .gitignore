@@ -1,0 +1,8 @@
+/target/
+/.codex/
+/.local/
+/evidence/
+*.sqlite
+*.sqlite-*
+.DS_Store
+__pycache__/

@@ -1,0 +1,10 @@
+DevGuard
+Copyright 2026 novelKR
+
+This product is licensed under the Apache License, Version 2.0.
+See the LICENSE file for the full license text.
+
+The original DevGuard source and project documentation use Apache-2.0,
+matching CodeSpace. Third-party crates listed in Cargo.lock retain
+their respective licenses. DevGuard does not include CodeSpace,
+OpenAI Codex or rmcp as implementation dependencies.
