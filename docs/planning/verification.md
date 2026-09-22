@@ -1,0 +1,110 @@
+# Verification, acceptance and evidence
+
+Preserve the approved [design SLOs](../design.md#verification-and-promotion). Design approval, implementation, fake contracts, native application, product integration and foreground responsiveness are distinct evidence. Documentation-head regression results do not qualify new OS functionality.
+
+## Verification scopes
+
+| Scope | Owner/subject | Acceptance | Baseline availability |
+| --- | --- | --- | --- |
+| V-DOC-DG | DevGuard docs/metadata | Original checksum/license, English/Korean hashes, IDs/DAG/links, 46 units/23 groups, required fields | Documentation checker and review |
+| V-DG0 | Contract/core | Rust 1.95.0 fmt/Clippy, 44-test baseline, full dependency graph and source fingerprint | Existing validator |
+| V-DG1-FUNCTION | Real auth/probe/launch/reconcile/CLI/operations | DG1-C01–C11 normal/failure/race cases and functional artifacts | Supplied with each implementation group |
+| V-DG1-SLO | Standalone daemon/CLI, development and self-use | DG1-C12 control and foreground measurements | Planned; no CS-RG prerequisite |
+| V-CS-DOC | CodeSpace bilingual registry/site | Reviewed hashes, existing tests, pinned build, integrity and visual review | Existing commands |
+| V-CS-UPSTREAM | Existing Codex integration | Pin/policy/format/dependencies/adapter/PTY/filesystem/platform gates | Existing; actual platforms required |
+| V-CS-RG | Integrated CodeSpace | CSRG-C07/C08 parity, approvals, replay and saturation SLO | Future |
+| V-P1 | Independent Runner/Gateway recovery | P1R-C06 identity, fencing, deadlines and output/unknown | Future |
+| V-LINUX | Actual Linux scopes/product | DGL-C05/C06 controllers, ancestors, privileges, descendants and SLO | Future; fake cgroups do not qualify |
+| V-CACHE / V-ADAPTER | Cache/tools/executors | DGC-C06; DGA-C02/C04/C06/C08 supported combinations | Future |
+
+Keep `passed`, `failed`, `not_run`, `inconclusive` distinct. Preserve an existing tool's `incomplete` status and identify missing requirements. Zero discovered/executed cases cannot pass a suite.
+
+## Available commands
+
+DevGuard requires Rust **1.95.0** with rustfmt/Clippy and Python 3.11 or later:
+
+```sh
+python3 scripts/check_docs.py
+python3 scripts/validate.py --offline
+git diff --check
+```
+
+Remove offline only when locked dependencies must be downloaded. Report output must be a new ignored path inside the checkout. Put the installed pinned toolchain first in PATH. Toolchain mismatch results are supplemental/incomplete, not qualification. Bootstrap uses one Cargo job and one test thread. The existing validator leaves unmeasured runtime scopes `not_run`.
+
+CodeSpace requires Node **24.21.0**, npm **11.19.0**, Python 3.11+ (CI 3.14):
+
+```sh
+python3 -B scripts/check_docs.py
+npm ci --prefix docs-site --ignore-scripts
+npm test --prefix docs-site
+npm run build --prefix docs-site
+python3 -B docs-site/scripts/site.py check
+```
+
+Use `DOCS_PYTHON` if necessary. After actually reviewing the pair, record only the changed entry with `python3 -B scripts/check_docs.py record --id devguard-integration`. Inspect source rendering, language navigation, wide tables, desktop/narrow and light/dark presentation. Main publication is a separate post-merge workflow and is required for preparation completion.
+
+Existing CodeSpace runtime gates remain:
+
+```sh
+python3 scripts/validate-upstream.py all
+python3 scripts/validate-upstream.py macos-core dependencies
+python3 scripts/validate-upstream.py linux-isolation
+```
+
+`all` does not include macos-core. Linux skips on macOS do not substitute for actual Linux evidence. Preserve `target/upstream-validation` and protected `target/upstream-reports/local` behavior. Existing CI checks still run for documentation PRs.
+
+## Document consistency
+
+Verify original design bytes against `docs/design-source.json`; compare LICENSE/NOTICE and preserved Codex gitlink. Check all 46 definitions (DG1 12, CSRG 8, P1R 6, DGL 6, DGC 6, DGA 8), 23 logical groups (6+4+3+3+3+4), exactly one group per task, defined prerequisites and acyclic task/milestone graphs. DG0-R records and DGP/CSP documentation units are excluded from future runtime counts.
+
+Every task needs owner/title/group, problem→behavior, prerequisites/operating conditions, modules/deliverables, invariants, meaningful normal/failure/race tests, available/planned commands, completion evidence, rollback and handoff. Check local links, ledger references and English/Korean reviewed hashes; manually review semantic detail, since hashes do not prove translation quality. Do not invent future SHAs/PR numbers. Preserve historical status until implementation evidence warrants an update.
+
+For the preparation PRs, preserve runtime/Cargo/journal state. Documentation checks may extend validation without removing existing gates. Preserve the original CodeSpace staged config blob and user branch; only the task-owned worktree changes. The canvas displays actual evidence and keeps future work unstarted.
+
+## Planned suites and fault injection
+
+`scripts/qualify.py <suite>` and CodeSpace `scripts/qualify-devguard.py <suite>` are planned interfaces, not currently runnable commands. Each implementation PR supplies the actual interface, nonzero case inventory, timeouts, logs, isolation and cleanup, then updates its task command documentation.
+
+| Area | Required faults/invariants | Work |
+| --- | --- | --- |
+| Authority/authentication | Aliases, duplicate startup, wrong UID/PID/generation, credential leakage | DG1-C01/C02, CSRG-C02 |
+| Accounting/durability | Lost admission/commit replies, changed meaning, journal failure and restart | DG1-C05/C06, CSRG-C03/C04 |
+| Launch | Before helper, before READY, after READY; cancellation, expiry and late helper | DG1-C05/C06, CSRG-C07 |
+| Lifetime | Root exit with descendants, PID reuse, tracking loss, original boot deadline | DG1-C03/C04/C06, DGL-C04 |
+| Control | Queue/byte saturation, slow stdin/readers, locks/callbacks, concurrent replay | CSRG-C05–C08 |
+| Self-use/upgrade | Candidate crash/over-budget, parent loss, policy/journal failure, strict old/new decoding | DG1-C09–C12 |
+| Gateway recovery | Concurrent/stale Gateway, exit/reconnect, Runner loss and output gaps | P1R-C01–C06 |
+| Linux | Actual controllers/ancestors/permissions, sandbox/proxy, OOM, descendants | DGL-C01–C06 |
+| Cache | Use/reclaim races, root replacement, rename/sweep crashes, trash accounting | DGC-C01–C06 |
+| Tools/executors | Option conflicts, nested tokens/FDs, child budgets and actual executor lifetime | DGA-C01–C08 |
+
+Inject faults only in bounded test scopes/roots. Abort correctness or resource-control failures, close new work, reconcile actual scopes and retain failed/uncertain evidence. R1 is not authorization for unbounded host stress.
+
+## SLO protocol
+
+For each declared backend/artifact/policy/environment combination, measure **10 minutes idle plus at least 30 minutes load, repeated three times**. If an actual validation command lasts longer, observe it to completion. Include fixed-source Cargo build/test, multiple consumers, bounded CPU/memory/I/O, output pressure and slow input. Separate cold/warm conditions using test directories; never erase operational caches to manufacture a baseline.
+
+| Metric | Approved initial acceptance |
+| --- | --- |
+| Development/MCP connections | Zero losses caused by resource pressure |
+| Local process status | p99 ≤500 ms |
+| Termination acknowledgement | p99 ≤1 second; scope exit duration reported separately |
+| Foreground input to next paint | p99 ≤100 ms; zero responses over 1 second |
+| Foreground frame progression | Zero stalls over 500 ms |
+| Duplicate execution/reservations | Zero |
+| Protected-data GC | Zero |
+| Automatic restart of uncertain execution | Zero |
+
+DG-1 measures corresponding standalone status/termination and development/foreground behavior. Actual CodeSpace MCP `process_status`/`terminate_process`, approvals, replay and saturation require CSRG-C08. Mark unintegrated product measurements not applicable/not run; do not weaken numeric targets or introduce a DG1/CSRG cycle.
+
+Use a fixed local browser fixture with scrolling, input and paint/frame measurement. Validate foreground visibility and focus **throughout** each interval; invalid observation or a failing idle baseline is `inconclusive`, never a pass. Background throttling is not foreground performance. Passing this fixture does not guarantee every website.
+
+Record local request-to-response separately from network RTT/end-to-end latency. Fix p99 calculation, sample count, interval, clock and missing-sample treatment. Keep each repetition's raw values and verdict; pooled averages/p99 cannot conceal a failed repetition. The current local target is 8 logical CPUs and 16 GiB macOS; record actual OS/build/power conditions for every run.
+
+## Evidence and promotion
+
+Manifest: source heads and dirty fingerprints, actual daemon/helper hashes, client/wire/capabilities, policy revision/journal schema, host/RAM/OS/kernel/arch/power/boot/clock, relevant controllers/ancestors/privileges, fixture revision/cache state, exact commands/timestamps. Unknown values restrict supported claims.
+
+Retain raw latency/pressure/jobs, peak memory, completion time/throughput, refusal reasons, queue/buffer peaks, attempt/slot/lease transitions, fault points and termination/readback evidence. Hash reports and raw files, redact credentials and payloads, and preserve them outside disposable worktrees before cleanup. A documentation-only commit does not remeasure an old binary.
+
+Record CI URL/job/event/head/artifact and distinguish PR checks from merge/push-main checks. At C10 preserve a functionally tested parent and real self-use receipts. At C12 promote only the artifact/policy/environment actually measured. Implementation status and platform qualification remain separate; Linux and CodeSpace runtime stay unqualified by DG-1.

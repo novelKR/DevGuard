@@ -107,6 +107,10 @@ def main():
             raise RuntimeError(f"expected Rust {PINNED_RUST}, observed {actual}; put the pinned toolchain first in PATH")
         source_contract()
         report["stages"].append({"name": "source-contract", "status": "passed"})
+        subprocess.run([sys.executable, "scripts/check_docs.py"], cwd=ROOT, check=True)
+        subprocess.run([sys.executable, "-B", "-m", "unittest", "discover", "-s", "scripts",
+                        "-p", "test_check_docs.py"], cwd=ROOT, check=True)
+        report["stages"].append({"name": "documentation", "status": "passed"})
         dependency_boundary(args.offline, environment, output)
         report["stages"].append({"name": "dependency-boundary", "status": "passed"})
         cargo_flags = ["--locked"] + (["--offline"] if args.offline else [])
