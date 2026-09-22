@@ -2,7 +2,7 @@
 
 The critical path is **DG-0 → DG-1 → CS-RG → P1-RECOVERY**. The independent local repository lives at `/Volumes/DevData/Projects/IdeaProjects/DevGuard`; CodeSpace owns its integration and process-recovery work.
 
-The [detailed planning index (Korean)](planning/README.md) owns the 46 proposed commit units and 23 logical PR groups, with entry/exit gates, tests, rollback and handoffs. [Decisions](planning/decisions.md) refine the preserved design; [consumer readiness](planning/consumer-readiness.md) distinguishes contract preparation from operational adoption. Planning documents do not mark future runtime work complete.
+The [detailed planning index](planning/README.md) owns the 46 proposed commit units and 23 logical PR groups, with entry/exit gates, tests, rollback and handoffs. [Decisions](planning/decisions.md) refine the preserved design; [consumer readiness](planning/consumer-readiness.md) distinguishes contract preparation from operational adoption. Planning documents do not mark future runtime work complete.
 
 | Milestone | Deliverable and gate | Current implementation |
 |---|---|---|
@@ -24,7 +24,7 @@ DG-1 work should proceed in this order:
 2. Real host probes and applied-policy/scope evidence (DG1-P2).
 3. Fenced launch together with cancellation and uncertain-scope reconciliation (DG1-P3).
 4. Generic/Cargo CLI entrypoints and jobserver coordination (DG1-P4).
-5. A functionally tested bootstrap reference, bounded candidate tests and independent repair (DG1-P5).
+5. Protected artifact installation and a user LaunchAgent, then a functionally tested C10-capable parent; begin bounded real self-use immediately at C10 and exercise independent repair at C11 (DG1-P5).
 6. Development/self-use SLO qualification and a separately identified stable artifact; only then select a CodeSpace runtime pin (DG1-P6).
 
 The [PR delivery plan](planning/pr-delivery.md) separates the current documentation PRs from later implementation and qualification. Existing `contracts.md` remains the implemented contract; `milestones.json` remains the authoritative milestone state. Follow each milestone's `planning_document` reference for commit and test details.

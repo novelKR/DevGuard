@@ -1,55 +1,54 @@
-# DevGuard 상세 실행 계획
+# DevGuard execution planning
 
-문서 기준일: 2026-09-22. 기준 저장소: `/Volumes/DevData/Projects/IdeaProjects/DevGuard`. 이 문서 집합은 승인 설계를 구현 가능한 작업·도입 gate·시험·PR 경계로 구체화한다. 새 계획 본문은 한국어이며 CodeSpace의 소비 안내는 해당 저장소에서 영어·한국어로 함께 유지한다.
+Reference date: 2026-09-22. Repository: `/Volumes/DevData/Projects/IdeaProjects/DevGuard`.
+English is the authoritative editorial source. [Reviewed Korean translations](../ko/planning/README.md) are maintained through the [translation registry](../translations.json).
 
-**현재 적용 가능 범위는 DG-0 계약 검토와 adapter 준비다.** 실제 daemon·CLI·OS 자원 제어·자기 적용·CodeSpace runtime 결합은 미구현이다. 상세 계획이 생겼다고 후속 마일스톤을 완료로 바꾸지 않는다. 실제 이행 기록은 [DG-0](milestones/DG-0.md), 선택 근거와 immutable source는 [결정 기록](decisions.md)에 있다.
+The implemented baseline is DG-0: contracts, accounting, persistence and fake-backend tests. The six DG-1 implementation PRs are authorized for sequential delivery; authorization does not establish implementation or qualification. The [ledger](../../milestones.json) owns milestone IDs, dependencies and status. Individual milestone documents own work IDs, commit boundaries, tests, evidence and rollback.
 
-## 읽는 순서와 문서 소유권
+## Reading order and ownership
 
-| 순서/문서 | 필요한 판단 | 원본으로 소유하는 정보 |
-| --- | --- | --- |
-| 1. [승인 독립 설계](../design.ko.md) / [checksum](../design-source.json) | 설립 목적과 큰 계약 | 승인 원문; byte 그대로 보존 |
-| 2. [결정 기록](decisions.md) | 왜 Runner 단일 등록과 Gateway 한정 복구인가 | 후속 결정·대안·재검토 조건·기준 source |
-| 3. [최소 소비 조건](consumer-readiness.md) | 지금 어떤 수준으로 도입할 수 있는가 | 범용 readiness gate·platform claim |
-| 4. 아래 마일스톤 상세 문서 | 무엇을 어떤 commit/PR로 구현할 것인가 | 작업 ID·선행·시험·완료 증거·rollback·인계 |
-| 5. [CodeSpace 결합 명세](codespace-integration.md) | 현재 코드에서 어느 경로를 바꿀 것인가 | 실제 source 대응·mode·승인/실행/관제/복구 흐름 |
-| 6. [검증 규칙](verification.md) | 무엇이 통과이고 어떤 증거를 남기는가 | 현재/예정 명령·검증 범위·SLO·재현/보존 |
-| 7. [PR 진행서](pr-delivery.md) | 문서와 구현 변경을 어떻게 전달하는가 | 이번 DGP/CSP commit·두 PR 순서·미래 인계 절차 |
+1. [Current English design reference](../design.md), the immutable [approved Korean source](../design.ko.md) and its [checksum](../design-source.json).
+2. [Decisions and source baselines](decisions.md): single Runner registration, Gateway-only recovery, authority ownership and compatibility.
+3. [Consumer readiness](consumer-readiness.md): adoption levels and platform claims.
+4. The milestone documents below: proposed commits and logical PR groups.
+5. [CodeSpace integration](codespace-integration.md): actual source paths and intended registration, execution, control and recovery flow.
+6. [Verification](verification.md): available versus planned commands, scope, SLOs and evidence.
+7. [PR delivery](pr-delivery.md): preparation, exact-head sequential merges, cleanup and handoff.
 
-[contracts.md](../contracts.md)는 현재 구현된 DG-0 계약만 설명한다. [milestones.json](../../milestones.json)은 ID·선행·상태의 원본이며 상세 문서 참조만 추가한다. 다른 문서는 작업 ID를 참조하고 상세 작업 정의를 복제하지 않는다. canvas는 저장소 문서와 실제 PR을 표시하는 보조 자료다.
+[Contracts](../contracts.md) describe implemented behavior. Planning must not present a future API as an existing feature. The canvas is a secondary view of repository documents and actual PRs.
 
-## 마일스톤과 우선 경로
+## Dependencies
 
 ```mermaid
 flowchart LR
-    DG0[DG-0 계약 기반 완료] --> DG1[DG-1 macOS 개발과 자기 적용]
-    DG1 --> CS[CS-RG CodeSpace 소비와 관제]
-    CS --> P1[P1-RECOVERY Gateway 복구]
-    CS --> L[DG-LINUX 제품 전체 완료 필수]
+    DG0[DG-0 contract foundation] --> DG1[DG-1 macOS development and self-use]
+    DG1 --> CS[CS-RG consumer and control protection]
+    CS --> P1[P1-RECOVERY Gateway recovery]
+    CS --> L[DG-LINUX required for product completion]
     DG1 --> C[DG-CACHE]
     DG1 --> A[DG-ADAPTERS]
-    L -. VM과 container의 실제 Linux 제어 조건 .-> A
+    L -. actual Linux executor prerequisites .-> A
 ```
 
-DG-1은 독립 CLI/daemon·개발 workload·자기 적용을 검증한다. CS-RG는 결합된 Runner·MCP·승인·replay를 추가 검증한다. DG-1에 미구현 CS-RG를 선행 요구하지 않는다. P1 복구는 독립 Runner가 살아 있는 동안 Gateway만 재시작하는 opt-in 모드다. InProcess나 Runner 자체의 I/O 복원을 완료 범위에 넣지 않는다.
+DG-1 qualifies standalone daemon/CLI, development workloads and bounded self-use. CS-RG separately qualifies the integrated Runner, MCP, approvals and replay. This avoids requiring unimplemented CS-RG features to complete DG-1. Initial recovery requires a live independent Runner; InProcess and restoration of I/O after Runner restart are excluded.
 
-| 마일스톤 | 소유 | 예정 작업 commit 수 | 예정 PR 묶음 수 | 현재 구현 |
+| Milestone | Owner | Proposed work commits | Logical PR groups | Baseline state |
 | --- | --- | --- | --- | --- |
-| [DG-0](milestones/DG-0.md) | DevGuard | 실제 초기 commit 1개에 대한 이행 기록 | 과거 PR 재구성 없음 | 계약·fake backend 구현 |
-| [DG-1](milestones/DG-1.md) | DevGuard | 12 | 6 | 미착수 |
-| [CS-RG](milestones/CS-RG.md) | CodeSpace | 8 | 4 | 미착수 |
-| [P1-RECOVERY](milestones/P1-RECOVERY.md) | CodeSpace | 6 | 3 | 미착수 |
-| [DG-LINUX](milestones/DG-LINUX.md) | DevGuard + CodeSpace | 6 | 3 | 미착수; 전체 제품 필수 |
-| [DG-CACHE](milestones/DG-CACHE.md) | DevGuard | 6 | 3 | 미착수; P1 선행 아님 |
-| [DG-ADAPTERS](milestones/DG-ADAPTERS.md) | DevGuard | 8 | 4 | 미착수; P1 선행 아님 |
-| 후속 합계 | — | **46** | **23** | 계획 수이며 실제 GitHub 번호 아님 |
+| [DG-0](milestones/DG-0.md) | DevGuard | One actual initial commit, documented retrospectively | No invented historical PRs | Implemented contract/fake scope |
+| [DG-1](milestones/DG-1.md) | DevGuard | 12 | 6 | Not started |
+| [CS-RG](milestones/CS-RG.md) | CodeSpace | 8 | 4 | Not started |
+| [P1-RECOVERY](milestones/P1-RECOVERY.md) | CodeSpace | 6 | 3 | Not started |
+| [DG-LINUX](milestones/DG-LINUX.md) | DevGuard and CodeSpace | 6 | 3 | Not started; required overall |
+| [DG-CACHE](milestones/DG-CACHE.md) | DevGuard | 6 | 3 | Not started; not a P1 prerequisite |
+| [DG-ADAPTERS](milestones/DG-ADAPTERS.md) | DevGuard | 8 | 4 | Not started; not a P1 prerequisite |
+| Total follow-up plan | — | **46** | **23** | Planning counts, not GitHub numbers |
 
-VM/container는 작업 단위에서 실제 Linux qualification 등 추가 조건을 요구한다. 모든 플랫폼의 완료를 macOS 최초 도입과 혼동하지 않는다. 기존 CodeSpace 후속 우선순위의 상대 순서는 유지한다.
+## Execution rules
 
-## 사용 규칙
+IDs such as `DG1-C01`, commit titles and logical PR labels are proposed values. Record real SHAs and PR URLs only after creation. Documentation work DGP-D01–D04 and CSP-D01–D02 is separate from these 46 units; append-only preparation changes preserve their history and immutable links.
 
-`DG1-C01` 같은 ID는 안정적인 예정 작업 ID이고 제목도 예정 값이다. 실제 commit SHA·PR URL은 생성 후 PR과 검증 report에서 연결한다. 이번 문서 작성의 DGP-D01~D04, CSP-D01~D02는 후속 runtime 46개에 포함하지 않는다.
+`scripts/qualify.py` and CodeSpace's `scripts/qualify-devguard.py` are planned interfaces until their implementation PR provides them. A configuration file alone does not prove that a command consumes the central budget.
 
-각 작업의 현재 제공 명령은 기존 계약/회귀 범위만 확인한다. `scripts/qualify.py`와 `scripts/qualify-devguard.py`는 후속 구현이 제공할 예정 명령으로 지금 실행할 수 없다. 명령 이름이나 설정 파일만으로 실행이 governor를 통과했다고 판단하지 않는다.
+For DG-1, complete one PR through review, current-head checks, normal merge, push-triggered main checks and cleanup before beginning the next. Use one Cargo job and one test thread for necessary bootstrap work. At DG1-C10, validate and freeze a parent artifact containing the new parent-budget capability, then immediately start bounded real self-use. A C08/C09 functional artifact is not presumed to implement C10 operations, and the C10 parent is not an SLO-qualified release until C12 passes.
 
-의존 등록은 실제 실행 소유자 Runner 한 곳에서 완료한다. source/client pin, 설치 daemon/helper artifact, 제품 wire, 이 계획을 인용하는 문서 revision을 별도 값으로 기록한다. 현재 pinned Codex `6b9826e3aa83b1a5947db50f4332cb9c65f1b340`과 Apache-2.0 라이선스는 유지한다.
+Keep source/client pins, installed daemon/helper hashes, product wire versions and documentation revisions distinct. Preserve Apache-2.0 and the existing Codex pin `6b9826e3aa83b1a5947db50f4332cb9c65f1b340`.

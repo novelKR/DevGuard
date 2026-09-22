@@ -1,6 +1,8 @@
 {
   "schema": "devguard-milestones/v1",
-  "design": "docs/design.ko.md",
+  "design": "docs/design.md",
+  "approved_design_source": "docs/design-source.json",
+  "translations": "docs/translations.json",
   "critical_path": ["DG-0", "DG-1", "CS-RG", "P1-RECOVERY"],
   "milestones": [
     {"id": "DG-0", "owner": "DevGuard", "requires": [], "design_status": "accepted", "implementation_status": "implemented", "qualification": "report-required", "report_command": "python3 scripts/validate.py", "planning_document": "docs/planning/milestones/DG-0.md"},

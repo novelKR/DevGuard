@@ -4,10 +4,11 @@ DevGuard centralizes resource admission for development workloads while preservi
 
 The repository currently implements **DG-0: contracts and a durable authority core**. It does not yet install a daemon, launch user commands, apply macOS policies, or enforce Linux cgroups. The CLI examples in the approved design describe DG-1 and later work.
 
-- [Approved independent design (Korean)](docs/design.ko.md)
+- [Authoritative design reference](docs/design.md) · [Korean translation](docs/ko/design.md)
+- [Historical approved design (Korean, immutable)](docs/design.ko.md)
 - [Implemented contracts and trust boundaries](docs/contracts.md)
 - [Milestones and the CodeSpace dependency path](docs/milestones.md)
-- [Detailed execution plans, adoption gates and PR delivery (Korean)](docs/planning/README.md)
+- [Detailed execution plans, adoption gates and PR delivery](docs/planning/README.md)
 - [Machine-readable milestone state](milestones.json)
 
 ## Validate DG-0
@@ -31,6 +32,8 @@ The approved local checkout is `/Volumes/DevData/Projects/IdeaProjects/DevGuard`
 The public source repository is [novelKR/DevGuard](https://github.com/novelKR/DevGuard). CodeSpace runtime consumption begins at CS-RG after DG-1 qualification. The foundation does not publish crates or install a running host service.
 
 The detailed plan defines 46 proposed implementation commit units in 23 logical PR groups. It records single registration by the execution-owning Runner and opt-in Gateway restart recovery while an independent Runner remains alive. Planning completion does not change runtime milestone status. See the [consumer readiness gates](docs/planning/consumer-readiness.md), [CodeSpace mapping](docs/planning/codespace-integration.md), and [verification and evidence rules](docs/planning/verification.md).
+
+English is the editorial source for maintained design/planning documents. See the [translation registry](docs/translations.json); `python3 scripts/check_docs.py` validates reviewed hashes and planning references. DG-1 delivery is sequential through normal merge/main CI and cleanup. Bounded real self-use begins at C10 after freezing a functionally tested parent containing parent-budget support; C12 separately qualifies and promotes the measured release.
 
 ## License
 

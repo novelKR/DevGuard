@@ -1,0 +1,105 @@
+{
+  "schema": "devguard-translations/v1",
+  "source_language": "en",
+  "translation_language": "ko",
+  "pairs": [
+    {
+      "id": "design",
+      "source": "docs/design.md",
+      "translation": "docs/ko/design.md",
+      "reviewed_source_sha256": "efb3783329e4960c6e673550efc83e8b76c32e6b80d219cc3d5426ff72d84603",
+      "reviewed_translation_sha256": "ec2dcf5640d16b1d6a0194b3f2f20cc261517a7752befb4ee40557316c2bcfc5"
+    },
+    {
+      "id": "planning-readme",
+      "source": "docs/planning/README.md",
+      "translation": "docs/ko/planning/README.md",
+      "reviewed_source_sha256": "303629cb277193896176f3f2d0d199f2a52374d81fbe4f7ac4da86a21710b24f",
+      "reviewed_translation_sha256": "077c1c952c624d21eb85042610a17d4941ad3248a3d1fc56f0eb2bcfe0e8d5ce"
+    },
+    {
+      "id": "planning-codespace-integration",
+      "source": "docs/planning/codespace-integration.md",
+      "translation": "docs/ko/planning/codespace-integration.md",
+      "reviewed_source_sha256": "51319a381fbb25eff8a3957f8ec51a60c3d859fa3ed6e2675f4c0bed19d6ff57",
+      "reviewed_translation_sha256": "34fe2777f9aa2a840cbae9a57c5962ce55a12f4ffaa98b52c7cbac22903ef23a"
+    },
+    {
+      "id": "planning-consumer-readiness",
+      "source": "docs/planning/consumer-readiness.md",
+      "translation": "docs/ko/planning/consumer-readiness.md",
+      "reviewed_source_sha256": "50167fc9f52b7c0c34499d6f6fbfdcd9d1336300ff408b89276edf7c4e87a4d7",
+      "reviewed_translation_sha256": "fda6d8f7b0aa2f13198abf0f170b08adf27120f9355b6ee497b39e2bb9e46d57"
+    },
+    {
+      "id": "planning-decisions",
+      "source": "docs/planning/decisions.md",
+      "translation": "docs/ko/planning/decisions.md",
+      "reviewed_source_sha256": "c2ddfb2420dc2ace3ba5375f7c1eef1d97efa9bb6e6c8bc964e693e4a1fc6da5",
+      "reviewed_translation_sha256": "84be58de2228368fb63d53ad3e1c4692815987baf84f859760b8635e69ffdc95"
+    },
+    {
+      "id": "planning-milestones-cs-rg",
+      "source": "docs/planning/milestones/CS-RG.md",
+      "translation": "docs/ko/planning/milestones/CS-RG.md",
+      "reviewed_source_sha256": "4e1a8f2267d501a2fefe8f9a9d666b1a32b2337dff3a0cdcab1fb342dd191b4f",
+      "reviewed_translation_sha256": "de7682db13846c894360ec12e17553d86159ec77213641837734548fe3661913"
+    },
+    {
+      "id": "planning-milestones-dg-0",
+      "source": "docs/planning/milestones/DG-0.md",
+      "translation": "docs/ko/planning/milestones/DG-0.md",
+      "reviewed_source_sha256": "abe48a99b4b5c360b785c0f1bc0fbb3ad9b039533085d6ce857f2af40ac7370d",
+      "reviewed_translation_sha256": "82af5021faef3730e17d76c28a60bd73b2b74bf3b8b544249c15024fc1e4ade3"
+    },
+    {
+      "id": "planning-milestones-dg-1",
+      "source": "docs/planning/milestones/DG-1.md",
+      "translation": "docs/ko/planning/milestones/DG-1.md",
+      "reviewed_source_sha256": "a1017967f9040497f59f856bf0b2ff4cb4c8a3adc121141e226e76832d4e0b4a",
+      "reviewed_translation_sha256": "0ec8487cdf8c6cd5763ab5ca7c29ccd0c790e3974f025d2455aa1323fe88b2cf"
+    },
+    {
+      "id": "planning-milestones-dg-adapters",
+      "source": "docs/planning/milestones/DG-ADAPTERS.md",
+      "translation": "docs/ko/planning/milestones/DG-ADAPTERS.md",
+      "reviewed_source_sha256": "d69c3a49d283f3b9800168c9182c2e2e6cf95f136381beabfd071cb83ca6f223",
+      "reviewed_translation_sha256": "559c4bba8b709cdac4c017ce181f539e5423bf7cf39485608abc9acb5e6226d4"
+    },
+    {
+      "id": "planning-milestones-dg-cache",
+      "source": "docs/planning/milestones/DG-CACHE.md",
+      "translation": "docs/ko/planning/milestones/DG-CACHE.md",
+      "reviewed_source_sha256": "65ed59b5afd450d0c8bba39747c9601749e62c5ce2b14d3da84d79914a2aa388",
+      "reviewed_translation_sha256": "b6fb4dc373d30885da96bd7959017b34d8f20799e62946929ff2bdc4297d8e33"
+    },
+    {
+      "id": "planning-milestones-dg-linux",
+      "source": "docs/planning/milestones/DG-LINUX.md",
+      "translation": "docs/ko/planning/milestones/DG-LINUX.md",
+      "reviewed_source_sha256": "66a309edd7e57f7be117c67616a32651b34cbd1cd030b208950eba0c733c462f",
+      "reviewed_translation_sha256": "3dc09f492e8865f46378d47d42912bc7ca29b900be9cce54fd40ddd7eebfd0ae"
+    },
+    {
+      "id": "planning-milestones-p1-recovery",
+      "source": "docs/planning/milestones/P1-RECOVERY.md",
+      "translation": "docs/ko/planning/milestones/P1-RECOVERY.md",
+      "reviewed_source_sha256": "35cd557b220a40978c76be300560007fc117f64dcd0b4182e01771a209fc12d5",
+      "reviewed_translation_sha256": "f36cc2fdc9cf7959feb4122cff8bbb347295536d7f68019c6c28f652742e2373"
+    },
+    {
+      "id": "planning-pr-delivery",
+      "source": "docs/planning/pr-delivery.md",
+      "translation": "docs/ko/planning/pr-delivery.md",
+      "reviewed_source_sha256": "4f1d5ad0b6a528bb16ba505454b393f26c213281bd704745660a82c790f251af",
+      "reviewed_translation_sha256": "4113b2711fadadc4ddaf9bdee5edc32df2d4764fc2f0ea9987764f6f55a0ca44"
+    },
+    {
+      "id": "planning-verification",
+      "source": "docs/planning/verification.md",
+      "translation": "docs/ko/planning/verification.md",
+      "reviewed_source_sha256": "03a647f9126c3cb12ef68e4732d11545982432d2d0f5f00b90cef00bc30f0109",
+      "reviewed_translation_sha256": "c2e70f5e5e385d04d0efb0e379b2659986717bee24a8f3229cba93db5c50d249"
+    }
+  ]
+}
