@@ -29,7 +29,8 @@ SUITES = {
         ("native-peer", ["-p", "devguard-client", "--test", "native_peer"]),
         ("wire-compatibility", ["-p", "devguard-client", "--test", "wire_compatibility"]),
         # Native sampling tests belong to dg1-probes, not the transport suite.
-        ("service", ["-p", "devguard-daemon", "--lib", "server::tests", "--", "--skip", "server::tests::native"]),
+        ("service", ["-p", "devguard-daemon", "--lib", "server::tests", "--",
+                     "--skip", "server::tests::native", "--skip", "server::tests::launch"]),
     ],
     "dg1-probes": [
         ("pressure-controller", ["-p", "devguard-core", "--test", "pressure_contract"]),
@@ -47,6 +48,31 @@ SUITES = {
         ("native-scopes", ["-p", "devguard-macos", "--test", "scopes"],
          ["scope-lifecycle", "capability-matrix", "scope-escape", "scope-refusals"]),
     ],
+    "dg1-launch": [
+        ("helper-claims", ["-p", "devguard-core", "--test", "authority_contract", "helper_claim"]),
+        ("launch-cancel", ["-p", "devguard-core", "--test", "authority_contract", "launch_cancel"]),
+        ("helper-identity", ["-p", "devguard-macos", "--lib", "scope::tests::launch_helper"]),
+        ("transcript", ["-p", "devguard-client", "--lib", "launch::tests"]),
+        ("wire-launch", ["-p", "devguard-client", "--test", "wire_compatibility", "launch"]),
+        ("service-sessions", ["-p", "devguard-daemon", "--lib", "server::tests::launch"]),
+        ("native-launch", ["-p", "devguard-launch", "--test", "launch"],
+         ["launch-lifecycle", "payload-inventory", "duplicate-helpers", "helper-refusals",
+          "cancelled-before-claim", "exec-failure", "lost-authorization-replay",
+          "claimed-then-refused", "pseudo-terminal", "deadline-missed", "concurrent-launches"]),
+    ],
+    "dg1-reconcile": [
+        ("reconcile-contract", ["-p", "devguard-core", "--test", "authority_contract", "reconcile_"]),
+        ("launcher-evidence", ["-p", "devguard-macos", "--lib", "backend::tests"]),
+        ("wire-reconcile", ["-p", "devguard-client", "--test", "wire_compatibility", "reconcile"]),
+        ("owner-liveness", ["-p", "devguard-daemon", "--lib", "server::tests::a_process_of_an_earlier_boot"]),
+        ("service-reconciler", ["-p", "devguard-daemon", "--lib",
+                                "server::tests::launch::launch_reconciler_stops"]),
+        ("native-reconcile", ["-p", "devguard-launch", "--test", "reconcile"],
+         ["prepared-cancel-expiry", "no-helper-created", "claimed-abandonment",
+          "observe-before-reap", "reaped-before-observation", "known-escape", "terminate-scope",
+          "cancel-after-authorization", "dead-owner", "retired-instance", "unresponsive-helper",
+          "daemon-crash-restart", "journal-failure"]),
+    ],
 }
 STAGE_TIMEOUT_SECONDS = 1800
 SCOPES = {
@@ -54,9 +80,13 @@ SCOPES = {
     "dg1-auth": "native UDS peer/credential transport and closed readiness",
     "dg1-probes": "native macOS boot clock, process identity and host pressure evidence with registration closed",
     "dg1-scopes": "native macOS cooperative CPU policy readback, observed process-group scopes and identity-checked termination without a launch helper",
+    "dg1-launch": "native macOS launch helper through an isolated authority: one claimed helper per grant, and scope binding and authorization before READY and exec",
+    "dg1-reconcile": "native macOS reconciliation through isolated authorities: prepared cancellation and expiry, owner reports that no helper exists, releases only on scope termination, sticky escape and tracking loss, scope termination signals, dead owners, and a daemon crash with restart",
 }
+# Suites that start real workloads through the launch helper (in fixtures).
+LAUNCHING = {"dg1-launch", "dg1-reconcile"}
 # Native suites observe the actual host; elsewhere they are not run, never passed.
-NATIVE = {"dg1-probes", "dg1-scopes"}
+NATIVE = {"dg1-probes", "dg1-scopes", "dg1-launch", "dg1-reconcile"}
 
 
 def host_facts():
@@ -103,8 +133,10 @@ def main():
     output.mkdir(parents=True,exist_ok=False)
     report={"schema":"devguard-functional-qualification/v1","suite":args.suite,"run_id":run_id,
             "status":"failed","execution_mode":"bootstrap-functional-tests","self_governed":False,
-            "scope":SCOPES[args.suite] + "; no workload launch, resource-control enforcement or SLO qualification",
-            "runtime_qualification":{"macos_launch":"not_run","linux_cgroups":"not_run","foreground_slo":"not_run","candidate_self_use":"not_run"},"stages":[]}
+            "scope":SCOPES[args.suite] + ("; no kernel resource-control enforcement or SLO qualification" if args.suite in LAUNCHING
+                                          else "; no workload launch, resource-control enforcement or SLO qualification"),
+            "runtime_qualification":{"macos_launch":"functional_fixture" if args.suite in LAUNCHING else "not_run",
+                                     "linux_cgroups":"not_run","foreground_slo":"not_run","candidate_self_use":"not_run"},"stages":[]}
     environment=os.environ.copy()
     environment.update(CARGO_BUILD_JOBS="1",RUST_TEST_THREADS="1")
     try:

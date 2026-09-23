@@ -46,6 +46,16 @@ impl Principal {
     }
 }
 
+/// A registered instance that is not retired. `active` is false while it is
+/// suspect, for example after a restart until its owner registers again.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InstanceRecord {
+    pub consumer_id: String,
+    pub generation: String,
+    pub instance: InstanceIdentity,
+    pub active: bool,
+}
+
 #[derive(Debug)]
 pub struct LaunchDecision {
     pub attempt: AttemptRecord,
@@ -380,6 +390,67 @@ impl<B: Backend, C: Clock> Authority<B, C> {
         })
     }
 
+    /// Check that `permit` is this owner's launch grant without changing the
+    /// attempt, so a helper can be refused before any policy is applied to it.
+    pub fn verify_launch(
+        &mut self,
+        principal: &Principal,
+        key: &AttemptKey,
+        permit: &Secret,
+    ) -> Result<AttemptRecord> {
+        self.journal.transaction(|tx| {
+            validate_principal(tx, principal)?;
+            let record = owned_record(tx, principal, key)?;
+            check_permit(tx, key, permit)?;
+            Ok(record)
+        })
+    }
+
+    /// The first helper to present the launch grant claims it, and its scope is
+    /// recorded durably before binding. A claimed helper whose application or
+    /// binding fails is then reconciled through that scope, and no other scope
+    /// can claim, bind or be authorized for the attempt. Presenting the same
+    /// scope again returns the stored attempt.
+    pub fn claim_launch(
+        &mut self,
+        principal: &Principal,
+        key: &AttemptKey,
+        permit: &Secret,
+        scope: &ScopeIdentity,
+    ) -> Result<AttemptRecord> {
+        let backend = &self.backend;
+        let clock = &self.clock;
+        self.journal.transaction(|tx| {
+            validate_principal(tx, principal)?;
+            let mut record = owned_record(tx, principal, key)?;
+            check_permit(tx, key, permit)?;
+            if record.scope.as_ref() == Some(scope) {
+                return Ok(record);
+            }
+            // A cancelled, expired, suspect or already claimed grant is fenced.
+            if record.phase != AttemptPhase::LaunchCommitted || record.scope.is_some() {
+                return Err(invalid_transition());
+            }
+            let kind = record
+                .plan
+                .as_ref()
+                .ok_or_else(invalid_transition)?
+                .scope_kind;
+            if scope.kind != kind
+                || scope.root.boot_id != clock.now().boot_id
+                || backend.process_identity(scope.root.pid)?.as_ref() != Some(&scope.root)
+            {
+                return Err(Error::new(
+                    ErrorCode::ResourcePolicyUnsupported,
+                    "helper scope was not verified",
+                ));
+            }
+            record.scope = Some(scope.clone());
+            journal::save(tx, &record)?;
+            Ok(record)
+        })
+    }
+
     pub fn bind_scope(
         &mut self,
         principal: &Principal,
@@ -396,7 +467,13 @@ impl<B: Backend, C: Clock> Authority<B, C> {
             if record.phase == AttemptPhase::ScopeBound && record.scope.as_ref() == Some(scope) {
                 return Ok(record);
             }
-            if record.phase != AttemptPhase::LaunchCommitted {
+            // A grant claimed by one helper can never bind another scope.
+            if record.phase != AttemptPhase::LaunchCommitted
+                || record
+                    .scope
+                    .as_ref()
+                    .is_some_and(|claimed| claimed != scope)
+            {
                 return Err(invalid_transition());
             }
             let evidence = backend.binding(scope)?;
@@ -467,16 +544,26 @@ impl<B: Backend, C: Clock> Authority<B, C> {
 
     /// Cancellation fences late helpers before reclamation. Post-commit cancellation
     /// keeps the reservation until a separately verified scope termination.
+    ///
+    /// Draining is already fenced, Suspect stays Suspect until reconciliation
+    /// settles it and a terminal attempt stays terminal: none is rewritten.
     pub fn cancel(&mut self, principal: &Principal, key: &AttemptKey) -> Result<AttemptRecord> {
+        let now = self.clock.now();
         self.journal.transaction(|tx| {
             validate_principal(tx, principal)?;
+            journal::expire_prepared(tx, &now)?;
             let mut record = owned_record(tx, principal, key)?;
-            if record.phase == AttemptPhase::Prepared {
-                record.phase = AttemptPhase::Cancelled;
-            } else if record.phase.charged() {
-                record.phase = AttemptPhase::Draining;
+            let before = record.phase;
+            record.phase = match before {
+                AttemptPhase::Prepared => AttemptPhase::Cancelled,
+                AttemptPhase::LaunchCommitted
+                | AttemptPhase::ScopeBound
+                | AttemptPhase::RunAuthorized => AttemptPhase::Draining,
+                unchanged => unchanged,
+            };
+            if record.phase != before {
+                journal::save(tx, &record)?;
             }
-            journal::save(tx, &record)?;
             Ok(record)
         })
     }
@@ -494,7 +581,14 @@ impl<B: Backend, C: Clock> Authority<B, C> {
             if record.phase.terminal() || record.phase == AttemptPhase::Prepared {
                 return Ok(record);
             }
+            let before = record.clone();
             match &record.scope {
+                // Every process of an earlier boot has ended, including any
+                // member whose tracking was lost; the history is kept.
+                Some(scope) if scope.root.boot_id != now.boot_id => {
+                    record.phase = AttemptPhase::Released;
+                    record.release_reason = Some(ReleaseReason::PreviousBoot);
+                }
                 Some(scope) => match backend.observe_scope(scope) {
                     Ok(observation) => {
                         // Freshness is judged after the observation completes.
@@ -548,8 +642,51 @@ impl<B: Backend, C: Clock> Authority<B, C> {
                     }
                 }
             }
-            journal::save(tx, &record)?;
+            // A periodic pass changes nothing most of the time; skip the write.
+            if record != before {
+                journal::save(tx, &record)?;
+            }
             Ok(record)
+        })
+    }
+
+    /// Charged attempts, after expiring Prepared attempts past their deadline.
+    /// For the trusted reconciler; it changes no other attempt.
+    pub fn attempts(&mut self) -> Result<Vec<AttemptRecord>> {
+        let now = self.clock.now();
+        self.journal.transaction(|tx| {
+            journal::expire_prepared(tx, &now)?;
+            journal::active(tx)
+        })
+    }
+
+    /// Instances that are not retired, with their registered identities.
+    pub fn instances(&mut self) -> Result<Vec<InstanceRecord>> {
+        self.journal.transaction(|tx| {
+            let mut statement = tx
+                .prepare("SELECT consumer,generation,identity,state FROM instances WHERE state!='retired'")
+                .map_err(db_error)?;
+            let mut rows = statement.query([]).map_err(db_error)?;
+            let mut instances = Vec::new();
+            while let Some(row) = rows.next().map_err(db_error)? {
+                let state: String = row.get(3).map_err(db_error)?;
+                instances.push(InstanceRecord {
+                    consumer_id: row.get(0).map_err(db_error)?,
+                    generation: row.get(1).map_err(db_error)?,
+                    instance: decode(&row.get::<_, String>(2).map_err(db_error)?)?,
+                    active: match state.as_str() {
+                        "active" => true,
+                        "suspect" => false,
+                        _ => {
+                            return Err(Error::new(
+                                ErrorCode::JournalInvalid,
+                                "invalid instance state",
+                            ))
+                        }
+                    },
+                });
+            }
+            Ok(instances)
         })
     }
 
@@ -577,11 +714,14 @@ impl<B: Backend, C: Clock> Authority<B, C> {
         instance: &str,
     ) -> Result<bool> {
         let backend = &self.backend;
+        let now = self.clock.now();
         self.journal.transaction(|tx| {
             let raw: String = tx.query_row("SELECT identity FROM instances WHERE consumer=?1 AND generation=?2 AND instance=?3",
                 params![consumer, generation, instance], |r| r.get(0)).optional().map_err(db_error)?.ok_or_else(not_found)?;
             let identity: InstanceIdentity = decode(&raw)?;
-            let alive = backend.process_identity(identity.process.pid)?.as_ref() == Some(&identity.process);
+            // A process of an earlier boot has ended, whatever holds its PID now.
+            let alive = identity.process.boot_id == now.boot_id
+                && backend.process_identity(identity.process.pid)?.as_ref() == Some(&identity.process);
             let occupied = journal::active(tx)?.iter().any(|r| r.key.consumer_id == consumer
                 && r.key.consumer_generation == generation && r.owner == identity);
             let retired = !alive && !occupied;

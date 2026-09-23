@@ -1,14 +1,14 @@
 # 구현된 authority 계약
 
-이 문서는 구현된 DG-0 authority, C01/C02 서비스·저장소·transport 동작, C03 native macOS 호스트 증거와 C04 협조적 정책·scope 증거를 설명한다. PR과 병합 후 main 전달 증거는 구현과 별도로 추적한다. 실제 제공 명령은 [운영 문서](operations.md)에 있다. Wire 등록·launch, OS 정책 적용과 CodeSpace 결합은 아직 구현하지 않았다. [영문 정본](../contracts.md).
+이 문서는 구현된 DG-0 authority, C01/C02 서비스·저장소·transport 동작, C03 native macOS 호스트 증거, C04 협조적 정책·scope 증거, C05 fenced launch helper와 C06 대조를 설명한다. PR과 병합 후 main 전달 증거는 구현과 별도로 추적한다. 실제 제공 명령은 [운영 문서](operations.md)에 있다. Native 호스트 증거가 있으면 서비스는 등록·launch·대조를 열며, CodeSpace 결합은 아직 구현하지 않았다. [영문 정본](../contracts.md).
 
 ## Authority와 transport 경계
 
 Core는 Rust 라이브러리다. Authority::register는 TrustedPeer를 받고, 설정 UID·소비자 자격·generation·정확한 프로세스 정체성을 Backend로 검증한다. 성공하면 불투명 Principal을 반환하며 workload는 공개 API로 control-service Principal을 만들 수 없다. Workload 소비자는 제어 예약을 설정할 수 없다. 관리 대조와 generation 폐기는 신뢰하는 daemon·운영자 경로의 책임이며 workload RPC로 공개하면 안 된다.
 
-DG-0는 가짜 peer·backend로 라이브러리 등록 경계를 검증한다. C02는 실제 로컬 UDS 인증과 작은 client를 제공하지만 native 등록은 활성화하지 않는다. 서버는 OS socket 자격으로 peer UID/PID를 관측하고, client는 handshake의 authority UID/PID와 자기 정체성을 독립적으로 대조한다. 호출자가 선언한 peer 정체성을 신뢰하지 않는다. C03은 native boot/start 정체성을 추가하므로, OS가 관측한 peer UID/PID와 kernel start 정체성을 결합하면 완전한 신뢰 등록 관측이 된다. Native 시험은 이 경로를 프로세스 안에서 검증한다. 서비스는 DG1-P3가 launch와 대조를 설치할 때까지 wire 등록을 계속 거절한다. 인증만으로 Principal·instance 슬롯·lease·호스트 예산을 발급하지 않는다. 현재 workload/control-service 등록은 ResourceControlUnavailable을 반환하고 관리 자격으로는 등록할 수 없다.
+DG-0는 가짜 peer·backend로 라이브러리 등록 경계를 검증한다. C02는 실제 로컬 UDS 인증과 작은 client를 제공하지만 native 등록은 활성화하지 않는다. 서버는 OS socket 자격으로 peer UID/PID를 관측하고, client는 handshake의 authority UID/PID와 자기 정체성을 독립적으로 대조한다. 호출자가 선언한 peer 정체성을 신뢰하지 않는다. C03은 native boot/start 정체성을 추가하므로, OS가 관측한 peer UID/PID와 kernel start 정체성을 결합하면 완전한 신뢰 등록 관측이 된다. Native 시험은 이 경로를 프로세스 안에서 검증한다. Native 호스트 증거가 있으면 서비스는 wire 등록과 아래의 fenced launch helper를 대조와 함께 연다. 다른 플랫폼이거나 macOS 관측이 실패해 그 증거가 없으면 workload/control-service 등록은 ResourceControlUnavailable을 반환한다. 인증만으로 Principal·instance 슬롯·lease·호스트 예산을 발급하지 않는다. 관리 자격으로는 등록할 수 없다.
 
-Handshake는 contract 호환성과 wire version 1을 확인하며 C02는 runtime capability를 광고하지 않는다. Consumer generation과 자격 digest가 workload/control-service 역할을 결정하며 별도 관리 digest는 명시적으로 공개한 관리 역할에만 사용한다. 모든 consumer·관리 digest는 서로 달라야 한다. Caller 자격, 후속 일회성 helper permit과 관리 작업은 별도 경계이며 helper 자격 variant를 caller 인증으로 받지 않는다. 이는 협조적인 운영 계정 모델이며 악의적인 동일 UID 프로세스를 격리하지 않는다.
+Handshake는 contract 호환성과 wire version 1을 확인한다. Native 증거가 있는 서비스는 내구성 admission, fenced launch, 자원별 증거, 정적 제어 예약, macOS 협조적 제어를 광고하며, 증거가 없으면 아무것도 광고하지 않는다. Consumer generation과 자격 digest가 workload/control-service 역할을 결정하며 별도 관리 digest는 명시적으로 공개한 관리 역할에만 사용한다. 모든 consumer·관리 digest는 서로 달라야 한다. Caller 자격, 일회성 helper permit과 관리 작업은 별도 경계이며 helper 자격 variant를 caller 인증으로 받지 않는다. 이는 협조적인 운영 계정 모델이며 악의적인 동일 UID 프로세스를 격리하지 않는다.
 
 Authority는 journal 부모 디렉터리에 no-follow 배타 잠금을 보유한다. 같은 디렉터리의 모든 journal은 그 잠금을 공유한다. 잠금은 O_NONBLOCK으로 열고 열린 descriptor가 현재 UID 소유의 private 일반 파일이며 링크가 정확히 하나인지 명시 초기화 때도 확인한다. FIFO·링크된 파일은 잠금 대신 사용할 수 없다. C01은 caller HOME·XDG가 아니라 OS 계정으로 정상 경로를 결정하고 state·socket override를 거절한다. 프로젝트 설정에는 authority 자격이나 호스트 용량을 둘 수 없다. 운영 후보 경로는 C10의 부모 lease 경계가 제공될 때까지 사용할 수 없다.
 
@@ -37,11 +37,11 @@ CredentialHandoff는 전용 상속 descriptor로 caller secret 하나를 전달�
 
   비율은 최근 10초의 읽기로 계산하고 올림하므로 절사 때문에 임계값을 놓치지 않는다. 시작 직후처럼 창이 짧으면 swap 증가량을 10초 기준으로 외삽한다. 관제 loop 지연은 sampler가 예정보다 늦게 깨어난 시간과 직전 읽기가 일정을 넘긴 시간 중 큰 값이며, 각 읽기는 호스트 읽기에 걸린 시간(`read_ms`)도 기록한다. 예정보다 늦어지면 몰아서 따라잡지 않고 완료된 읽기로부터 한 주기 뒤에 다시 시작하며, 직전 읽기와 같은 millisecond의 읽기는 실패가 아니라 비율 없음으로 처리한다. 볼륨이 여럿이면 디스크 임계값이 가장 엄격하게 판정하는 볼륨을 쓴다. macOS에는 Linux 메모리 PSI가 없다.
 - **준비 상태.** Sample에는 이전 읽기가 필요하므로 두 번째 유효 읽기 전까지 admission은 닫혀 있다. 실패하거나 일관되지 않은 읽기는 `Authority::pressure_observation_failed`로 새 작업을 즉시 닫고 비율 창을 다시 시작하며, 이후에는 일반적인 30초 단계 복귀가 필요하다. 일관되지 않은 읽기에는 알 수 없는 수준, 누락된 볼륨, 되돌아간 counter나 시계가 포함된다. Stale·미래·replay·다른 boot의 sample은 거절한다. Sampling이 멈추면 마지막 sample이 6초보다 오래된 시점에 admission이 닫힌다.
-- **활성화.** `serve`는 배타적으로 보유한 journal을 native 시계·backend로 활성화하므로 boot 인지 복구에 실제 정체성을 사용한다. Backend는 macOS plan을 반환한다. 이는 QoS·우선순위를 통한 협조적 CPU, 회계 대상 메모리·task, 관측 process group이다. 다음 절의 scope 증거도 제공하지만 launcher 증거는 제공하지 않는다. 서비스는 DG1-P3 전에는 scope를 수립하지 않으므로 아직 어떤 attempt도 서비스를 통해 bind되지 않는다. 인증된 status의 `registration_ready`와 `execution_ready`는 false를 유지한다. 서비스는 활성화, baseline, 상태 전이, 거절된 sample, 늦은 관제 loop 기상, 실패, 1분 heartbeat를 stderr에 JSON-line receipt로 남기며 자격 정보는 포함하지 않는다. Sampler가 어떤 이유로든 멈추면 서비스도 오류와 함께 멈춘다. 종료를 시작한 뒤 3초 안에 돌아오지 않는 probe는 종료를 막지 못하도록 버리며, 이때 서비스는 오류와 함께 종료한다.
+- **활성화.** `serve`는 배타적으로 보유한 journal을 native 시계·backend로 활성화하므로 boot 인지 복구에 실제 정체성을 사용한다. Backend는 macOS plan을 반환한다. 이는 QoS·우선순위를 통한 협조적 CPU, 회계 대상 메모리·task, 관측 process group이다. 다음 절의 scope 증거와, 대조 절에서 설명하는 claim되지 않은 grant에 helper가 없다는 owner 보고 증거도 제공한다. 인증된 status의 `registration_ready`와 `execution_ready`는 true다. 서비스는 활성화, baseline, 상태 전이, 거절된 sample, 늦은 관제 loop 기상, 실패, 1분 heartbeat를 stderr에 JSON-line receipt로 남기며 자격 정보는 포함하지 않는다. Sampler가 어떤 이유로든 멈추면 서비스도 오류와 함께 멈춘다. 종료를 시작한 뒤 3초 안에 돌아오지 않는 probe는 종료를 막지 못하도록 버리며, 이때 서비스는 오류와 함께 종료한다.
 
 ## Native 정책 적용과 scope 증거
 
-macOS에서 scope는 root가 이끄는 process group이며 DG1-P3에서는 launch helper가 root가 된다. Workload는 협조적이고 그 group 안에 머문다고 가정한다. Backend는 임의 자손의 격리나 kernel 메모리·task 제한을 주장하지 않으며 `NOTE_TRACK`을 사용하지 않는다.
+macOS에서 scope는 root가 이끄는 process group이다. Root는 launch helper이며, 이후 helper가 executable로 바뀐다. Workload는 협조적이고 그 group 안에 머문다고 가정한다. Backend는 임의 자손의 격리나 kernel 메모리·task 제한을 주장하지 않으며 `NOTE_TRACK`을 사용하지 않는다.
 
 - **Root 준비.** Root는 스스로 process group leader가 되고 utility QoS class(`POSIX_SPAWN_SETEXEC`와 `posix_spawnattr_set_qos_class_np`)로 자신을 다시 실행한다. 이때 PID, group, 환경, 상속 descriptor는 유지된다(`become_scope_root`, `exec_with_workload_qos`). 자손은 QoS clamp와 nice 값을 상속한다.
 - **Scope 수립.** `NativeBackend::establish_scope`는 같은 사용자의 같은 boot에서 살아 있고, 자기 group을 이끌며, 아직 그 group에 혼자 있는 root만 받는다. 그다음 authority가 root의 nice를 +10으로 올리고(더 높은 값은 낮추지 않음) 결과를 다시 읽는다.
@@ -61,8 +61,58 @@ macOS에서 scope는 root가 이끄는 process group이며 DG1-P3에서는 launc
 
   이탈과 추적 상실은 모두 scope에 고정되며 이후의 평범한 관측으로 해제되지 않는다. 관측 시각은 관측이 끝날 때 기록한다.
 - **종료.** `signal_scope`는 알려진 정체성과 알려진 이탈 정체성에 양수 signal을 PID 하나씩 보낸다. 현재 group 구성원에게도 보내지만, group이 여전히 이 scope의 것이라고 입증될 때만 보낸다. 각 대상은 signal 직전에 다시 확인한다. Root를 관측할 수 없거나 group을 입증할 수 없거나 나열·전달이 실패해도 확인된 정체성에는 signal을 보내며, 그 대신 receipt를 불완전으로 표시한다. 오래된 PID나 process group에는 보내지 않으며 전달이 회수 증거가 되지는 않는다. macOS에는 프로세스 handle이 없으므로 재확인과 signal 사이에 PID가 재사용될 가능성은 남는다.
-- **회수.** 회수에는 여전히 core의 완전한 증거가 필요하다. 자손이 남은 채 reap된 root, zombie 구성원, 알려진 이탈, 불완전한 추적은 각각 회수를 막는다. Launcher 증거는 DG1-P3에서 추가되므로 bind되지 않은 committed launch는 이 backend로 회수할 수 없다.
-- **한계.** Authority 프로세스는 scope 추적을 메모리에 보유한다. 재시작 후에는 이전에 bind된 scope를 backend가 알지 못하므로 해당 attempt는 명시 대조(DG1-C06)까지 Suspect가 된다. setuid 프로그램처럼 authority가 관측할 수 없는 구성원은 해당 scope의 추적 상실을 영구히 만든다. Group에 알려진 구성원이 남지 않은 상태에서 root가 reap되면, 살아남은 알 수 없는 구성원이 이 scope의 것임을 입증할 수 없다. 이들은 영구 추적 상실이 되고 signal도 받지 않으므로 DG1-P3 launch 경로는 root가 reap되기 전에 scope를 관측해야 한다.
+- **회수.** 회수에는 여전히 core의 완전한 증거가 필요하다. 자손이 남은 채 reap된 root, zombie 구성원, 알려진 이탈, 불완전한 추적은 각각 회수를 막는다. bind되지 않은 committed launch는 helper가 없다는 owner의 보고가 있을 때만 회수한다([대조](#대조) 참고).
+- **한계.** Authority 프로세스는 scope 추적을 메모리에 보유한다. 재시작 후에는 이전에 bind된 scope를 backend가 알지 못하므로 해당 attempt는 reboot가 종료를 입증할 때까지 추적 상실과 함께 Suspect로 남는다. setuid 프로그램처럼 authority가 관측할 수 없는 구성원은 해당 scope의 추적 상실을 영구히 만든다. Group에 알려진 구성원이 남지 않은 상태에서 root가 reap되면, 살아남은 알 수 없는 구성원이 이 scope의 것임을 입증할 수 없다. 이들은 영구 추적 상실이 되고 signal도 받지 않으므로 root가 reap되기 전에 scope를 관측해야 한다. Owner는 종료한 root를 아직 reap하지 않은 상태에서 `Observe`로 이를 수행한다.
+
+## Fenced launch helper
+
+DG1-C05는 launch helper(`devguard-launch`)와 이를 위한 wire 요청을 추가한다. 서비스는 native 호스트 증거가 있을 때만 이를 열며, 아래의 대조와 함께 연다.
+
+- **등록.** 인증을 마친 소비자 session은 자기 instance를 등록한다. Authority는 OS가 관측한 peer와 kernel start 정체성에서 프로세스 정체성을 얻으며, 호출자는 instance ID만 제공한다. Session은 제한된 교환이므로 새 session마다 다시 등록하며, 이는 같은 instance를 다시 활성화한다.
+- **Admission과 grant.** `Admit`은 attempt를 기록하고 `BeginLaunch`는 이를 commit한다. 일회성 permit은 첫 `BeginLaunch` 응답에만 들어 있다. Attempt는 등록된 instance에 속하며, 다른 instance는 이를 조회·취소·commit할 수 없다.
+- **Helper 시작.** Owner는 grant마다 helper를 최대 하나, 자신의 직접 자식으로 시작한다(`devguard_client::launch::helper_command`). Permit은 private descriptor로 전달한다. 두 번째 private descriptor는 executable 자체 출력과 분리된 helper transcript를 전달한다. 인자와 환경에는 비밀이 없다. 그다음 helper는 다음 순서로 진행한다.
+  1. 자기 process group을 이끈다. Pseudo-terminal의 session leader는 이미 그렇다.
+  2. Utility QoS clamp 아래에서 자신을 다시 실행하며 PID와 두 descriptor를 유지한다.
+  3. Permit descriptor를 소비하고 닫으며, transcript를 close-on-exec로 표시한다.
+  4. 다른 요청을 할 수 없는 자기 session에서 grant를 제시한다.
+  5. 첫 번째 authorization이 성공하면 READY를 보고하고 program을 실행한다. Executable은 helper의 PID와 process group, 작업 디렉터리, 환경과 그 밖의 모든 상속 descriptor를 유지한다.
+- **Authority 검사.** 아래 검사는 모두 하나의 authority 잠금 안에서 수행하므로 취소·대조·다른 helper가 끼어들 수 없다.
+  - Owner는 이번 서비스 수명 안에 등록되어 있어야 한다.
+  - 제시한 프로세스는 같은 사용자의 살아 있는 프로세스이고 부모가 owner여야 하며, owner도 아직 실행 중이어야 한다.
+  - Permit은 이 grant의 것이어야 한다.
+  - Grant는 아직 commit 상태이거나 바로 이 helper가 이미 claim한 상태여야 한다.
+
+  그다음 authority는 helper의 scope를 수립하며 nice를 적용하고 정책을 다시 읽는다. 여기까지 처음 도달한 helper가 grant를 claim한다. Bind하기 전에 그 scope를 내구성 있게 기록하므로, 그 뒤에 거절된 helper도 scope로 정리되며, 수립에 실패한 helper는 grant를 소모하지 않는다. 그다음 authority는 scope를 bind하고 실행을 authorize한다. 두 번째 helper, 취소 뒤에 온 helper, 실행 뒤에 온 helper는 모두 거절된다. 응답이 유실된 뒤 같은 helper가 다시 제시하면 `may_exec = false`를 받으며 실행하지 않는다.
+- **거절.** Claim 전에 거절된 helper는 grant를 claim하지 않으므로 owner 자신의 helper가 여전히 그 grant를 쓸 수 있다. Claim 뒤에 거절된 helper는 종료된다. 예를 들어 readback에 utility clamp가 없는 경우다. 그 scope는 계속 과금되며 종료가 관측될 때만 회수된다. 이 회수는 executable이 시작하지 않았다는 증거가 아니다.
+- **Transcript.** 한 줄에 JSON 객체 하나를 쓴다.
+  - `failed`: helper가 grant를 제시하지 못했으므로 claim하지 않았다.
+  - `refused`: authorize되지 않았거나 응답이 유실되었다. Helper는 절대 실행하지 않는다.
+  - `ready`: exec 전 경계를 모두 마쳤다. Executable이 시작했다는 증거는 아니다.
+  - `exec_failed`: READY 뒤의 exec가 실패했다.
+
+  Exec가 성공하면 이 descriptor가 닫힌다. Helper는 authorize되지 않으면 125, program이 없으면 127, 그 밖의 exec 실패에는 126으로 종료한다. 그 밖의 종료 상태는 executable의 것이다.
+- **Descriptor.** Helper는 자기 descriptor인 permit 전달체, transcript, authority session만 닫는다. Owner가 상속 가능하게 남긴 나머지는 명령 의미의 일부로 executable에 전달되므로, owner는 관계없는 descriptor를 close-on-exec로 유지해야 한다. macOS는 pipe나 socket pair를 close-on-exec로 원자적으로 만들 수 없다. 따라서 client는 grant의 descriptor를 표준 세 개보다 높은 번호로 만들고 helper spawn과 함께 하나의 프로세스 전역 guard 아래에서 수행하며, `HelperCommand::spawn`은 owner 쪽 사본을 닫는다. 다른 thread에서 다른 프로세스를 spawn하는 owner는 같은 guard(`spawn_guard`)를 잡거나 기본적으로 close-on-exec로 spawn해야 한다.
+- **Receipt.** 제시마다 `helper_authorized`, `helper_replayed`, `helper_refused` 중 하나의 receipt를 남기며, claim 전 거절도 포함한다. Authorization에 걸린 시간을 기록한다. Helper의 250 ms 기한을 넘긴 응답은 helper에게 거절이며 helper는 실행하지 않는다.
+- **호환성.** Journal schema는 바뀌지 않는다. Claim했지만 bind하지 않은 attempt는 scope가 있고 적용 자원이 없는 commit record다. 이전 artifact도 이를 읽으며, 다른 commit launch와 같이 재시작 때 Suspect로 전환한다. Wire version 1에는 서비스가 fenced launch를 광고한 뒤에만 client가 사용하는 요청과 응답이 추가된다.
+
+## 대조
+
+DG1-C06은 서비스의 reconciler와 attempt를 정리하는 owner 요청을 추가한다. 시간 초과, 연결 끊김, owner 사망, reap된 root 중 어느 것도 단독으로는 회수 근거가 되지 않는다.
+
+- **Reconciler.** 서비스는 매초 과금 중인 attempt를 모두 대조하며, authority 잠금은 attempt 하나마다 잡는다.
+  - Prepared attempt는 원래의 5초 기한에 만료된다.
+  - Claim되었거나 bind된 attempt는 scope가 끝났다고 관측될 때만 회수한다. Root가 reap되고, group이 비고, 알려진 구성원이 사라지고, 추적이 완전하며, 이탈이 없어야 한다. 이탈이나 불완전한 관측은 고정되는 추적 상실과 함께 Suspect로 만든다.
+  - Claim되지 않은 grant는 helper가 아직 claim할 수 있으므로 owner가 실행 중인 동안 그대로 둔다. Owner가 사라지면 어떤 helper도 claim할 수 없으므로 Suspect가 되며, 회수하지는 않는다.
+  - 이전 boot의 scope는 추적 상실 뒤에도 이전 boot 종료로 회수한다.
+  - 대조로 바뀌지 않은 attempt는 다시 쓰지 않는다.
+
+  실패한 대조 pass는 `reconcile_failed`로 보고하고 다시 시도한다. Authority 잠금이 오염된 경우를 포함해 reconciler가 멈추면 서비스도 멈추므로 launch가 대조 없이 열린 채로 남지 않는다.
+- **Instance.** Session은 제한된 교환이므로 session을 닫는다고 instance가 suspect가 되지 않는다. 기준은 등록된 프로세스의 수명이다. 그 프로세스가 사라지면 과금 중인 attempt가 없을 때 instance를 폐기하고, 있으면 suspect로 둔다. 그 instance를 지정한 helper는 거절한다. 이전 boot의 프로세스는 지금 그 PID를 누가 쓰든 끝난 것이므로, reboot 뒤에는 다른 사용자의 프로세스가 옛 owner의 PID를 쓰더라도 옛 owner를 정리한다. 같은 boot 안에서 kernel이 관측을 거부하면 대조를 미룰 뿐이다.
+- **Helper 미생성.** Grant의 permit은 owner만 가지므로 owner는 그 grant의 helper가 없고 앞으로도 시작하지 않는다고 보고할 수 있다(`AbandonLaunch`). Helper 생성이 실패했거나, helper가 READY 전에 종료되어 reap되었거나, permit을 담은 응답이 도착하지 않은 경우다. 이 보고에는 permit이 필요 없고, owner의 등록 정체성에 묶이며, 메모리에 보관한다. 보고가 있으면 claim되지 않은 grant를 `NoHelperCreated`로 회수하며, 이는 executable이 시작하지 않았다는 증거다. Claim된 grant에는 helper가 있으므로 보고로 회수할 수 없고 그 scope로만 정리된다. 이 회수가 안전한 이유는, 보고와 회수가 모든 claim과 같은 authority 잠금 안에서 이루어지고, 회수되었거나 Suspect인 grant는 절대 claim·bind·authorize될 수 없어 늦은 helper가 executable을 시작할 수 없기 때문이다. Journal도 scope가 있는 `NoHelperCreated` record와 scope가 없는 `ScopeTerminated` record를 거절한다.
+- **Reap 전 관측.** `Observe`는 owner의 attempt를 같은 규칙으로 즉시 대조한다. 종료했지만 아직 reap되지 않은 root는 PID를 보유하므로 그 group에 남은 구성원을 편입할 수 있다. Owner가 먼저 reap하면 살아남은 구성원이 이 scope의 것임을 입증할 수 없으므로 추적 상실이 되고 attempt는 Suspect로 남는다.
+- **종료.** `Terminate`는 claim되었거나 bind된 scope의 다시 확인한 정체성마다 interrupt·hangup·terminate·kill 중 하나를 보낸다. Signal을 보낸 정체성의 수와 모든 대상을 관측할 수 있었는지를 보고한다. 전달은 phase를 바꾸지 않으며 회수 증거가 아니다. 재시작 뒤에는 scope를 알 수 없으므로 서비스가 signal을 보낼 수 없다.
+- **재시작.** 재시작은 commit된 모든 attempt와 등록된 모든 instance를 Suspect로 만들며, owner는 새 session에서 다시 등록한다. 이전에 bind된 scope는 프로세스가 끝나도 reboot 전까지 추적 상실과 함께 Suspect로 남는다. Claim되지 않은 grant는 실행 중인 owner의 보고로만 회수한다. 재시작 전후의 회계 합계는 같다.
+- **Receipt.** 서비스는 자격 정보 없이 다음 JSON line을 stderr에 남긴다: `registered`, `admission`, `launch_committed`, `cancelled`, `helper_authorized`, `helper_refused`, `helper_replayed`, `launch_abandoned`, `scope_signalled`, `attempt_reconciled`, `instance_reconciled`, `reconcile_failed`, `reconcile_stopped`.
 
 ## 내구성 admission과 launch
 
@@ -70,17 +120,17 @@ Journal schema는 1이다. 초기화는 명시적으로 새 파일만 만든다.
 
 Attempt key는 `(consumer_id, consumer_generation, attempt_id)`다. 요청 fingerprint는 버전 있는 실행 digest와 자원 intent를 포함하고 transport ID·현재 policy revision을 제외한다. Replay는 최초 내구 예약·종결 결과를 반환하고 의미나 owner 변경은 충돌한다. 거절도 종결 attempt이므로 나중에 별도로 요청하는 admission은 새 attempt ID를 사용한다.
 
-begin_launch는 Prepared를 내구성 있게 소비하고 일회성 Secret permit을 반환한다. 반복 호출에는 새 spawn 권한이 없고 기존 attempt만 있다. Journal에는 permit digest만 저장한다. 첫 응답이 유실되면 대조해야 하며 transition replay로 helper를 다시 만들 수 없다.
+begin_launch는 Prepared를 내구성 있게 소비하고 일회성 Secret permit을 반환한다. 반복 호출에는 새 spawn 권한이 없고 기존 attempt만 있다. Journal에는 permit digest만 저장한다. 첫 응답이 유실되면 대조해야 하며 transition replay로 helper를 다시 만들 수 없다. `verify_launch`는 grant를 바꾸지 않고 검사한다. `claim_launch`는 bind하기 전에 처음 도달한 helper의 수립된 scope를 내구성 있게 기록하며, 그 뒤에는 다른 scope가 claim·bind·authorize될 수 없고 `bind_scope`도 claim된 scope만 받는다.
 
 bind_scope는 attempt·owner·정확한 프로세스 정체성·scope·전체 적용 plan을 연결한 신선한 Backend 증거를 요구한다. 여기와 대조에서 backend 증거의 신선도는 backend가 반환한 뒤 읽은 시계를 기준으로 판단한다. 따라서 transition 도중 관측한 증거를 미래로 취급하지 않으며, 2초보다 오래되었거나 다른 boot의 증거는 계속 거절한다. C04는 실제 시계 증거로 드러난 이 순서를 바로잡았으며, 고정 시계를 쓰는 가짜 backend로는 드러나지 않았다. authorize_run은 연결된 helper 정체성과 permit을 검증하며 최초 성공 응답만 may_exec=true다. 이 응답 유실은 불확실·차단된 실행이지 재생성 허용이 아니다. RunAuthorized는 사용자 executable 성공의 증거가 아니다.
 
-Prepared 취소는 종결하고 예약을 반환한다. Commit 후 취소는 Draining으로 전환하고 늦은 bind·authorize를 막으며 예약을 유지한다. Prepared만 5초 후 만료된다. 재시작은 Prepared의 원래 boot-relative 기한을 유지하고 commit 후 미종결 attempt와 등록 instance를 Suspect로 전환하여 대조한다.
+Prepared 취소는 종결하고 예약을 반환한다. Commit 후 취소는 Draining으로 전환하고 늦은 bind·authorize를 막으며 예약을 유지한다. Draining·Suspect·종결 attempt를 취소해도 아무것도 바뀌지 않으며, 기한이 지난 Prepared attempt는 만료를 보고한다. Prepared만 5초 후 만료된다. 재시작은 Prepared의 원래 boot-relative 기한을 유지하고 commit 후 미종결 attempt와 등록 instance를 Suspect로 전환하여 대조한다.
 
 ## 회수 증거
 
 무조건 release(lease_id) API는 없다. Bound 실행은 정확한 scope와 신선한 root 종료·reap, scope 비움, 알려진 구성원 생존 없음, 완전한 추적과 알려진 이탈 없음이 필요하다. 이전 추적 상실은 평범한 빈 group 관측만으로 사라지지 않는다. 명시 대조 증거나 검증된 호스트 reboot 종료가 필요하다.
 
-Unbound committed launch는 PID 누락이나 owner 사망만으로 회수하지 않는다. Backend가 helper 미생성과 모든 pending spawn 부재를 적극적으로 입증해야 한다. Reboot로 이전 실행 종료를 대조할 수도 있다. release_reason은 scope 종료·helper 미생성·이전 boot 종료를 구분한다. known_not_started는 prelaunch 종결 거절과 Released/NoHelperCreated에서만 참이다. 자원 반환 자체는 재시도 증거가 아니다.
+Unbound committed launch는 PID 누락이나 owner 사망만으로 회수하지 않는다. Backend가 helper 미생성과 모든 pending spawn 부재를 적극적으로 입증해야 하며, macOS에서는 대조 절에서 설명한 owner 보고가 그 증거다. Reboot로 이전 실행 종료를 대조할 수도 있다. release_reason은 scope 종료·helper 미생성·이전 boot 종료를 구분한다. known_not_started는 prelaunch 종결 거절과 Released/NoHelperCreated에서만 참이다. 자원 반환 자체는 재시도 증거가 아니다.
 
 일반 TTL sweep은 tombstone을 삭제하지 않는다. 운영자 generation 폐기에는 모든 instance retired와 charge 없음이 필요하다. 종결 attempt 압축 전에 영구 retired generation을 기록하여 과거 key를 계속 거절한다.
 
@@ -96,7 +146,7 @@ Journal은 instance의 등록 정책을 기록한다. Active/suspect instance가
 
 ## 후속 마일스톤의 책임
 
-- 남은 DG-1: wire 등록, helper와 launcher 증거, 실행 CLI, Cargo, bounded 자기 적용, update·repair, 측정한 macOS SLO.
+- 남은 DG-1: 실행 CLI, Cargo, bounded 자기 적용, update·repair, 측정한 macOS SLO.
 - CS-RG: Runner 슬롯·전송 lane, 승인 migration, client pin, 상태 결합과 회귀 qualification.
 - DG-LINUX: 실제 cgroup 계층·controller·ancestor와 sandbox·proxy 포함.
 - DG-CACHE·DG-ADAPTERS: 등록 cache 회수와 추가 도구 제어.

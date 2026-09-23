@@ -108,3 +108,164 @@ fn response_fixtures_reject_additions_in_envelope_status_identity_and_error() {
         assert!(serde_json::from_value::<Frame<Response>>(future).is_err());
     }
 }
+
+const PERMIT: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+fn key() -> Value {
+    json!({"consumer_id": "consumer", "consumer_generation": "generation", "attempt_id": "attempt"})
+}
+
+fn attempt() -> devguard_contract::AttemptRecord {
+    use devguard_contract::*;
+    AttemptRecord {
+        key: serde_json::from_value(key()).unwrap(),
+        request_fingerprint: digest_bytes(b"fingerprint"),
+        owner: InstanceIdentity {
+            instance_id: "instance".into(),
+            process: ProcessIdentity {
+                boot_id: "boot".into(),
+                pid: 10,
+                start_ticks: 20,
+            },
+        },
+        policy_revision: "policy".into(),
+        phase: AttemptPhase::LaunchCommitted,
+        reservation: Some(ResourceReservation {
+            lease_id: "lease".into(),
+            quantities: Budget {
+                cpu_milli: 1_000,
+                memory_bytes: 1,
+                tasks: 1,
+            },
+            prepared_at: ObservationTime {
+                boot_id: "boot".into(),
+                monotonic_ms: 1,
+            },
+            prepare_deadline_ms: 5_001,
+        }),
+        plan: None,
+        scope: None,
+        applied: None,
+        denial: None,
+        tracking_lost: false,
+        release_reason: None,
+    }
+}
+
+#[test]
+fn launch_requests_decode_strictly_and_carry_no_process_identity() {
+    let intent = json!({"profile": "interactive",
+        "requested": {"cpu_milli": 1000, "memory_bytes": 1, "tasks": 1},
+        "minimum": {"cpu": "cooperative", "memory": "accounted", "pids": "accounted"}});
+    let digest = devguard_contract::digest_bytes(b"meaning");
+    let requests = [
+        json!({"method": "admit", "params": {"request":
+            {"key": key(), "execution_digest": digest, "intent": intent}}}),
+        json!({"method": "begin_launch", "params": {"key": key()}}),
+        json!({"method": "lookup", "params": {"key": key()}}),
+        json!({"method": "cancel", "params": {"key": key()}}),
+        json!({"method": "launch", "params":
+            {"key": key(), "instance_id": "instance", "permit": PERMIT}}),
+    ];
+    for body in requests {
+        let frame = json!({"version": 1, "request_id": 4, "body": body});
+        assert!(
+            serde_json::from_value::<Frame<Request>>(frame.clone()).is_ok(),
+            "{frame}"
+        );
+        // Neither a caller nor a helper can declare a process identity.
+        for field in ["pid", "uid", "helper", "future_field"] {
+            let mut changed = frame.clone();
+            changed["body"]["params"][field] = json!(1);
+            assert!(
+                serde_json::from_value::<Frame<Request>>(changed).is_err(),
+                "accepted {field} in {frame}"
+            );
+        }
+        let mut changed_key = frame.clone();
+        if changed_key["body"]["params"].get("key").is_some() {
+            changed_key["body"]["params"]["key"]["pid"] = json!(1);
+            assert!(serde_json::from_value::<Frame<Request>>(changed_key).is_err());
+        }
+    }
+    let short = json!({"version": 1, "request_id": 5, "body": {"method": "launch",
+        "params": {"key": key(), "instance_id": "instance", "permit": "abc"}}});
+    assert!(serde_json::from_value::<Frame<Request>>(short).is_err());
+}
+
+#[test]
+fn launch_responses_decode_strictly_and_never_print_the_permit() {
+    use devguard_client::protocol::{LaunchAuthorization, LaunchGrant};
+    let record = serde_json::to_value(attempt()).unwrap();
+    let responses = [
+        json!({"result": "attempt", "value": record}),
+        json!({"result": "launch_granted", "value": {"attempt": record, "permit": PERMIT}}),
+        json!({"result": "launch_granted", "value": {"attempt": record, "permit": null}}),
+        json!({"result": "launch_authorized", "value": {"attempt": record, "may_exec": true}}),
+    ];
+    for body in responses {
+        let frame = json!({"version": 1, "request_id": 6, "body": body});
+        assert!(
+            serde_json::from_value::<Frame<Response>>(frame.clone()).is_ok(),
+            "{frame}"
+        );
+        let mut future = frame.clone();
+        future["body"]["value"]["future_field"] = json!(true);
+        assert!(serde_json::from_value::<Frame<Response>>(future).is_err());
+    }
+    let granted = Response::LaunchGranted(LaunchGrant {
+        attempt: attempt(),
+        permit: Some(devguard_contract::Secret::new(PERMIT.into()).unwrap()),
+    });
+    assert!(!format!("{granted:?}").contains(PERMIT));
+    let authorized = Response::LaunchAuthorized(LaunchAuthorization {
+        attempt: attempt(),
+        may_exec: false,
+    });
+    assert!(format!("{authorized:?}").contains("may_exec: false"));
+}
+
+#[test]
+fn reconcile_requests_decode_strictly_and_carry_no_process_identity() {
+    let requests = [
+        json!({"method": "abandon_launch", "params": {"key": key(), "reason": "spawn_failed"}}),
+        json!({"method": "abandon_launch", "params": {"key": key(), "reason": "helper_exited"}}),
+        json!({"method": "abandon_launch", "params": {"key": key(), "reason": "grant_not_received"}}),
+        json!({"method": "observe", "params": {"key": key()}}),
+        json!({"method": "terminate", "params": {"key": key(), "signal": "terminate"}}),
+        json!({"method": "terminate", "params": {"key": key(), "signal": "kill"}}),
+    ];
+    for body in requests {
+        let frame = json!({"version": 1, "request_id": 7, "body": body});
+        assert!(
+            serde_json::from_value::<Frame<Request>>(frame.clone()).is_ok(),
+            "{frame}"
+        );
+        for field in ["pid", "uid", "evidence", "future_field"] {
+            let mut changed = frame.clone();
+            changed["body"]["params"][field] = json!(1);
+            assert!(
+                serde_json::from_value::<Frame<Request>>(changed).is_err(),
+                "accepted {field} in {frame}"
+            );
+        }
+    }
+    // Unknown reasons and signals, including raw numbers, are refused.
+    for (method, field, value) in [
+        ("abandon_launch", "reason", json!("process_died")),
+        ("terminate", "signal", json!("stop")),
+        ("terminate", "signal", json!(9)),
+    ] {
+        let mut params = json!({"key": key()});
+        params[field] = value;
+        let frame =
+            json!({"version": 1, "request_id": 8, "body": {"method": method, "params": params}});
+        assert!(serde_json::from_value::<Frame<Request>>(frame).is_err());
+    }
+    let terminated = json!({"version": 1, "request_id": 9, "body": {"result": "terminated",
+        "value": {"attempt": serde_json::to_value(attempt()).unwrap(), "signalled": 2, "complete": true}}});
+    assert!(serde_json::from_value::<Frame<Response>>(terminated.clone()).is_ok());
+    let mut future = terminated;
+    future["body"]["value"]["future_field"] = json!(true);
+    assert!(serde_json::from_value::<Frame<Response>>(future).is_err());
+}

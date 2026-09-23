@@ -1,31 +1,25 @@
 [package]
-name = "devguard-daemon"
+name = "devguard-launch"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Canonical local authority configuration and service boundary"
+description = "DevGuard launch helper: verifies scope, policy and authorization before the executable starts"
 
 [[bin]]
-name = "devguardd"
+name = "devguard-launch"
 path = "src/main.rs"
-
-[features]
-# Isolated test authorities for workspace tests; never used by `devguardd`.
-test-fixtures = []
 
 [dependencies]
 devguard-contract = { path = "../contract" }
-devguard-core = { path = "../core" }
 devguard-client = { path = "../client" }
 devguard-macos = { path = "../macos" }
 libc.workspace = true
-serde.workspace = true
 serde_json.workspace = true
-toml.workspace = true
-uuid.workspace = true
 
 [dev-dependencies]
+devguard-daemon = { path = "../daemon", features = ["test-fixtures"] }
 tempfile.workspace = true
+rusqlite.workspace = true

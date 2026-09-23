@@ -7,12 +7,19 @@ use std::ffi::OsString;
 use std::path::Path;
 
 /// Make the calling process the leader of a new process group, the observed
-/// scope that later descendants inherit.
+/// scope that later descendants inherit. A process that already leads its own
+/// group, such as a session leader started on a pseudo-terminal, keeps it.
 #[cfg(target_os = "macos")]
 pub fn become_scope_root() -> Result<()> {
-    // SAFETY: setpgid(0, 0) only changes the calling process's group.
-    if unsafe { libc::setpgid(0, 0) } != 0 {
-        return Err(crate::failed("cannot create the scope process group"));
+    // SAFETY: getpgrp, getpid and setpgid(0, 0) only read or change the calling
+    // process's own group.
+    unsafe {
+        if libc::getpgrp() == libc::getpid() {
+            return Ok(());
+        }
+        if libc::setpgid(0, 0) != 0 {
+            return Err(crate::failed("cannot create the scope process group"));
+        }
     }
     Ok(())
 }

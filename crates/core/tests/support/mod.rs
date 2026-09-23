@@ -30,6 +30,8 @@ impl FakeClock {
 #[derive(Default)]
 pub struct FakeState {
     pub processes: BTreeMap<u32, ProcessIdentity>,
+    /// PIDs whose observation is refused, as for another user's process.
+    pub refused: std::collections::BTreeSet<u32>,
     pub bindings: BTreeMap<String, BindingEvidence>,
     pub observations: BTreeMap<String, ScopeObservation>,
     pub unbound: BTreeMap<AttemptKey, UnboundLaunchEvidence>,
@@ -49,7 +51,14 @@ impl FakeState {
 pub struct FakeBackend(pub Arc<Mutex<FakeState>>);
 impl Backend for FakeBackend {
     fn process_identity(&self, pid: u32) -> Result<Option<ProcessIdentity>> {
-        Ok(self.0.lock().unwrap().processes.get(&pid).cloned())
+        let state = self.0.lock().unwrap();
+        if state.refused.contains(&pid) {
+            return Err(Error::new(
+                ErrorCode::ResourceControlUnavailable,
+                "fake backend refused the observation",
+            ));
+        }
+        Ok(state.processes.get(&pid).cloned())
     }
     fn plan(&self, _: &ResourceIntent) -> Result<ExecutionPlan> {
         let kernel = self.0.lock().unwrap().kernel;

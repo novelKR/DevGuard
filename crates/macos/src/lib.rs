@@ -76,3 +76,11 @@ pub(crate) fn unsupported() -> Error {
 pub(crate) fn failed(message: &'static str) -> Error {
     Error::new(ErrorCode::ResourceControlUnavailable, message)
 }
+
+/// Shared launcher evidence could not be read.
+pub(crate) fn failed_evidence() -> Error {
+    Error::new(
+        ErrorCode::ResourceControlUnavailable,
+        "launcher evidence is unavailable",
+    )
+}

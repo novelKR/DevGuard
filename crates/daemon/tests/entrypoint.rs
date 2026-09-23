@@ -20,15 +20,15 @@ fn alternate_authority_and_unparented_candidate_arguments_are_rejected() {
 }
 
 #[test]
-fn bootstrap_help_does_not_claim_runtime_availability() {
+fn help_states_what_serve_opens_and_that_bootstrap_starts_no_workload() {
     let result = Command::new(env!("CARGO_BIN_EXE_devguardd"))
         .arg("--help")
         .output()
         .unwrap();
     assert!(result.status.success());
-    assert!(String::from_utf8(result.stdout)
-        .unwrap()
-        .contains("Runtime execution is unavailable"));
+    let help = String::from_utf8(result.stdout).unwrap();
+    assert!(help.contains("with it, opens registration, fenced launch"));
+    assert!(help.contains("There is no execution CLI yet; init and check never start workloads."));
 }
 
 #[cfg(target_os = "macos")]

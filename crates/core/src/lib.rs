@@ -7,7 +7,8 @@ mod policy;
 mod pressure;
 
 pub use authority::{
-    Authority, AuthorityStorage, LaunchDecision, Principal, Registration, RunDecision, TrustedPeer,
+    Authority, AuthorityStorage, InstanceRecord, LaunchDecision, Principal, Registration,
+    RunDecision, TrustedPeer,
 };
 pub use policy::{ConsumerDefinition, ConsumerRole, Policy};
 pub use pressure::{

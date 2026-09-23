@@ -30,6 +30,8 @@ python3 scripts/qualify.py dg1-authority --offline
 python3 scripts/qualify.py dg1-auth --offline
 python3 scripts/qualify.py dg1-probes --offline
 python3 scripts/qualify.py dg1-scopes --offline
+python3 scripts/qualify.py dg1-launch --offline
+python3 scripts/qualify.py dg1-reconcile --offline
 git diff --check
 ```
 
@@ -67,7 +69,7 @@ For the preparation PRs, preserve runtime/Cargo/journal state. Documentation che
 
 ## Planned suites and fault injection
 
-`scripts/qualify.py dg1-authority --offline` is available for C01 configuration/storage, `scripts/qualify.py dg1-auth --offline` for C02 authentication/transport, `scripts/qualify.py dg1-probes --offline` for C03 native evidence, and `scripts/qualify.py dg1-scopes --offline` for C04 policy and scope evidence. Other DevGuard suites and CodeSpace `scripts/qualify-devguard.py <suite>` remain planned interfaces until supplied by their work units. Each implementation PR supplies the actual interface, nonzero case inventory, timeouts, logs, isolation and cleanup, then updates its task command documentation. macOS/Ubuntu CI retains the full validator and both portable functional suites, preserving their separate reports and logs. Native suites run on macOS CI only and record `not_run` elsewhere; they never pass on a platform that cannot supply the evidence. Each native stage declares the raw receipts it must produce. A receipt that records a case as `not_run` makes the suite `incomplete`, not `passed`.
+`scripts/qualify.py dg1-authority --offline` is available for C01 configuration/storage, `scripts/qualify.py dg1-auth --offline` for C02 authentication/transport, `scripts/qualify.py dg1-probes --offline` for C03 native evidence, `scripts/qualify.py dg1-scopes --offline` for C04 policy and scope evidence, `scripts/qualify.py dg1-launch --offline` for the C05 launch helper, and `scripts/qualify.py dg1-reconcile --offline` for C06 reconciliation. Other DevGuard suites and CodeSpace `scripts/qualify-devguard.py <suite>` remain planned interfaces until supplied by their work units. Each implementation PR supplies the actual interface, nonzero case inventory, timeouts, logs, isolation and cleanup, then updates its task command documentation. macOS/Ubuntu CI retains the full validator and both portable functional suites, preserving their separate reports and logs. Native suites run on macOS CI only and record `not_run` elsewhere; they never pass on a platform that cannot supply the evidence. Each native stage declares the raw receipts it must produce. A receipt that records a case as `not_run` makes the suite `incomplete`, not `passed`.
 
 C03 evidence is recorded in these files:
 - **Raw receipts** (in the report's `raw/` directory): boot ID and clock readings with units, host capacity, repeated process identities, including zombie, reaped and refused observations, native pressure readings with their derived rates, the measured time from the last sample to closed admission, and the service loop's time from an injected failure to Critical and its behavior with a stuck probe.
@@ -82,6 +84,22 @@ C04 evidence covers:
 - **Clamped environment**: when the environment clamps every child of the harness, as governed self-use will, the unclamped-root case cannot be produced. It is recorded as `not_run` with both readbacks, and the suite reports `incomplete` rather than `passed`. The hosted macOS 14 CI runner is such an environment: its harness reads task and thread priority 20. CI therefore runs `dg1-scopes` with `--allow-incomplete`, and its summary shows `incomplete`. The unclamped case must pass on the local qualification host.
 
 The service establishes no scopes before the P3 launch helper, so these results establish library evidence rather than managed execution.
+
+C05 evidence covers:
+- **Raw receipts**: the launch lifecycle (phases, time to READY, exit status, the authorized attempt and its release through scope termination), the executable's descriptors, arguments, directory and environment variable names (never values), racing and late helpers against one grant, refusals before any claim, cancellation before a claim, exec failure after READY, a bare helper's replay and its refusal after a claim, a reply that missed its deadline, concurrent launches from several threads, and a helper on a pseudo-terminal. Receipts are checked not to contain credential values from the environment.
+- **Real processes**: the real `devguard-launch` binary, started by the test process as the registered owner, presents grants to an isolated authority served in the same process with a synthetic healthy probe.
+- **Unit tests**: core claim transitions, scripted helper-identity checks including a PID reused during the owner check, strict transcript parsing, strict launch wire fixtures, and helper sessions that can make no other request.
+- **Clamped environment**: a helper refused after its claim needs a helper without the utility clamp. Where every child of the harness is clamped, that case is recorded as `not_run` and the suite reports `incomplete`, as on the hosted macOS 14 runner, where CI runs `dg1-launch` with `--allow-incomplete`.
+
+In C05 alone the normal service kept registration and launch closed; C06 opens them together with reconciliation.
+
+C06 evidence covers:
+- **Raw receipts**: prepared cancellation and expiry, `NoHelperCreated` releases from each owner report with a refused late helper, a report that cannot release a claimed grant, observation before reap with charges held while a survivor lives, a root reaped before observation, a known escape, scope termination, cancellation after authorization, a dead owner, a retired instance, an unresponsive helper past the Prepared deadline, a daemon crash with restart and committed totals measured before and after it, and journal writes that fail for binding and for release.
+- **Real processes**: the real helper and workloads under isolated authorities, including one served in a child process that the test kills and restarts on the same journal.
+- **Unit tests**: previous-boot release of a bound scope after lost tracking, reconciliation that writes nothing when nothing changes, attempt and instance listings, owner-bound launcher evidence with a bounded report set, and strict decoding of the new requests.
+- **Determinism**: observation tests pause the background reconciler, so an owner's observation, or its absence before a reap, decides what is tracked. Child-process authorities keep their receipts, which are checked to hold no permit or caller credential.
+
+The suite does not exercise the execution CLI, restart re-adoption of running scopes or Linux enforcement.
 
 C02 evidence covers actual OS socket UID/PID observations at both ends, distinct consumer/admin credentials, rejected helper-role authentication, strict current/future wire fixtures, 64 KiB frames, a 32-session limit, absolute 250 ms per-frame deadlines including idle waits, partial/slow/final responses and private credential-FD transport. Dedicated subprocess helpers verify FD closure before a subsequent exec and inspect argv/environment/debug/output for secret leakage. They are executed by parent tests and are not independent ignored qualification successes. Record process cleanup as well as the nonzero parent-case inventory.
 
