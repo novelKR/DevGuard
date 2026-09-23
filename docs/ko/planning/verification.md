@@ -8,7 +8,7 @@
 | --- | --- | --- | --- |
 | V-DOC-DG | 이번 DevGuard 문서/메타데이터 | checksum·license·ID·DAG·링크·46작업/23묶음·필수 항목·상태 보존 | 문서 검토 및 아래 재현 검사 가능 |
 | V-DG0 | contract/core, DevGuard | Rust1.95.0 fmt/clippy·44개 계약·의존 graph·source fingerprint | 기존 validator 제공 |
-| V-DG1-FUNCTION | 실제 auth/probe/launch/reconcile/CLI/운영 | DG1-C01~C11 정상·실패·경쟁 및 기능 artifact | C01 authority·C02 로컬 인증/transport 제공; 후속 범위는 각 묶음에서 제공 |
+| V-DG1-FUNCTION | 실제 auth/probe/launch/reconcile/CLI/운영 | DG1-C01~C11 정상·실패·경쟁 및 기능 artifact | C01 authority·C02 로컬 인증/transport·C03 native probe·C04 native scope 제공; 후속 범위는 각 묶음에서 제공 |
 | V-DG1-SLO | 독립 CLI/daemon·개발·self-use | DG1-C12 개발/foreground 및 standalone control 측정 | 미구현; CS-RG 기능을 선행 요구하지 않음 |
 | V-CS-DOC | CodeSpace 한·영 registry/site | paired hash·기존 docs tests·고정 환경 build·integrity·화면 검토 | 기존 명령 제공 |
 | V-CS-UPSTREAM | CodeSpace 기존 Codex qualification | pin/policy/format/dependency/adapter/PTY/filesystem/platform gates | 기존 제공, 실제 platform별 수행 |
@@ -28,6 +28,8 @@ python3 scripts/check_docs.py
 python3 scripts/validate.py --offline
 python3 scripts/qualify.py dg1-authority --offline
 python3 scripts/qualify.py dg1-auth --offline
+python3 scripts/qualify.py dg1-probes --offline
+python3 scripts/qualify.py dg1-scopes --offline
 git diff --check
 ```
 
@@ -69,7 +71,21 @@ V-DOC-DG는 scripts/check_docs.py와 수동 의미 검토로 영어/한국어 ha
 
 ## 향후 suite와 장애 주입 계약
 
-scripts/qualify.py dg1-authority --offline은 C01 설정·저장소, scripts/qualify.py dg1-auth --offline은 C02 인증·transport 검증을 제공한다. 그 밖의 DevGuard suite와 CodeSpace scripts/qualify-devguard.py는 해당 작업에서 제공할 예정 인터페이스다. 각 구현 PR이 실제 CLI·case inventory·nonzero case assertion·timeout·log 수집·격리 cleanup을 구현하고 제공 명령을 갱신해야 한다. macOS/Ubuntu CI는 전체 validator를 유지하며 두 기능 suite도 실행하고 각각의 report·log를 보존한다.
+scripts/qualify.py dg1-authority --offline은 C01 설정·저장소, scripts/qualify.py dg1-auth --offline은 C02 인증·transport, scripts/qualify.py dg1-probes --offline은 C03 native 증거, scripts/qualify.py dg1-scopes --offline은 C04 정책·scope 증거 검증을 제공한다. 그 밖의 DevGuard suite와 CodeSpace scripts/qualify-devguard.py는 해당 작업에서 제공할 예정 인터페이스다. 각 구현 PR이 실제 CLI·case inventory·nonzero case assertion·timeout·log 수집·격리 cleanup을 구현하고 제공 명령을 갱신해야 한다. macOS/Ubuntu CI는 전체 validator와 이식 가능한 두 기능 suite를 실행하고 각각의 report·log를 보존한다. Native suite는 macOS CI에서만 실행하고 그 밖의 환경에서는 `not_run`으로 기록한다. 증거를 제공할 수 없는 플랫폼에서 통과로 처리하지 않는다. 각 native 단계는 만들어야 할 raw receipt를 선언한다. 어떤 경우를 `not_run`으로 기록한 receipt가 있으면 suite는 `passed`가 아니라 `incomplete`가 된다.
+
+C03 증거는 다음 파일에 기록한다.
+- **Raw receipt** (보고서의 `raw/` 디렉터리): 단위를 포함한 boot ID·시계 읽기, 호스트 용량, zombie·reap·거부 관측을 포함한 반복 프로세스 정체성, 계산된 비율을 포함한 native 압력 읽기, 마지막 sample 이후 admission이 닫히기까지 측정한 시간, 주입한 실패부터 Critical까지 걸린 서비스 loop 시간과 멈춘 probe에 대한 서비스 loop의 동작.
+- **단계 로그**: 주입한 실패, 거절된 stale·미래·replay·다른 boot sample, 관측한 socket peer의 native 등록.
+
+실제 호스트 압력이 정당하게 다를 수 있는 시험은 합성 정상 읽기를 사용한다. 호스트가 Normal이라고 가정하지 않는다. 이 suite는 wire 등록, scope binding, 정책 적용을 시험하지 않는다.
+
+C04 증거는 다음을 포함한다.
+- **Raw receipt**: clamp가 있는 root와 없는 root의 수립 readback(`pbi_nice`, task 우선순위, thread 최대 우선순위), 요청·계획·적용 capability 행렬, 수명주기 timeline, 종료 receipt, 고정된 Suspect 결과를 동반한 이탈 정체성, 공유되거나 비어 있지 않은 group·다른 사용자의 프로세스·kernel 요구·알 수 없는 scope의 거절.
+- **실제 프로세스**: 수명주기는 실행 중인 root, reap되지 않은 root, 자손이 남은 채 reap된 root, 정체성을 확인한 종료를 거치며 모든 구성원이 끝난 뒤에만 회수한다.
+- **Scripted-table 단위 시험**: 실제 프로세스로 결정적으로 만들 수 없는 경쟁. 관측 중 생성된 구성원, 재사용된 구성원·부모 PID, readback 중 교체된 root, group을 나열하는 동안 교체된 root, 부모 관계를 확인할 수 없는 자식, scope 종료 뒤 재사용된 group ID, scope의 것임을 입증할 수 없는 group, 거부되거나 실패한 읽기, 실패한 signal 전달을 다룬다.
+- **Clamp된 환경**: 자가 적용처럼 환경이 harness의 모든 자식에 clamp를 걸면 clamp 없는 root를 만들 수 없다. 이 경우 두 readback과 함께 `not_run`으로 기록하며 suite는 `passed`가 아니라 `incomplete`를 보고한다. Hosted macOS 14 CI runner가 바로 이런 환경으로, harness의 task·thread 우선순위가 20으로 읽힌다. 그래서 CI는 `dg1-scopes`를 `--allow-incomplete`로 실행하고 요약에 `incomplete`를 표시한다. Clamp 없는 경우는 로컬 qualification 호스트에서 통과해야 한다.
+
+서비스는 P3 launch helper 전에는 scope를 수립하지 않으므로 이 결과는 관리 실행이 아니라 라이브러리 증거를 입증한다.
 
 C02 증거는 양쪽 실제 OS socket UID/PID 관측, 분리된 consumer·관리 자격, helper-role 인증 거절, 현재·미래 wire fixture의 엄격한 decoding, 64 KiB frame, 세션 32개 제한, idle 대기를 포함한 frame별 절대 250 ms 기한, 부분·느린·마지막 응답과 private 자격 FD 전달을 포함한다. 전용 subprocess helper는 후속 exec 전 FD 닫기를 관측하고 argv·환경·debug·출력의 secret 누출을 확인한다. Parent test가 helper를 실행하며 별도의 ignored test를 독립 qualification 성공으로 세지 않는다. 0개가 아닌 parent case 수와 프로세스 정리를 함께 기록한다.
 

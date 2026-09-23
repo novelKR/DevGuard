@@ -2,7 +2,7 @@
 
 [English](operations.md) | [한국어](ko/operations.md)
 
-C01 provides explicit bootstrap/canonical storage and C02 provides authenticated local transport. PR and post-merge main delivery evidence is tracked separately from implementation. `devguardd serve` runs a foreground service; native registration, principals, resource leases and execution remain closed until P2/P3 provide actual host identity/probes and launch/reconciliation. The normal authority is currently macOS-only; Linux CI checks portable contracts and bounded fixtures, not DG-LINUX controls.
+C01 provides explicit bootstrap/canonical storage, C02 authenticated local transport, C03 native macOS boot, process and host pressure evidence, and C04 cooperative policy readback and scope evidence for a future launch helper. PR and post-merge main delivery evidence is tracked separately from implementation. `devguardd serve` runs a foreground service that activates the journal with that evidence; registration over the wire, principals, resource leases and execution remain closed until P3 provides launch and reconciliation. The normal authority is currently macOS-only; Linux CI checks portable contracts and bounded fixtures, not DG-LINUX controls.
 
 ## Available commands
 
@@ -16,11 +16,27 @@ target/debug/devguardd check
 target/debug/devguardd serve
 ```
 
-`paths` only observes the operating account. `init` is an explicit first-time bootstrap, creating a new journal, operator configuration and separate CLI/administrative credentials. It refuses existing state and never overwrites it. `check` obtains exclusive storage ownership, validates configuration/journal and reports `runtime_ready: false`; it does not fabricate a boot clock or claim recovery/application. It cannot acquire a second authority while another owner holds the lock.
+`paths` only observes the operating account. `init` is an explicit first-time bootstrap, creating a new journal, operator configuration and separate CLI/administrative credentials. It refuses existing state and never overwrites it. `check` obtains exclusive storage ownership, validates configuration/journal and reports `runtime_ready: false`; it does not read a boot clock or claim recovery/application. It cannot acquire a second authority while another owner holds the lock.
 
 `serve` opens the existing validated journal, acquires exclusive ownership and binds the canonical private UDS endpoint. Stop this foreground process with Ctrl-C or SIGTERM; shutdown closes sessions and removes only its own socket inode while preserving the journal, lock and credentials. A stale socket is removed only under the exclusive authority lock after a connection attempt positively returns connection refused and the inode remains unchanged. A live, busy or unobservable endpoint is not removed.
 
-Authenticated status reports `storage_validated: true`, `registration_ready: false`, `execution_ready: false`, a reason and the configuration fingerprint. Generic execution, installation, a LaunchAgent and repair remain future work. Configuration or a successful handshake alone does not govern commands. Necessary bootstrap builds are not self-use evidence. Do not use the disposable `target` path for a persistent service; protected installation is C09 work.
+When native evidence is available, `serve` derives the policy from the observed host and runs the journal's boot-aware recovery with the real clock and process identities. It then samples host pressure every two seconds (see [contracts](contracts.md#native-macos-host-evidence)).
+- **Sampled volumes.** These are the state volume and every registered project root. A registered root that is missing or unreadable fails every reading and keeps new work closed. Correct or remove a stale registration; it is not skipped.
+- **Startup state.** Pressure starts Critical, and the first valid sample needs two readings. If the host reports memory warning when the service starts, the pressure rules keep the state Critical until memory has been normal for 30 seconds. It then becomes Constrained, and Normal after another 30 seconds.
+- **Receipts.** The service writes JSON lines to stderr:
+  - `native_host` at activation, or `native_host_unavailable` when native evidence cannot be opened
+  - `pressure_baseline`
+  - `pressure` on each state change and once a minute
+  - `pressure_sample_rejected` when the controller refuses a sample
+  - `pressure_control_lag` when the loop wakes at least 200 ms late without a state change
+  - `pressure_observation_failed` for the first failed reading and once a minute while failures continue
+  - `pressure_stopped` if the sampler ends abnormally
+
+  Receipts contain host counters, pressure states, the state and registered project paths, and their mount points. They never contain credentials.
+
+On a platform without native evidence, or when the macOS observation fails, `serve` keeps the storage-only closed behavior and reports which case applies.
+
+Authenticated status reports `storage_validated: true`, `registration_ready: false`, `execution_ready: false`, a reason and the configuration fingerprint. The reason distinguishes active native evidence, an unsupported platform and a failed native observation. Generic execution, installation, a LaunchAgent and repair remain future work. Configuration or a successful handshake alone does not govern commands. Necessary bootstrap builds are not self-use evidence. Do not use the disposable `target` path for a persistent service; protected installation is C09 work.
 
 ## Canonical ownership and paths
 
@@ -45,7 +61,7 @@ Ordinary startup requires existing persistent directories, journal and lock. Mis
 
 The bounded UTF-8 TOML operator file is schema 1 and rejects unknown fields. It defines policy revision, the interactive profile, consumer generations/credential digests/roles/instance limits, static control reservations and registered project roots. Plaintext credentials are stored only in their separate private files. All consumer and administrative credential digests must differ; a workload role cannot grant itself a control reservation. Parsing errors never echo source text or secrets.
 
-The initial `dev-cli` registration allows eight instances and adds no per-instance control reservation: the approved aggregate CLI control pool is counted centrally when native accounting becomes available. The task fields start at an **accounting estimate** of capacity 256, host headroom 64 and system reservation 48. `system_tasks` must be at least 48, covering 32 bounded session workers plus 16 tasks of service/control headroom. These are configurable operator ceilings, not macOS kernel limits or measured sufficiency; C12 must record and qualify the selected values. CPU/memory headroom and control defaults retain the approved design and will use actual native capacity in C03. Additional headroom can only subtract capacity.
+The initial `dev-cli` registration allows eight instances and adds no per-instance control reservation: the approved aggregate CLI control pool is counted centrally when native accounting becomes available. The task fields start at an **accounting estimate** of capacity 256, host headroom 64 and system reservation 48. `system_tasks` must be at least 48, covering 32 bounded session workers plus 16 tasks of service/control headroom. These are configurable operator ceilings, not macOS kernel limits or measured sufficiency; C12 must record and qualify the selected values. CPU and memory capacity come from the observed host. Headroom and control reservations follow the approved defaults in [contracts](contracts.md#native-macos-host-evidence). Additional headroom can only subtract capacity.
 
 C01 configurations that used the former `system_tasks = 16` default are rejected by C02. Configuration schema remains 1; this is a stricter semantic requirement, not automatic compatibility or migration. Before starting C02, an operator must review total task capacity, headroom and all reservations, then explicitly choose `system_tasks >= 48` within that capacity. Preserve the existing journal and credentials. Do not rerun `init`, silently enlarge host capacity or reduce a live reservation to make validation pass.
 
@@ -71,22 +87,48 @@ The client library connects to the canonical endpoint, checks the OS-observed au
 
 The wire uses a four-byte length prefix, at most 64 KiB per JSON payload, at most 32 active sessions and an absolute 250 ms deadline for each frame read/write. That deadline includes idle waiting before a new frame, so idle connections expire. Use a fresh authenticated session when explicitly beginning a later operation; the client does not automatically reconnect or retry. Its `poll` and nonblocking descriptor I/O handle partial frames, slow readers and buffered final responses without changing Darwin timeout options after peer closure. No response loss is treated as proof of execution, nonexecution or resource release.
 
-The private-FD API passes only a descriptor identifier through startup metadata. The receiver consumes and closes the credential FD before a later `exec`; tests exercise that boundary in real subprocesses. Do not put secrets in argv, environment, debugging or payload-inherited descriptors. These tests do not establish C05 helper authorization or payload startup. OS UID/PID observations are available now; native boot/start identity and instance registration require C03. No authenticated caller can obtain a principal, lease or execution grant from C02.
+The private-FD API passes only a descriptor identifier through startup metadata. The receiver consumes and closes the credential FD before a later `exec`; tests exercise that boundary in real subprocesses. Do not put secrets in argv, environment, debugging or payload-inherited descriptors. These tests do not establish C05 helper authorization or payload startup. OS UID/PID observations are available, and C03 joins them with native boot/start identity inside the authority. The wire still refuses instance registration until P3. No authenticated caller can obtain a principal, lease or execution grant.
 
 The SDK inspection example can be built with `CARGO_BUILD_JOBS=1 cargo build --locked -p devguard-client --example inspect`. Its interface is `inspect SOCKET UID CONSUMER GENERATION CREDENTIAL_FD`: a parent must supply the secret bytes through that dedicated inherited FD, while arguments carry only the FD number and non-secret connection metadata. It prints observed peers and authenticated status. It is a status example, not the future generic execution CLI.
 
 ## Compatibility, checks and rollback
 
-Core `AuthorityStorage` holds the original exclusive lock and validates the existing schema-1 journal without changing attempt state. Activation with a real `Backend`/`Clock` revalidates accounting in the same transaction as boot-aware recovery. Existing `Authority::open` preserves its recovery behavior and the DG-0 tests. C01/C02 do not change the journal or existing contract serialization. The new local protocol strictly rejects unknown fields, versions and unsupported required capabilities; added fields need explicit compatibility tests.
+Core `AuthorityStorage` holds the original exclusive lock and validates the existing schema-1 journal without changing attempt state. Activation with a real `Backend`/`Clock` revalidates accounting in the same transaction as boot-aware recovery. Existing `Authority::open` preserves its recovery behavior and the DG-0 tests. C01–C04 do not change the journal schema, contract serialization or wire protocol. The new local protocol strictly rejects unknown fields, versions and unsupported required capabilities; added fields need explicit compatibility tests.
 
 Available checks:
 
 ```sh
 python3 scripts/qualify.py dg1-authority --offline
 python3 scripts/qualify.py dg1-auth --offline
+python3 scripts/qualify.py dg1-probes --offline
+python3 scripts/qualify.py dg1-scopes --offline
 python3 scripts/validate.py --offline
 ```
 
-Functional suites reject zero executed cases and record source fingerprints, toolchain, bootstrap mode and logs. `dg1-authority` checks exclusive startup, aliases/permissions, absent/corrupt/future journals, activation-time corruption, strict configuration versions, project escalation and concurrent bootstrap. `dg1-auth` checks actual peer observations, authentication roles, strict frames, bounded communication and private FD hygiene, including concurrent requests whose registration remains closed. These leave native registration/launch, Linux enforcement, self-use and foreground SLO `not_run`. The full validator retains the 44 original tests and validates all four workspace crates and their explicit dependency graph. Core/contract remain independent of daemon configuration, and client does not depend on core.
+Functional suites reject zero executed cases and record source fingerprints, toolchain, bootstrap mode and logs. `dg1-authority` checks exclusive startup, aliases/permissions, absent/corrupt/future journals, activation-time corruption, strict configuration versions, project escalation, concurrent bootstrap and the policy derived from observed host capacity. `dg1-auth` checks actual peer observations, authentication roles, strict frames, bounded communication and private FD hygiene, including concurrent requests whose registration remains closed.
 
-To roll back this boundary, stop its task-owned foreground process and select a source/artifact compatible with the preserved configuration and schema-1 journal. Keep persistent state and credentials. No workloads can have started through C01/C02. Later live-lease rollback requires actual reconciliation; it cannot use this early empty-state assumption.
+`dg1-probes` runs only on macOS; other platforms record `not_run`. It checks:
+- the boot clock against `kern.bootsessionuuid`
+- repeatable process identities, including exited, zombie, absent and refused cases
+- host capacity and structurally valid native pressure readings
+- closed admission before the first sample and after six seconds without one
+- immediate closure on a probe failure
+- rejection of stale, future, replayed and other-boot samples
+- native registration of an observed socket peer
+- the service sampling loop, including an injected failure and a probe stuck in the kernel, which must not hold the authority lock
+
+Each native stage must also leave its declared raw receipts under the report's `raw/` directory, and stage logs are hashed. A case the environment cannot produce is recorded as `not_run`, which makes the suite `incomplete` rather than `passed`. `--allow-incomplete` returns success for an incomplete suite without changing its report; use it only where the environment is known to be unable to produce a case.
+
+`dg1-scopes` also runs only on macOS. It drives real scope roots that lead their own process group and re-execute under the utility QoS clamp. It checks:
+- nice and QoS readback, and a failed application for an unclamped root
+- binding, run authorization and release only after every member exits
+- no release after a root exit or reap while descendants survive
+- sticky escape after a descendant leaves the group
+- identity-checked termination
+- refusal of shared or non-empty groups, another user's process, kernel requirements and unknown scopes
+
+Scripted-table unit tests cover creation races, PID reuse and tracking loss. Scope evidence is exercised through the library only; the service establishes no scopes until P3.
+
+These suites leave wire registration, the launch helper, Linux enforcement, self-use and foreground SLO `not_run`. The full validator retains the 44 original tests and validates all five workspace crates and their explicit dependency graph. Core/contract remain independent of daemon configuration and native adapters, and client does not depend on core.
+
+To roll back this boundary, stop its task-owned foreground process and select a source/artifact compatible with the preserved configuration and schema-1 journal. Keep persistent state and credentials. A C02 artifact can reopen the same state: C03 activation adds no record type and only runs the existing recovery. No workloads can have started through C01–C04. Later live-lease rollback requires actual reconciliation; it cannot use this early empty-state assumption.

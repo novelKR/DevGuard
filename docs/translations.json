@@ -56,8 +56,8 @@
       "id": "planning-milestones-dg-1",
       "source": "docs/planning/milestones/DG-1.md",
       "translation": "docs/ko/planning/milestones/DG-1.md",
-      "reviewed_source_sha256": "de6d571a80be0156e71c91cb673a989a46a1dd8c7316fa9c27442744925dc629",
-      "reviewed_translation_sha256": "c57da7d241589b7d357c07f592be6ff5ed2115d0739e9517883bdffeb5fcbc0b"
+      "reviewed_source_sha256": "1ee8db216a2226892eb708edcff04c78878717d22586ca56e8f1f53557c0f116",
+      "reviewed_translation_sha256": "86114e07973c1c8a66feedbb8d03fc7b99a5594b0c372528a88b10b1aa269c30"
     },
     {
       "id": "planning-milestones-dg-adapters",
@@ -98,22 +98,22 @@
       "id": "planning-verification",
       "source": "docs/planning/verification.md",
       "translation": "docs/ko/planning/verification.md",
-      "reviewed_source_sha256": "d6b8968a7fb99a83a476535b5d418b7fd55b51a72f5ccccf7ef104699a6f2968",
-      "reviewed_translation_sha256": "d0b5b9b36d40934010abd064337051115f69282b177eb1a8e20844de30e41eb4"
+      "reviewed_source_sha256": "68f5908ef46fadd39421b1693235f04964ef0f28b7d3c123270340b4d6a9c6d5",
+      "reviewed_translation_sha256": "a1b0c9c5cb32c77a4d1ae61719cd2f52e7c64f6ce37d07125507f3613f7ecee9"
     },
     {
       "id": "operations",
       "source": "docs/operations.md",
       "translation": "docs/ko/operations.md",
-      "reviewed_source_sha256": "9de420cd6aeb80caab9246cff807f16f5f977f86b36398e23f98ca5ce3873f43",
-      "reviewed_translation_sha256": "9c2aea1e3bd2707ea2f235bd0fb1c407654056700c76c3241c97467d3794d6bb"
+      "reviewed_source_sha256": "d687291173a07f7bb2e897d2bcc5eb619a8c197d78162f44e743247a82a5b320",
+      "reviewed_translation_sha256": "e2ccf42e93877001d917bf9ae25bb62fe83f7d824d03ecffb968d675fc416c16"
     },
     {
       "id": "contracts",
       "source": "docs/contracts.md",
       "translation": "docs/ko/contracts.md",
-      "reviewed_source_sha256": "319a68cc4f007974f3349c03ea954de5d5290cdc2aeb1fb6cd063aec32beb198",
-      "reviewed_translation_sha256": "0893f3d181f19631851753f4bac8dcaa431d7d26c3c2168a5e1f6fb44d71a722"
+      "reviewed_source_sha256": "cb4140d2600e3877eeb21a7685dd08e6fd39595e4715fba435cba6cdf34466c3",
+      "reviewed_translation_sha256": "046eed7ef350dc54540f76a10f424ab0ae2af4ab40092d9c07d40ad113511eba"
     }
   ]
 }

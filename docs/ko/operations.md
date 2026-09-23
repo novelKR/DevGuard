@@ -2,7 +2,7 @@
 
 [English](../operations.md) | [한국어](operations.md)
 
-C01은 명시 bootstrap·고정 저장소를, C02는 인증된 로컬 transport를 제공한다. PR과 병합 후 main 전달 증거는 구현과 별도로 추적한다. devguardd serve는 foreground 서비스를 실행하지만 native 등록·Principal·자원 lease·실행은 P2/P3의 실제 호스트 정체성·probe·launch·대조가 제공될 때까지 닫혀 있다. 정상 authority는 현재 macOS만 지원하며 Linux CI는 이식 가능한 계약과 제한된 fixture를 검사한다. DG-LINUX 제어 자격을 부여하지 않는다.
+C01은 명시 bootstrap·고정 저장소를, C02는 인증된 로컬 transport를, C03은 native macOS boot·프로세스·호스트 압력 증거를, C04는 후속 launch helper를 위한 협조적 정책 readback과 scope 증거를 제공한다. PR과 병합 후 main 전달 증거는 구현과 별도로 추적한다. devguardd serve는 이 증거로 journal을 활성화하는 foreground 서비스를 실행하지만 wire 등록·Principal·자원 lease·실행은 P3가 launch와 대조를 제공할 때까지 닫혀 있다. 정상 authority는 현재 macOS만 지원하며 Linux CI는 이식 가능한 계약과 제한된 fixture를 검사한다. DG-LINUX 제어 자격을 부여하지 않는다.
 
 ## 제공 명령
 
@@ -16,11 +16,27 @@ target/debug/devguardd check
 target/debug/devguardd serve
 ```
 
-`paths`는 운영 계정의 경로를 조회한다. `init`은 최초 bootstrap에만 쓰며 새 journal, 운영자 설정, 분리된 CLI·관리 자격을 생성한다. 기존 상태는 거절하고 덮어쓰지 않는다. `check`는 저장소 배타 소유권과 설정·journal을 검사하며 `runtime_ready: false`를 보고한다. 가짜 boot clock을 만들거나 복구·적용 완료를 주장하지 않는다. 다른 소유자가 잠금을 보유하면 두 번째 authority를 얻을 수 없다.
+`paths`는 운영 계정의 경로를 조회한다. `init`은 최초 bootstrap에만 쓰며 새 journal, 운영자 설정, 분리된 CLI·관리 자격을 생성한다. 기존 상태는 거절하고 덮어쓰지 않는다. `check`는 저장소 배타 소유권과 설정·journal을 검사하며 `runtime_ready: false`를 보고한다. Boot clock을 읽거나 복구·적용 완료를 주장하지 않는다. 다른 소유자가 잠금을 보유하면 두 번째 authority를 얻을 수 없다.
 
 `serve`는 기존 journal을 검증하여 열고 배타 소유권을 얻은 뒤 정상 private UDS endpoint를 연다. Ctrl-C나 SIGTERM으로 foreground 프로세스를 중지한다. 종료는 세션과 자기 socket inode만 정리하며 journal·lock·자격은 보존한다. 남은 socket은 배타 authority lock을 얻고 연결 시도가 명시적인 connection refused를 반환하며 inode가 그대로일 때만 제거한다. 살아 있거나 busy이거나 관측할 수 없는 endpoint는 지우지 않는다.
 
-인증된 status는 storage_validated: true, registration_ready: false, execution_ready: false, 이유와 설정 fingerprint를 보고한다. 일반 실행·설치·LaunchAgent·repair는 후속 작업이다. 설정이나 handshake 성공만으로 명령이 관리되지는 않으며 bootstrap 빌드는 자기 적용 증거가 아니다. 영속 서비스는 제거 가능한 target 경로를 사용하지 않는다. 보호된 설치는 C09의 범위다.
+Native 증거를 사용할 수 있으면 `serve`는 관측한 호스트로 정책을 산출하고, 실제 시계와 프로세스 정체성으로 journal의 boot 인지 복구를 수행한다. 이후 2초마다 호스트 압력을 sampling한다([계약](contracts.md#native-macos-호스트-증거) 참조).
+- **Sampling 볼륨.** 상태 볼륨과 등록된 모든 project root다. 등록된 root가 없거나 읽을 수 없으면 모든 읽기가 실패하고 새 작업은 닫힌 상태로 남는다. 오래된 등록은 건너뛰지 않으므로 고치거나 제거한다.
+- **시작 상태.** 압력은 Critical로 시작하며 첫 유효 sample에는 두 번의 읽기가 필요하다. 서비스 시작 시 호스트가 메모리 warning을 보고하면, 압력 규칙에 따라 메모리가 30초 동안 normal일 때까지 Critical을 유지한다. 그 뒤 Constrained가 되고, 다시 30초 뒤 Normal이 된다.
+- **Receipt.** 서비스는 stderr에 JSON line을 남긴다.
+  - 활성화 시 `native_host`, native 증거를 열 수 없으면 `native_host_unavailable`
+  - `pressure_baseline`
+  - 상태가 바뀔 때와 1분마다 `pressure`
+  - controller가 sample을 거절할 때 `pressure_sample_rejected`
+  - 상태 변화 없이 loop가 200 ms 이상 늦게 깨어날 때 `pressure_control_lag`
+  - 첫 읽기 실패와 실패가 이어지는 동안 1분마다 `pressure_observation_failed`
+  - sampler가 비정상적으로 끝나면 `pressure_stopped`
+
+  Receipt에는 호스트 counter, 압력 상태, 상태·등록 project 경로와 그 mount point가 들어간다. 자격 정보는 포함하지 않는다.
+
+Native 증거가 없는 플랫폼이거나 macOS 관측이 실패하면 `serve`는 저장소만 보유한 닫힌 동작을 유지하고 어느 경우인지 보고한다.
+
+인증된 status는 storage_validated: true, registration_ready: false, execution_ready: false, 이유와 설정 fingerprint를 보고한다. 이유는 활성 native 증거, 미지원 플랫폼, native 관측 실패를 구분한다. 일반 실행·설치·LaunchAgent·repair는 후속 작업이다. 설정이나 handshake 성공만으로 명령이 관리되지는 않으며 bootstrap 빌드는 자기 적용 증거가 아니다. 영속 서비스는 제거 가능한 target 경로를 사용하지 않는다. 보호된 설치는 C09의 범위다.
 
 ## 정상 소유권과 경로
 
@@ -45,7 +61,7 @@ DevGuard 디렉터리는 0700, 파일은 0600이며 소유자·종류·symlink�
 
 운영자 파일은 크기가 제한된 UTF-8 TOML schema 1이며 알 수 없는 필드를 거절한다. 정책 revision, interactive profile, 소비자의 generation·자격 digest·역할·최대 인스턴스·정적 제어 예약과 프로젝트 root를 정의한다. 평문 자격은 별도 private 파일에만 둔다. 모든 consumer·관리 자격 digest는 서로 달라야 하며 workload 역할은 제어 예약을 부여할 수 없다. 파서 오류에 설정 원문이나 자격을 출력하지 않는다.
 
-최초 `dev-cli`는 인스턴스 8개를 허용하고 인스턴스마다 제어 예약을 추가하지 않는다. 승인된 CLI 관제 풀은 실제 회계가 제공될 때 중앙에서 한 번 계산한다. task 설정의 초기값은 용량 256, 호스트 여유 64, 시스템 예약 48의 **회계 추정치**다. system_tasks는 제한된 session worker 32개와 서비스·관제 여유 task 16개를 포함하여 최소 48이어야 한다. 운영자가 설정하는 상한이며 macOS kernel 제한이나 측정된 충분성이 아니다. C12에서 선택한 값을 기록·검증해야 한다. CPU·메모리의 여유분과 제어 기본값은 승인 설계를 유지하고 C03에서 실제 용량을 사용한다. 추가 여유분은 용량을 줄일 수만 있다.
+최초 `dev-cli`는 인스턴스 8개를 허용하고 인스턴스마다 제어 예약을 추가하지 않는다. 승인된 CLI 관제 풀은 실제 회계가 제공될 때 중앙에서 한 번 계산한다. task 설정의 초기값은 용량 256, 호스트 여유 64, 시스템 예약 48의 **회계 추정치**다. system_tasks는 제한된 session worker 32개와 서비스·관제 여유 task 16개를 포함하여 최소 48이어야 한다. 운영자가 설정하는 상한이며 macOS kernel 제한이나 측정된 충분성이 아니다. C12에서 선택한 값을 기록·검증해야 한다. CPU·메모리 용량은 관측한 호스트에서 얻는다. 여유분과 제어 예약은 [계약](contracts.md#native-macos-호스트-증거)의 승인 기본값을 따른다. 추가 여유분은 용량을 줄일 수만 있다.
 
 이전 system_tasks = 16 기본값을 사용하는 C01 설정은 C02에서 거절한다. 설정 schema는 1을 유지하며 이는 더 엄격한 의미 검증이지 자동 호환성이나 migration이 아니다. C02 시작 전에 운영자는 전체 task 용량·여유분·모든 예약을 검토하고 해당 용량 안에서 system_tasks >= 48을 명시 선택해야 한다. 기존 journal·자격을 보존한다. 검증을 통과시키려고 init을 다시 실행하거나 호스트 용량을 자동 확대하거나 live 예약을 줄이면 안 된다.
 
@@ -71,20 +87,46 @@ Client library는 정상 endpoint에 연결하고 OS가 관측한 authority UID/
 
 Wire는 4-byte 길이, JSON payload 최대 64 KiB, 활성 세션 최대 32개와 frame read/write마다 절대 250 ms 기한을 사용한다. 다음 frame을 기다리는 idle 시간도 포함하므로 idle 연결은 만료된다. 나중에 별도 작업을 명시적으로 시작할 때 새 인증 세션을 사용한다. Client가 자동으로 재접속하거나 재시도하지는 않는다. Poll·nonblocking descriptor I/O는 부분 frame·느린 reader·마지막 응답 버퍼를 처리하고 peer 종료 뒤 Darwin timeout 옵션을 바꾸지 않는다. 응답 유실로 실행·미실행·자원 회수를 입증했다고 판단하지 않는다.
 
-Private-FD API는 시작 metadata에 descriptor 식별자만 전달한다. Receiver는 이후 exec 전에 자격 FD를 소비하고 닫으며 실제 subprocess로 이 경계를 시험한다. Secret을 argv·환경·debug·payload 상속 descriptor에 두면 안 된다. 이 시험은 C05 helper 권한이나 사용자 프로그램 시작의 증거가 아니다. OS UID/PID 관측은 현재 제공하지만 native boot/start 정체성과 instance 등록은 C03이 필요하다. C02의 인증 caller는 Principal·lease·실행 권한을 받을 수 없다.
+Private-FD API는 시작 metadata에 descriptor 식별자만 전달한다. Receiver는 이후 exec 전에 자격 FD를 소비하고 닫으며 실제 subprocess로 이 경계를 시험한다. Secret을 argv·환경·debug·payload 상속 descriptor에 두면 안 된다. 이 시험은 C05 helper 권한이나 사용자 프로그램 시작의 증거가 아니다. OS UID/PID 관측을 제공하며 C03은 authority 안에서 이를 native boot/start 정체성과 결합한다. Wire는 P3까지 instance 등록을 계속 거절한다. 인증된 caller는 Principal·lease·실행 권한을 받을 수 없다.
 
 SDK 조회 예제는 CARGO_BUILD_JOBS=1 cargo build --locked -p devguard-client --example inspect로 빌드한다. 인터페이스는 inspect SOCKET UID CONSUMER GENERATION CREDENTIAL_FD다. 부모가 전용 상속 FD로 secret byte를 제공해야 하며 인자는 FD 번호와 비밀이 아닌 연결 metadata만 전달한다. 관측 peer와 인증된 status를 출력하는 예제이며 후속 일반 실행 CLI는 아니다.
 
 ## 호환성·검사·복귀
 
-Core의 AuthorityStorage는 기존 배타 잠금을 보유하고 schema 1 journal을 검사하되 attempt 상태를 바꾸지 않는다. 실제 Backend·Clock으로 활성화할 때 boot 기반 복구와 같은 transaction 안에서 회계를 다시 검증한다. 기존 Authority::open의 복구 동작과 DG-0 시험을 유지하며 C01/C02는 journal·기존 contract 직렬화 형식을 바꾸지 않는다. 새 로컬 protocol은 미지 필드·버전·필수 capability 미지원을 엄격히 거절하며 필드 추가도 명시적 호환성 시험이 필요하다.
+Core의 AuthorityStorage는 기존 배타 잠금을 보유하고 schema 1 journal을 검사하되 attempt 상태를 바꾸지 않는다. 실제 Backend·Clock으로 활성화할 때 boot 기반 복구와 같은 transaction 안에서 회계를 다시 검증한다. 기존 Authority::open의 복구 동작과 DG-0 시험을 유지하며 C01–C04는 journal schema·contract 직렬화·wire protocol을 바꾸지 않는다. 새 로컬 protocol은 미지 필드·버전·필수 capability 미지원을 엄격히 거절하며 필드 추가도 명시적 호환성 시험이 필요하다.
 
 ```sh
 python3 scripts/qualify.py dg1-authority --offline
 python3 scripts/qualify.py dg1-auth --offline
+python3 scripts/qualify.py dg1-probes --offline
+python3 scripts/qualify.py dg1-scopes --offline
 python3 scripts/validate.py --offline
 ```
 
-기능 suite는 0개 실행을 실패로 처리하고 source fingerprint·toolchain·bootstrap 모드·로그를 남긴다. dg1-authority는 배타 시작, 경로 별칭·권한, 누락·손상·미래 journal, 활성화 사이의 회계 손상, 엄격한 설정 버전, 프로젝트 권한 상승과 동시 bootstrap을 검사한다. dg1-auth는 실제 peer 관측·인증 역할·엄격한 frame·제한된 통신·private FD 위생과 등록이 닫힌 상태의 동시 요청을 검사한다. Native 등록·launch·Linux 강제·자기 적용·foreground SLO는 not_run이다. 전체 검증은 기존 44개 시험과 workspace crate 4개의 명시적 전체 의존 그래프를 검사한다. Core·contract는 daemon 설정과 독립적이며 client는 core에 의존하지 않는다.
+기능 suite는 0개 실행을 실패로 처리하고 source fingerprint·toolchain·bootstrap 모드·로그를 남긴다. dg1-authority는 배타 시작, 경로 별칭·권한, 누락·손상·미래 journal, 활성화 사이의 회계 손상, 엄격한 설정 버전, 프로젝트 권한 상승, 동시 bootstrap, 관측한 호스트 용량에서 산출한 정책을 검사한다. dg1-auth는 실제 peer 관측·인증 역할·엄격한 frame·제한된 통신·private FD 위생과 등록이 닫힌 상태의 동시 요청을 검사한다.
 
-복귀할 때 작업 소유 foreground 프로세스를 중지하고 보존한 설정과 schema 1 journal에 호환되는 source/artifact를 선택하며 영속 상태·자격을 유지한다. C01/C02를 통해 시작한 workload는 없다. 후속 live lease의 복귀에는 실제 대조가 필요하므로 이 초기 빈 상태 가정을 재사용할 수 없다.
+`dg1-probes`는 macOS에서만 실행하며 다른 플랫폼은 `not_run`으로 기록한다. 검사 항목은 다음과 같다.
+- `kern.bootsessionuuid`와 대조한 boot 시계
+- 종료·zombie·부재·거부 경우를 포함한 반복 가능한 프로세스 정체성
+- 호스트 용량과 구조적으로 유효한 native 압력 읽기
+- 첫 sample 전과 sample 없이 6초가 지난 뒤의 닫힌 admission
+- probe 실패 시 즉시 닫힘
+- stale·미래·replay·다른 boot sample 거절
+- 관측한 socket peer의 native 등록
+- 주입한 실패와, authority 잠금을 붙잡으면 안 되는 kernel 안에서 멈춘 probe를 포함한 서비스 sampling loop
+
+각 native 단계는 선언한 raw receipt를 보고서의 `raw/` 디렉터리에 남겨야 하며 단계 로그는 hash로 기록한다. 환경이 만들 수 없는 경우는 `not_run`으로 기록하며, 그러면 suite는 `passed`가 아니라 `incomplete`가 된다. `--allow-incomplete`는 보고서를 바꾸지 않고 incomplete suite에 성공을 반환한다. 환경이 해당 경우를 만들 수 없다고 알려진 곳에서만 사용한다.
+
+`dg1-scopes`도 macOS에서만 실행한다. 자기 process group을 이끌고 utility QoS clamp로 다시 실행한 실제 scope root를 사용하며 검사 항목은 다음과 같다.
+- nice·QoS readback과 clamp 없는 root의 적용 실패
+- binding, 실행 권한, 모든 구성원이 끝난 뒤에만 이루어지는 회수
+- 자손이 남은 상태에서 root가 종료·reap되어도 회수하지 않음
+- 자손이 group을 떠난 뒤 고정되는 이탈
+- 정체성을 확인한 종료
+- 공유되거나 비어 있지 않은 group, 다른 사용자의 프로세스, kernel 요구, 알 수 없는 scope의 거절
+
+Scripted-table 단위 시험은 생성 경쟁, PID 재사용, 추적 상실을 다룬다. Scope 증거는 라이브러리로만 검증하며 서비스는 P3 전까지 scope를 수립하지 않는다.
+
+이 suite들은 wire 등록·launch helper·Linux 강제·자기 적용·foreground SLO를 not_run으로 남긴다. 전체 검증은 기존 44개 시험과 workspace crate 5개의 명시적 전체 의존 그래프를 검사한다. Core·contract는 daemon 설정과 native adapter에 독립적이며 client는 core에 의존하지 않는다.
+
+복귀할 때 작업 소유 foreground 프로세스를 중지하고 보존한 설정과 schema 1 journal에 호환되는 source/artifact를 선택하며 영속 상태·자격을 유지한다. C03 활성화는 새 record 종류를 추가하지 않고 기존 복구만 수행하므로 C02 artifact로 같은 상태를 다시 열 수 있다. C01–C04를 통해 시작한 workload는 없다. 후속 live lease의 복귀에는 실제 대조가 필요하므로 이 초기 빈 상태 가정을 재사용할 수 없다.

@@ -30,6 +30,14 @@ jobs:
         run: python3 scripts/qualify.py dg1-authority --output target/qualification/dg1-authority
       - name: Native local authentication functional checks
         run: python3 scripts/qualify.py dg1-auth --output target/qualification/dg1-auth
+      - name: Native host evidence functional checks
+        if: runner.os == 'macOS'
+        run: python3 scripts/qualify.py dg1-probes --output target/qualification/dg1-probes
+      - name: Native scope and policy readback functional checks
+        if: runner.os == 'macOS'
+        # Hosted runners clamp every process, so the unclamped-root case can only
+        # be recorded as not run there; the summary still shows incomplete.
+        run: python3 scripts/qualify.py dg1-scopes --allow-incomplete --output target/qualification/dg1-scopes
       - name: Preserve qualification evidence
         if: always()
         uses: actions/upload-artifact@v6
@@ -44,9 +52,9 @@ jobs:
           import json, os
           from pathlib import Path
           with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as out:
-              for name in ['ci', 'dg1-authority', 'dg1-auth']:
+              for name in ['ci', 'dg1-authority', 'dg1-auth', 'dg1-probes', 'dg1-scopes']:
                   path = Path('target/qualification') / name / 'report.json'
                   status = json.loads(path.read_text())['status'] if path.exists() else 'not_run'
                   out.write(name + ': ' + status + '\n\n')
-              out.write('Contract regression and service/UDS functional checks only. Workload launch, OS resource control, self-use and foreground SLO qualification are not run.\n')
+              out.write('Contract regression, service/UDS, native host evidence and native scope functional checks only; native suites run on macOS. Workload launch, self-use and foreground SLO qualification are not run.\n')
           PY

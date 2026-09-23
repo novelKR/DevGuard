@@ -10,7 +10,9 @@ pub use authority::{
     Authority, AuthorityStorage, LaunchDecision, Principal, Registration, RunDecision, TrustedPeer,
 };
 pub use policy::{ConsumerDefinition, ConsumerRole, Policy};
-pub use pressure::{MemoryPressure, PressureController, PressureSample, PressureState};
+pub use pressure::{
+    DiskObservation, MemoryPressure, PressureController, PressureSample, PressureState,
+};
 
 use devguard_contract::*;
 

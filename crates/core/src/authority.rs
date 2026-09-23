@@ -196,6 +196,11 @@ impl<B: Backend, C: Clock> Authority<B, C> {
         self.pressure.current(&self.clock.now())
     }
 
+    /// A host probe failed or was incomplete. New work closes without inventing a sample.
+    pub fn pressure_observation_failed(&mut self) {
+        self.pressure.observation_failed();
+    }
+
     pub fn register(&mut self, peer: TrustedPeer, request: Registration) -> Result<Principal> {
         validate_id(&request.consumer_id)?;
         validate_id(&request.generation)?;
@@ -382,8 +387,8 @@ impl<B: Backend, C: Clock> Authority<B, C> {
         permit: &Secret,
         scope: &ScopeIdentity,
     ) -> Result<AttemptRecord> {
-        let now = self.clock.now();
         let backend = &self.backend;
+        let clock = &self.clock;
         self.journal.transaction(|tx| {
             validate_principal(tx, principal)?;
             let mut record = owned_record(tx, principal, key)?;
@@ -395,6 +400,9 @@ impl<B: Backend, C: Clock> Authority<B, C> {
                 return Err(invalid_transition());
             }
             let evidence = backend.binding(scope)?;
+            // Judge freshness after the backend returns: evidence observed during
+            // this call is not from the future, and stale evidence stays rejected.
+            let now = clock.now();
             let plan = record.plan.as_ref().ok_or_else(invalid_transition)?;
             let quantities = record
                 .reservation
@@ -479,6 +487,7 @@ impl<B: Backend, C: Clock> Authority<B, C> {
         key.validate()?;
         let now = self.clock.now();
         let backend = &self.backend;
+        let clock = &self.clock;
         self.journal.transaction(|tx| {
             journal::expire_prepared(tx, &now)?;
             let mut record = journal::load(tx, key)?.ok_or_else(not_found)?;
@@ -488,6 +497,8 @@ impl<B: Backend, C: Clock> Authority<B, C> {
             match &record.scope {
                 Some(scope) => match backend.observe_scope(scope) {
                     Ok(observation) => {
+                        // Freshness is judged after the observation completes.
+                        let now = clock.now();
                         let loss_resolved = !record.tracking_lost
                             || observation.prior_tracking_loss_resolved
                             || scope.root.boot_id != now.boot_id;
@@ -521,7 +532,7 @@ impl<B: Backend, C: Clock> Authority<B, C> {
                             .is_ok_and(|evidence| {
                                 evidence.key == *key
                                     && evidence.owner == record.owner
-                                    && fresh(&evidence.observed_at, &now, 2_000)
+                                    && fresh(&evidence.observed_at, &clock.now(), 2_000)
                                     && evidence.helper_creation_ruled_out
                                     && evidence.no_pending_spawn
                             });
