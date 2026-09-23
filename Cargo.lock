@@ -110,12 +110,25 @@ dependencies = [
  "devguard-client",
  "devguard-contract",
  "devguard-core",
+ "devguard-macos",
  "libc",
  "serde",
  "serde_json",
  "tempfile",
  "toml",
  "uuid",
+]
+
+[[package]]
+name = "devguard-macos"
+version = "0.1.0"
+dependencies = [
+ "devguard-contract",
+ "devguard-core",
+ "libc",
+ "serde",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]

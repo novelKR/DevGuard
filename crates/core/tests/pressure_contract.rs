@@ -147,3 +147,71 @@ fn missing_measurement_gap_does_not_count_as_a_recovery_interval() {
         PressureState::Critical
     );
 }
+
+#[test]
+fn a_failed_host_observation_closes_immediately_and_recovers_by_steps() {
+    let mut p = PressureController::default();
+    p.observe(sample(0), &time(0)).unwrap();
+    assert_eq!(p.current(&time(1_000)), PressureState::Normal);
+    p.observation_failed();
+    assert_eq!(p.current(&time(1_000)), PressureState::Critical);
+    for ms in (2_000..32_000).step_by(2_000) {
+        assert_eq!(
+            p.observe(sample(ms), &time(ms)).unwrap(),
+            PressureState::Critical
+        );
+    }
+    assert_eq!(
+        p.observe(sample(32_000), &time(32_000)).unwrap(),
+        PressureState::Constrained
+    );
+    // A later failure discards partial recovery progress.
+    p.observation_failed();
+    assert_eq!(
+        p.observe(sample(34_000), &time(34_000)).unwrap(),
+        PressureState::Critical
+    );
+}
+
+#[test]
+fn the_most_constrained_volume_uses_the_same_watermarks() {
+    let roomy = DiskObservation {
+        capacity_bytes: 1_000 * GIB,
+        available_bytes: 60 * GIB,
+    };
+    let small_critical = DiskObservation {
+        capacity_bytes: 100 * GIB,
+        available_bytes: 4 * GIB,
+    };
+    let healthy = DiskObservation {
+        capacity_bytes: 100 * GIB,
+        available_bytes: 50 * GIB,
+    };
+    // The large volume is further below its recovery watermark, but only the
+    // small one is critical; severity must dominate the margin.
+    assert_eq!(
+        DiskObservation::most_constrained(&[roomy, small_critical, healthy]),
+        Some(small_critical)
+    );
+    assert_eq!(
+        DiskObservation::most_constrained(&[healthy, roomy]),
+        Some(roomy)
+    );
+    let invalid = DiskObservation {
+        capacity_bytes: 10 * GIB,
+        available_bytes: 11 * GIB,
+    };
+    assert_eq!(
+        DiskObservation::most_constrained(&[small_critical, invalid]),
+        Some(invalid)
+    );
+    assert_eq!(DiskObservation::most_constrained(&[]), None);
+    let mut p = PressureController::default();
+    let mut selected = sample(0);
+    selected.disk_capacity_bytes = small_critical.capacity_bytes;
+    selected.disk_available_bytes = small_critical.available_bytes;
+    assert_eq!(
+        p.observe(selected, &time(0)).unwrap(),
+        PressureState::Critical
+    );
+}

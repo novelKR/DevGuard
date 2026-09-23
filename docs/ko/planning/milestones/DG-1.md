@@ -4,7 +4,7 @@
 
 아래 ID·제목·PR 묶음은 **예정 값**이다. 실제 SHA나 GitHub PR 번호가 아니다. 모듈 경로는 구현 전까지 예정 책임을 나타낸다. 현재 daemon/client crate는 존재하며 launcher·platform-macos·cli·adapters는 후속 책임이다. crate 추가는 해당 PR에서 명시적 의존 allowlist와 전체 그래프 검증을 함께 확장하고 검사를 제거하지 않는다. 실제 상태는 ledger가 소유한다.
 
-구현된 C01은 정상 경로·명시 bootstrap·배타 journal 검사를 제공한다. C02는 foreground devguardd serve, 제한된 인증 UDS 통신, OS UID/PID 관측, 엄격한 client 호환성과 private 자격 FD 전달을 추가한다. PR과 병합 후 main 전달 증거는 별도로 추적한다. Native boot/start 정체성·등록/Principal·lease·정책·실행은 각 P2/P3 선행 조건이 구현될 때까지 닫혀 있다. [운영 문서](../../operations.md)를 참조한다.
+구현된 C01은 정상 경로·명시 bootstrap·배타 journal 검사를 제공한다. C02는 foreground devguardd serve, 제한된 인증 UDS 통신, OS UID/PID 관측, 엄격한 client 호환성과 private 자격 FD 전달을 추가한다. C03은 `devguard-macos`의 boot 시계, native PID/start 정체성, 호스트 용량과 serve에서 journal을 활성화하는 2초 압력 sampler를 추가한다. PR과 병합 후 main 전달 증거는 별도로 추적한다. Wire 등록/Principal·lease·정책 적용·실행은 각 P2/P3 선행 조건이 구현될 때까지 닫혀 있다. [운영 문서](../../operations.md)를 참조한다.
 
 ## PR 순서와 활성화 경계
 
@@ -17,7 +17,7 @@
 | DG1-P5 | DG1-C09, DG1-C10, DG1-C11 | DG1-P4 | 설치·후보·독립 복구를 묶어 자기 적용 활성화 |
 | DG1-P6 | DG1-C12 | DG1-P5 | 기능 기준 artifact와 SLO 안정 artifact를 구분해 승격 |
 
-공통 현재 명령 python3 scripts/validate.py --offline은 Rust 1.95.0 계약 회귀를 확인하며 fake backend로 native 동작을 입증하지 않는다. C01 authority와 C02 인증·transport suite는 현재 제공한다. 아래에서 예정이라고 명시한 나머지 명령은 미제공이며 각 PR에서 fixture·실행 case 수·log·정리를 함께 구현하고 제공 상태를 갱신한다. 이름만 있는 테스트나 0개 실행을 통과로 처리하지 않는다. 공통 toolchain·증거·SLO 규칙은 상위 검증 문서에 있다.
+공통 현재 명령 python3 scripts/validate.py --offline은 Rust 1.95.0 계약 회귀를 확인하며 fake backend로 native 동작을 입증하지 않는다. C01 authority, C02 인증·transport, C03 native probe suite는 현재 제공한다. 아래에서 예정이라고 명시한 나머지 명령은 미제공이며 각 PR에서 fixture·실행 case 수·log·정리를 함께 구현하고 제공 상태를 갱신한다. 이름만 있는 테스트나 0개 실행을 통과로 처리하지 않는다. 공통 toolchain·증거·SLO 규칙은 상위 검증 문서에 있다.
 
 P1은 runtime을 닫아 두고 P2는 실제 probe, P3는 launch·안전 정리, P4는 개발 진입점, P5는 설치·부모 예산·repair, P6는 측정·승격을 제공한다. C08까지 foreground daemon과 최소 단일 Cargo job·test thread bootstrap을 사용한다. P4 bundle은 삭제할 build 경로 밖에 보존한다. C10에서 부모 예산을 포함한 artifact를 먼저 기능 시험·동결한 직후 제한된 실제 자기 적용을 시작하며 SLO qualification은 C12에서 확립한다.
 
@@ -55,7 +55,7 @@ P1은 runtime을 닫아 두고 P2는 실제 probe, P3는 launch·안전 정리, 
 - 대상/산출물: 예정 platform-macos `Backend`와 probe adapter, `pressure.rs` 연결, 호스트 정보 receipt.
 - 불변 조건: 첫 유효 sample 전 closed; stale/future sample 거절; 6초 freshness·30초 회복 계약 유지; 관측 실패와 미지원 capability 분리.
 - 시험: 정상 부하·회복; probe 오류/지연/boot 변경; PID 재사용과 sample replay 경쟁; sampler 지연 중 admission fail-closed.
-- 검증 명령: 현재 공통 회귀 + 예정 `python3 scripts/qualify.py dg1-probes`.
+- 검증 명령: 현재 공통 회귀 + **제공** `python3 scripts/qualify.py dg1-probes --offline`(macOS 전용; 다른 플랫폼은 `not_run` 기록). 등록을 닫은 상태의 native boot·정체성·압력 증거를 검사하며 자원 정책 적용은 검사하지 않는다.
 - 완료 증거: 원시 probe 표본·clock 단위·identity 재현 기록, 장애 주입과 closed 전환 시간.
 - rollback: probe 오류 시 신규 작업 차단, 기존 lease 축소 금지; 가짜 값으로 fallback하지 않는다.
 - 인계: DG1-C04에 freshness가 검증된 identity·압력 입력. P2에서 실제 scope 증거와 함께 검토한다.

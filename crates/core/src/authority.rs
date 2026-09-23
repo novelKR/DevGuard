@@ -196,6 +196,11 @@ impl<B: Backend, C: Clock> Authority<B, C> {
         self.pressure.current(&self.clock.now())
     }
 
+    /// A host probe failed or was incomplete. New work closes without inventing a sample.
+    pub fn pressure_observation_failed(&mut self) {
+        self.pressure.observation_failed();
+    }
+
     pub fn register(&mut self, peer: TrustedPeer, request: Registration) -> Result<Principal> {
         validate_id(&request.consumer_id)?;
         validate_id(&request.generation)?;

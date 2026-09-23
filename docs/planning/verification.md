@@ -8,7 +8,7 @@ Preserve the approved [design SLOs](../design.md#verification-and-promotion). De
 | --- | --- | --- | --- |
 | V-DOC-DG | DevGuard docs/metadata | Original checksum/license, English/Korean hashes, IDs/DAG/links, 46 units/23 groups, required fields | Documentation checker and review |
 | V-DG0 | Contract/core | Rust 1.95.0 fmt/Clippy, 44-test baseline, full dependency graph and source fingerprint | Existing validator |
-| V-DG1-FUNCTION | Real auth/probe/launch/reconcile/CLI/operations | DG1-C01–C11 normal/failure/race cases and functional artifacts | C01 authority and C02 local authentication/transport available; later scopes supplied with each group |
+| V-DG1-FUNCTION | Real auth/probe/launch/reconcile/CLI/operations | DG1-C01–C11 normal/failure/race cases and functional artifacts | C01 authority, C02 local authentication/transport and C03 native probes available; later scopes supplied with each group |
 | V-DG1-SLO | Standalone daemon/CLI, development and self-use | DG1-C12 control and foreground measurements | Planned; no CS-RG prerequisite |
 | V-CS-DOC | CodeSpace bilingual registry/site | Reviewed hashes, existing tests, pinned build, integrity and visual review | Existing commands |
 | V-CS-UPSTREAM | Existing Codex integration | Pin/policy/format/dependencies/adapter/PTY/filesystem/platform gates | Existing; actual platforms required |
@@ -28,6 +28,7 @@ python3 scripts/check_docs.py
 python3 scripts/validate.py --offline
 python3 scripts/qualify.py dg1-authority --offline
 python3 scripts/qualify.py dg1-auth --offline
+python3 scripts/qualify.py dg1-probes --offline
 git diff --check
 ```
 
@@ -65,7 +66,13 @@ For the preparation PRs, preserve runtime/Cargo/journal state. Documentation che
 
 ## Planned suites and fault injection
 
-`scripts/qualify.py dg1-authority --offline` is available for C01 configuration/storage, and `scripts/qualify.py dg1-auth --offline` for C02 authentication/transport. Other DevGuard suites and CodeSpace `scripts/qualify-devguard.py <suite>` remain planned interfaces until supplied by their work units. Each implementation PR supplies the actual interface, nonzero case inventory, timeouts, logs, isolation and cleanup, then updates its task command documentation. macOS/Ubuntu CI retains the full validator and also runs both functional suites, preserving their separate reports and logs.
+`scripts/qualify.py dg1-authority --offline` is available for C01 configuration/storage, `scripts/qualify.py dg1-auth --offline` for C02 authentication/transport, and `scripts/qualify.py dg1-probes --offline` for C03 native evidence. Other DevGuard suites and CodeSpace `scripts/qualify-devguard.py <suite>` remain planned interfaces until supplied by their work units. Each implementation PR supplies the actual interface, nonzero case inventory, timeouts, logs, isolation and cleanup, then updates its task command documentation. macOS/Ubuntu CI retains the full validator and both portable functional suites, preserving their separate reports and logs. Native suites run on macOS CI only and record `not_run` elsewhere; they never pass on a platform that cannot supply the evidence. Each native stage declares the raw receipts it must produce. A receipt that records a case as `not_run` makes the suite `incomplete`, not `passed`.
+
+C03 evidence is recorded in these files:
+- **Raw receipts** (in the report's `raw/` directory): boot ID and clock readings with units, host capacity, repeated process identities, including zombie, reaped and refused observations, native pressure readings with their derived rates, the measured time from the last sample to closed admission, and the service loop's time from an injected failure to Critical and its behavior with a stuck probe.
+- **Stage logs**: the injected failures, rejected stale, future, replayed and other-boot samples, and native registration of an observed socket peer.
+
+Tests use synthetic healthy readings wherever the actual host pressure could legitimately differ. They do not assume the host is Normal. The suite does not exercise wire registration, scope binding or applied policy.
 
 C02 evidence covers actual OS socket UID/PID observations at both ends, distinct consumer/admin credentials, rejected helper-role authentication, strict current/future wire fixtures, 64 KiB frames, a 32-session limit, absolute 250 ms per-frame deadlines including idle waits, partial/slow/final responses and private credential-FD transport. Dedicated subprocess helpers verify FD closure before a subsequent exec and inspect argv/environment/debug/output for secret leakage. They are executed by parent tests and are not independent ignored qualification successes. Record process cleanup as well as the nonzero parent-case inventory.
 

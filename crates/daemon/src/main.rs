@@ -18,7 +18,7 @@ extern "C" fn stop_signal(_: libc::c_int) {
 fn run() -> Result<()> {
     let args: Vec<_> = std::env::args().skip(1).collect();
     if args == ["--help"] || args == ["help"] {
-        println!("devguardd paths | init | check | serve\nNormal authority paths come from the OS account. No path or test-budget override is accepted.\nRuntime execution is unavailable until native host evidence and launch/reconciliation are implemented.");
+        println!("devguardd paths | init | check | serve\nNormal authority paths come from the OS account. No path or test-budget override is accepted.\nserve observes native boot, process and host pressure evidence. Runtime execution is unavailable until launch and reconciliation are implemented; registration stays closed.");
         return Ok(());
     }
     if args.len() != 1 || !matches!(args[0].as_str(), "paths" | "init" | "check" | "serve") {
@@ -44,7 +44,7 @@ fn run() -> Result<()> {
             let _storage = AuthorityStorage::open(&paths.journal())?;
             println!(
                 "{}",
-                serde_json::json!({"configuration":config.fingerprint()?,"journal_valid":true,"runtime_ready":false,"reason":"native host evidence and launch are not installed"})
+                serde_json::json!({"configuration":config.fingerprint()?,"journal_valid":true,"runtime_ready":false,"reason":"registration, launch and reconciliation are not installed"})
             );
         }
         "serve" => {

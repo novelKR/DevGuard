@@ -1,6 +1,7 @@
 use crate::paths::{read_private, write_new_private, AuthorityPaths};
 use devguard_contract::{validate_digest, validate_id, Budget, Error, ErrorCode, Result, Secret};
-use devguard_core::{AuthorityStorage, ConsumerRole};
+use devguard_core::{AuthorityStorage, ConsumerDefinition, ConsumerRole, Policy};
+use devguard_macos::HostCapacity;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
@@ -8,6 +9,11 @@ use uuid::Uuid;
 
 pub const CONFIG_SCHEMA: u32 = 1;
 pub const CONFIG_BYTES: usize = 64 * 1024;
+const GIB: u64 = 1024 * 1024 * 1024;
+/// Approved control reservations, counted once: the daemon (0.25 CPU, 128 MiB)
+/// plus the aggregate CLI control pool (0.25 CPU, 128 MiB for up to eight CLIs).
+const SYSTEM_CPU_MILLI: u64 = 250 + 250;
+const SYSTEM_MEMORY_BYTES: u64 = (128 + 128) * 1024 * 1024;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -141,6 +147,55 @@ impl HostConfig {
         Ok(devguard_contract::digest_bytes(
             &serde_json::to_vec(self).map_err(|_| invalid("configuration encoding failed"))?,
         ))
+    }
+
+    /// Core policy for the observed host. Host headroom follows the approved
+    /// defaults, max(ceil(25% of logical CPUs), 2 CPUs) and max(25% of physical
+    /// memory, 4 GiB), plus any operator headroom; consumers take the account UID.
+    pub fn policy(&self, capacity: HostCapacity, uid: u32) -> Result<Policy> {
+        let cpus = u64::from(capacity.logical_cpus);
+        let overflow = || invalid("host capacity overflow");
+        let effective_capacity = Budget {
+            cpu_milli: cpus.checked_mul(1_000).ok_or_else(overflow)?,
+            memory_bytes: capacity.memory_bytes,
+            tasks: self.task_capacity,
+        };
+        let host_headroom = Budget {
+            cpu_milli: cpus.div_ceil(4).max(2) * 1_000,
+            memory_bytes: (capacity.memory_bytes / 4).max(4 * GIB),
+            tasks: self.task_headroom,
+        }
+        .checked_add(self.additional_headroom)?;
+        let consumers = self
+            .consumers
+            .iter()
+            .map(|(id, consumer)| {
+                (
+                    id.clone(),
+                    ConsumerDefinition {
+                        generation: consumer.generation.clone(),
+                        uid,
+                        role: consumer.role,
+                        credential_digest: consumer.credential_sha256.clone(),
+                        max_instances: consumer.max_instances,
+                        control_reservation: consumer.control_reservation,
+                    },
+                )
+            })
+            .collect();
+        let policy = Policy {
+            revision: self.policy_revision.clone(),
+            effective_capacity,
+            host_headroom,
+            system_reservation: Budget {
+                cpu_milli: SYSTEM_CPU_MILLI,
+                memory_bytes: SYSTEM_MEMORY_BYTES,
+                tasks: self.system_tasks,
+            },
+            consumers,
+        };
+        policy.validate()?;
+        Ok(policy)
     }
 }
 
@@ -457,5 +512,68 @@ mod tests {
                 .as_bytes()
         )
         .is_err());
+    }
+
+    #[test]
+    fn authority_host_policy_applies_approved_headroom_to_observed_capacity() {
+        let (_directory, paths) = fixture();
+        let config = initialize(&paths).unwrap();
+        let host = HostCapacity {
+            logical_cpus: 8,
+            memory_bytes: 16 * GIB,
+        };
+        let policy = config.policy(host, paths.uid()).unwrap();
+        assert_eq!(policy.effective_capacity.cpu_milli, 8_000);
+        assert_eq!(policy.host_headroom.cpu_milli, 2_000);
+        assert_eq!(policy.host_headroom.memory_bytes, 4 * GIB);
+        assert_eq!(policy.system_reservation.cpu_milli, 500);
+        assert_eq!(policy.system_reservation.memory_bytes, GIB / 4);
+        assert_eq!(policy.system_reservation.tasks, 48);
+        assert_eq!(
+            policy.work_capacity().unwrap(),
+            Budget {
+                cpu_milli: 5_500,
+                memory_bytes: 11 * GIB + 3 * GIB / 4,
+                tasks: 144,
+            }
+        );
+        assert!(policy
+            .consumers
+            .values()
+            .all(|consumer| consumer.uid == paths.uid()));
+        // Larger hosts use 25%; smaller hosts keep the absolute minimum and may
+        // have no workload capacity at all rather than a forced minimum.
+        let large = config
+            .policy(
+                HostCapacity {
+                    logical_cpus: 32,
+                    memory_bytes: 64 * GIB,
+                },
+                paths.uid(),
+            )
+            .unwrap();
+        assert_eq!(large.host_headroom.cpu_milli, 8_000);
+        assert_eq!(large.host_headroom.memory_bytes, 16 * GIB);
+        let small = config
+            .policy(
+                HostCapacity {
+                    logical_cpus: 2,
+                    memory_bytes: 4 * GIB,
+                },
+                paths.uid(),
+            )
+            .unwrap();
+        assert_eq!(small.work_capacity().unwrap().cpu_milli, 0);
+        assert_eq!(small.work_capacity().unwrap().memory_bytes, 0);
+        // Additional operator headroom can only subtract capacity.
+        let mut stricter = config.clone();
+        stricter.additional_headroom = Budget {
+            cpu_milli: 1_000,
+            memory_bytes: GIB,
+            tasks: 8,
+        };
+        let stricter = stricter.policy(host, paths.uid()).unwrap();
+        assert_eq!(stricter.work_capacity().unwrap().cpu_milli, 4_500);
+        assert_eq!(stricter.work_capacity().unwrap().tasks, 136);
     }
 }

@@ -43,10 +43,50 @@ pub struct PressureSample {
     pub disk_available_bytes: u64,
 }
 
+fn disk_critical_threshold(capacity: u64) -> u64 {
+    (capacity / 20).max(2 * GIB)
+}
+
+fn disk_clear_threshold(capacity: u64) -> u64 {
+    (capacity / 10).max(4 * GIB)
+}
+
+/// One observed target volume. A host may write workloads to several volumes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DiskObservation {
+    pub capacity_bytes: u64,
+    pub available_bytes: u64,
+}
+
+impl DiskObservation {
+    /// Select the volume that the pressure rules treat most severely: critical
+    /// before not-yet-recovered, then the smallest margin above recovery.
+    /// Invalid volumes (zero capacity or impossible availability) are chosen
+    /// first so that the resulting sample is rejected rather than hidden.
+    pub fn most_constrained(volumes: &[Self]) -> Option<Self> {
+        volumes.iter().copied().max_by_key(|volume| {
+            let invalid =
+                volume.capacity_bytes == 0 || volume.available_bytes > volume.capacity_bytes;
+            let severity = if invalid {
+                3
+            } else if volume.available_bytes <= disk_critical_threshold(volume.capacity_bytes) {
+                2
+            } else if volume.available_bytes <= disk_clear_threshold(volume.capacity_bytes) {
+                1
+            } else {
+                0
+            };
+            let margin = i128::from(volume.available_bytes)
+                - i128::from(disk_clear_threshold(volume.capacity_bytes));
+            (severity, std::cmp::Reverse(margin))
+        })
+    }
+}
+
 impl PressureSample {
     fn critical_now(&self) -> bool {
         self.memory == MemoryPressure::Critical
-            || self.disk_available_bytes <= (self.disk_capacity_bytes / 20).max(2 * GIB)
+            || self.disk_available_bytes <= disk_critical_threshold(self.disk_capacity_bytes)
     }
     fn critical_repeated(&self) -> bool {
         self.control_lag_ms >= 1_000 || self.memory_full_basis_points.is_some_and(|x| x >= 1_000)
@@ -64,7 +104,7 @@ impl PressureSample {
             && self.swap_growth_mib_10s < 32
             && self.control_lag_ms < 100
             && self.memory_full_basis_points.is_none_or(|x| x < 100)
-            && self.disk_available_bytes > (self.disk_capacity_bytes / 10).max(4 * GIB)
+            && self.disk_available_bytes > disk_clear_threshold(self.disk_capacity_bytes)
     }
 }
 
@@ -90,6 +130,15 @@ impl Default for PressureController {
 }
 
 impl PressureController {
+    /// A failed or incomplete host observation closes new work immediately.
+    /// Recovery then requires the ordinary 30-second valid-sample steps.
+    pub fn observation_failed(&mut self) {
+        self.state = PressureState::Critical;
+        self.clear_since = None;
+        self.soft_count = 0;
+        self.hard_count = 0;
+    }
+
     pub fn current(&mut self, now: &ObservationTime) -> PressureState {
         if self
             .last

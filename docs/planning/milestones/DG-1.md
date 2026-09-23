@@ -4,7 +4,7 @@ Owner: DevGuard. Current implementation: `in-progress`; qualification: `not-run`
 
 All work IDs, commit titles and logical PR labels below are **proposed values**, not future SHAs or GitHub numbers. Module paths describe planned responsibilities until implemented. Each added workspace crate updates the explicit dependency allowlist in the same PR without removing full-graph validation. The ledger owns actual status.
 
-Implemented behavior: C01 provides canonical paths, explicit bootstrap and locked journal validation. C02 adds foreground `devguardd serve`, authenticated bounded UDS communication, OS-observed UID/PID, strict client compatibility and private credential-FD transfer. PR and post-merge main delivery evidence is tracked separately. Native boot/start identity, registration/principals, leases, policies and execution remain closed until their P2/P3 prerequisites are implemented. See [operations](../../operations.md).
+Implemented behavior: C01 provides canonical paths, explicit bootstrap and locked journal validation. C02 adds foreground `devguardd serve`, authenticated bounded UDS communication, OS-observed UID/PID, strict client compatibility and private credential-FD transfer. C03 adds the `devguard-macos` boot clock, native PID/start identity, host capacity and a two-second pressure sampler that activates the journal in `serve`. PR and post-merge main delivery evidence is tracked separately. Registration over the wire, principals, leases, applied policies and execution remain closed until their P2/P3 prerequisites are implemented. See [operations](../../operations.md).
 
 ## PR sequence and activation
 
@@ -17,7 +17,7 @@ Implemented behavior: C01 provides canonical paths, explicit bootstrap and locke
 | DG1-P5 | DG1-C09, DG1-C10, DG1-C11 | DG1-P4 |
 | DG1-P6 | DG1-C12 | DG1-P5 |
 
-Available regression: `python3 scripts/validate.py --offline` (Rust 1.95.0 contract regression; fake backends do not prove native behavior). C01 authority and C02 authentication/transport suites are now available; commands explicitly labelled planned below remain unavailable until implemented. Each PR must supply real fixtures, nonzero case counts, logs and cleanup, then update command availability. See [verification](../verification.md).
+Available regression: `python3 scripts/validate.py --offline` (Rust 1.95.0 contract regression; fake backends do not prove native behavior). C01 authority, C02 authentication/transport and C03 native probe suites are now available; commands explicitly labelled planned below remain unavailable until implemented. Each PR must supply real fixtures, nonzero case counts, logs and cleanup, then update command availability. See [verification](../verification.md).
 
 DG1-P1 keeps runtime readiness closed; P2 provides actual probes; P3 ships launch with safe cleanup; P4 provides development entrypoints; P5 installation/parent-budget/repair; P6 measures and promotes. Through C08 use foreground daemons and minimum one-job/one-thread bootstrap. Preserve the P4 bundle outside disposable output. At C10, first test and freeze a parent containing parent-budget support, then immediately begin bounded real self-use; C12 alone establishes SLO qualification.
 
@@ -58,7 +58,7 @@ DG1-P1 keeps runtime readiness closed; P2 provides actual probes; P3 ships launc
 - Completion evidence: Raw samples, clock units, repeatable process identity, injected failures and time to closed admission.
 - Rollback: Block new work on probe failure without shrinking live leases or substituting fabricated values.
 - Handoff: DG1-C04 receives fresh identity/pressure inputs; review native scope evidence in the same P2 group.
-- Verification command: available regression above plus **planned, not yet provided** `python3 scripts/qualify.py dg1-probes`.
+- Verification command: available regression above plus **available** `python3 scripts/qualify.py dg1-probes --offline` (macOS only; other platforms record `not_run`). It checks native boot, identity and pressure evidence with registration closed, not resource-policy application.
 
 ### DG1-C04 — verify resource policy and scope termination
 

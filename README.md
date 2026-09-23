@@ -2,7 +2,7 @@
 
 DevGuard centralizes resource admission for development workloads while preserving the resources needed to inspect and stop them.
 
-The repository implements **DG-0 contracts and a durable authority core**, with DG-1 now in progress. C01 supplies canonical paths/bootstrap/storage checks; C02 supplies authenticated, bounded local communication with a small client and private credential-FD transfer. PR and post-merge main delivery evidence is tracked separately from implementation. Native registration, principals, leases and execution remain closed until the required native evidence and launch work in P2/P3; macOS resource policies and Linux cgroups are not yet available. Use the operating guide for actual command availability; the design also contains future interfaces.
+The repository implements **DG-0 contracts and a durable authority core**, with DG-1 now in progress. C01 supplies canonical paths/bootstrap/storage checks; C02 supplies authenticated, bounded local communication with a small client and private credential-FD transfer; C03 supplies the native macOS boot clock, process identity and host pressure evidence that activate the service's journal. PR and post-merge main delivery evidence is tracked separately from implementation. Registration over the wire, principals, leases and execution remain closed until the launch and reconciliation work in P3; applied macOS resource policies and Linux cgroups are not yet available. Use the operating guide for actual command availability; the design also contains future interfaces.
 
 - [Authoritative design reference](docs/design.md) · [Korean translation](docs/ko/design.md)
 - [Historical approved design (Korean, immutable)](docs/design.ko.md)
@@ -20,11 +20,12 @@ Use Rust **1.95.0**, including rustfmt and Clippy, and Python 3.11 or newer. A r
 python3 scripts/validate.py --offline
 python3 scripts/qualify.py dg1-authority --offline
 python3 scripts/qualify.py dg1-auth --offline
+python3 scripts/qualify.py dg1-probes --offline   # macOS only
 ```
 
 Omit `--offline` when the locked crates have not been downloaded. Builds and tests use one Cargo job and one test thread by default. Results, source fingerprints and logs are written under `target/qualification/`. A newer compiler can be used with `--allow-toolchain-mismatch` for a supplemental check, which never counts as qualification for 1.95.0.
 
-DG-0 tests use an explicitly fake OS backend. Their passing reports establish accounting, persistence and state-transition contracts. The additional C01/C02 suites check actual local storage, peer observations and credential transport within bounded fixtures. They do not qualify native registration or launch, Linux enforcement, browser responsiveness or self-governed execution; these remain `not_run`.
+DG-0 tests use an explicitly fake OS backend. Their passing reports establish accounting, persistence and state-transition contracts. The additional C01–C03 suites check actual local storage, peer observations, credential transport and native macOS host evidence within bounded fixtures. They do not qualify registration over the wire, launch, applied resource policy, Linux enforcement, browser responsiveness or self-governed execution; these remain `not_run`.
 
 ## Repository boundaries
 
@@ -32,7 +33,7 @@ DG-0 tests use an explicitly fake OS backend. Their passing reports establish ac
 
 The approved local checkout is `/Volumes/DevData/Projects/IdeaProjects/DevGuard`. Existing `.codex` settings are preserved locally and ignored by Git. Build output, journals, qualification evidence and local toolchains are also ignored. The approved design is preserved byte-for-byte; its checksum is recorded in `docs/design-source.json`.
 
-`devguard-daemon` provides the canonical configuration/storage boundary and foreground `devguardd serve`. `devguard-client` supplies versioned UDS communication and private credential handoff without depending on the authority core. Successful authentication is not an instance registration or a workload lease, and does not isolate malicious processes sharing the operating UID.
+`devguard-macos` supplies native boot, process and host pressure observations to the core only through its `Clock` and `Backend` traits. `devguard-daemon` provides the canonical configuration/storage boundary and foreground `devguardd serve`. `devguard-client` supplies versioned UDS communication and private credential handoff without depending on the authority core. Successful authentication is not an instance registration or a workload lease, and does not isolate malicious processes sharing the operating UID.
 
 The public source repository is [novelKR/DevGuard](https://github.com/novelKR/DevGuard). CodeSpace runtime consumption begins at CS-RG after DG-1 qualification. Crates are not published, and no installer or LaunchAgent is available yet.
 
