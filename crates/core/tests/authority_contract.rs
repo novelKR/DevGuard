@@ -1058,3 +1058,150 @@ fn launch_cancel_never_rewrites_suspect_draining_or_terminal_attempts() {
         .unwrap();
     assert_eq!(after, before);
 }
+
+#[test]
+fn reconcile_releases_a_bound_scope_after_a_reboot_as_previous_boot() {
+    let h = Harness::new();
+    let (mut a, p) = h.ready();
+    let (r, _, _) = h.bound(&mut a, &p, "bound-reboot");
+    // Without an observation the scope is tracking loss, sticky and charged.
+    let lost = a.reconcile(&r.key).unwrap();
+    assert_eq!(lost.phase, AttemptPhase::Suspect);
+    assert!(lost.tracking_lost);
+    drop(a);
+    h.clock.reboot();
+    let mut a = h.open();
+    let released = a.reconcile(&r.key).unwrap();
+    assert_eq!(released.phase, AttemptPhase::Released);
+    assert_eq!(released.release_reason, Some(ReleaseReason::PreviousBoot));
+    assert!(!released.known_not_started());
+    assert_eq!(a.committed_budget().unwrap(), Budget::ZERO);
+}
+
+#[test]
+fn reconcile_that_changes_nothing_writes_nothing() {
+    let h = Harness::new();
+    let (mut a, p) = h.ready();
+    let (r, _, scope) = h.bound(&mut a, &p, "unchanged");
+    h.backend.0.lock().unwrap().observations.insert(
+        scope.scope_id.clone(),
+        ScopeObservation {
+            scope: scope.clone(),
+            observed_at: h.clock.now(),
+            root_reaped: false,
+            empty: false,
+            known_members_gone: false,
+            tracking_complete: true,
+            known_escape: false,
+            prior_tracking_loss_resolved: false,
+        },
+    );
+    let reader = Connection::open(&h.path).unwrap();
+    let version = || -> i64 {
+        reader
+            .query_row("PRAGMA data_version", [], |row| row.get(0))
+            .unwrap()
+    };
+    let before = version();
+    for _ in 0..3 {
+        assert_eq!(a.reconcile(&r.key).unwrap().phase, AttemptPhase::ScopeBound);
+    }
+    assert_eq!(version(), before);
+    h.closed(&scope);
+    assert_eq!(a.reconcile(&r.key).unwrap().phase, AttemptPhase::Released);
+    assert_ne!(version(), before);
+}
+
+#[test]
+fn reconcile_listings_show_only_live_accounting() {
+    let h = Harness::new();
+    let (mut a, p) = h.ready();
+    let prepared = h.prepare(&mut a, &p, "listed-prepared");
+    let committed = h.prepare(&mut a, &p, "listed-committed");
+    a.begin_launch(&p, &committed.key).unwrap();
+    let mut denied = request("listed-denied");
+    denied.intent.minimum = ResourceLevels::KERNEL;
+    assert_eq!(a.admit(&p, denied).unwrap().phase, AttemptPhase::Denied);
+    let keys = |a: &mut TestAuthority| -> Vec<String> {
+        let mut keys: Vec<String> = a
+            .attempts()
+            .unwrap()
+            .into_iter()
+            .map(|record| record.key.attempt_id)
+            .collect();
+        keys.sort();
+        keys
+    };
+    assert_eq!(keys(&mut a), ["listed-committed", "listed-prepared"]);
+    h.clock.advance(PREPARED_TTL_MS);
+    assert_eq!(keys(&mut a), ["listed-committed"]);
+    assert_eq!(
+        a.lookup(&p, &prepared.key).unwrap().phase,
+        AttemptPhase::Expired
+    );
+    let instances = a.instances().unwrap();
+    assert_eq!(instances.len(), 1);
+    assert!(instances[0].active);
+    assert_eq!(instances[0].instance, h.registration.instance);
+    drop(a);
+    let mut a = h.open();
+    assert!(!a.instances().unwrap()[0].active);
+    h.register(&mut a);
+    assert!(a.instances().unwrap()[0].active);
+}
+
+#[test]
+fn reconcile_retires_a_previous_boot_instance_whatever_now_holds_its_pid() {
+    let h = Harness::new();
+    let (a, _) = h.ready();
+    drop(a);
+    h.clock.reboot();
+    // After the reboot another user's process holds the old PID.
+    h.backend.0.lock().unwrap().refused.insert(100);
+    let mut a = h.open();
+    let instance = &h.registration.instance;
+    assert!(a
+        .reconcile_instance("codespace-runtime", "generation-1", &instance.instance_id)
+        .unwrap());
+    assert!(a.instances().unwrap().is_empty());
+}
+
+#[test]
+fn reconcile_rejects_release_reasons_that_contradict_the_recorded_scope() {
+    for (name, edit) in [
+        (
+            "no-helper-with-scope",
+            "UPDATE attempts SET record=json_set(record,'$.release_reason','no_helper_created')",
+        ),
+        (
+            "terminated-without-scope",
+            "UPDATE attempts SET record=json_set(record,'$.scope',NULL,'$.applied',NULL)",
+        ),
+    ] {
+        let h = Harness::new();
+        let (mut a, p) = h.ready();
+        let (r, _, scope) = h.bound(&mut a, &p, name);
+        h.closed(&scope);
+        let released = a.reconcile(&r.key).unwrap();
+        assert_eq!(
+            released.release_reason,
+            Some(ReleaseReason::ScopeTerminated)
+        );
+        drop(a);
+        Connection::open(&h.path)
+            .unwrap()
+            .execute(edit, [])
+            .unwrap();
+        let reopened = TestAuthority::open(
+            &h.path,
+            h.policy.clone(),
+            h.backend.clone(),
+            h.clock.clone(),
+        );
+        assert_eq!(
+            reopened.err().map(|error| error.code),
+            Some(ErrorCode::JournalInvalid),
+            "{name}"
+        );
+    }
+}

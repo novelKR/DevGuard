@@ -353,3 +353,105 @@ pub fn start_raw_helper(
     drop(command);
     child
 }
+
+/// Poll the owner's attempt until `done` holds or `limit` passes.
+pub fn wait_for(
+    owner: &Owner,
+    attempt: &str,
+    limit: Duration,
+    done: impl Fn(&AttemptRecord) -> bool,
+) -> AttemptRecord {
+    let deadline = std::time::Instant::now() + limit;
+    loop {
+        let record = owner.lookup(attempt);
+        if done(&record) {
+            return record;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "attempt {attempt} never reached the expected state: {record:?}"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// Wait until the scope's release is recorded by the reconciler.
+pub fn wait_released(owner: &Owner, attempt: &str) -> AttemptRecord {
+    wait_for(owner, attempt, Duration::from_secs(10), |record| {
+        record.phase == AttemptPhase::Released
+    })
+}
+
+/// Wait for a child to exit without reaping it, so its PID stays held.
+pub fn exited_unreaped(pid: u32) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    loop {
+        // SAFETY: siginfo_t is plain data filled by waitid; WNOWAIT leaves the
+        // child waitable, so its owner still reaps it later.
+        let exited = unsafe {
+            let mut info: libc::siginfo_t = std::mem::zeroed();
+            let result = libc::waitid(
+                libc::P_PID,
+                pid as libc::id_t,
+                &mut info,
+                libc::WEXITED | libc::WNOWAIT | libc::WNOHANG,
+            );
+            assert!(
+                result == 0
+                    || std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted,
+                "waitid failed for {pid}"
+            );
+            result == 0 && info.si_pid == pid as libc::pid_t
+        };
+        if exited {
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "child {pid} did not exit"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// Reap a child within `limit`, killing it first if it is still running.
+pub fn wait_exit(child: &mut Child, limit: Duration) -> std::process::ExitStatus {
+    let deadline = std::time::Instant::now() + limit;
+    loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            return status;
+        }
+        if std::time::Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("child {} did not exit within {limit:?}", child.id());
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// Kills and reaps a long-lived child if a test fails before it does.
+pub struct KillOnDrop(pub Child);
+
+impl Drop for KillOnDrop {
+    fn drop(&mut self) {
+        if matches!(self.0.try_wait(), Ok(None)) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+}
+
+/// The boot-relative clock the authority uses (`CLOCK_MONOTONIC_RAW`), in ms.
+pub fn boot_ms() -> u64 {
+    let mut time = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // SAFETY: `time` is a valid output structure for clock_gettime.
+    assert_eq!(
+        unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC_RAW, &mut time) },
+        0
+    );
+    time.tv_sec as u64 * 1_000 + time.tv_nsec as u64 / 1_000_000
+}

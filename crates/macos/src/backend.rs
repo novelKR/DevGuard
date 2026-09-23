@@ -2,17 +2,24 @@ use crate::clock::BootClock;
 use crate::scope::{CpuReadback, Establishment, ScopeTracker, SignalReceipt};
 use crate::table::NativeTable;
 use devguard_contract::*;
-use devguard_core::{Backend, BindingEvidence, ScopeObservation, UnboundLaunchEvidence};
-use std::sync::Arc;
+use devguard_core::{Backend, BindingEvidence, Clock, ScopeObservation, UnboundLaunchEvidence};
+use std::collections::BTreeMap;
+use std::sync::{Arc, Mutex};
+
+/// Owner reports kept at once; beyond this, new reports are refused rather
+/// than older evidence dropped.
+const NO_HELPER_REPORTS: usize = 4096;
 
 /// Native evidence behind the core `Backend` trait: kernel process identity,
-/// observed process-group scopes with policy readback, and termination by
-/// rechecked identity. Launcher evidence is not installed, so an unbound
-/// launch can never be released through this backend.
+/// observed process-group scopes with policy readback, termination by
+/// rechecked identity, and the launcher evidence that an unclaimed grant has
+/// no helper.
 #[derive(Clone)]
 pub struct NativeBackend {
     clock: BootClock,
     scopes: Arc<ScopeTracker<NativeTable>>,
+    /// Grants whose owner reported that no helper exists, by attempt.
+    no_helper: Arc<Mutex<BTreeMap<AttemptKey, InstanceIdentity>>>,
 }
 
 impl std::fmt::Debug for NativeBackend {
@@ -28,6 +35,42 @@ impl NativeBackend {
         Self {
             clock,
             scopes: Arc::new(ScopeTracker::new(NativeTable)),
+            no_helper: Arc::default(),
+        }
+    }
+
+    /// Record the owner's first-hand report that it holds no helper for this
+    /// grant and will start none: creating the helper failed, the helper it
+    /// created exited and was reaped before READY, or the grant's response
+    /// never reached it. The core releases the grant as `NoHelperCreated`
+    /// only while the journal also shows that no helper claimed it. A late
+    /// helper is refused, because a released or suspect grant is fenced.
+    pub fn record_no_helper(&self, key: &AttemptKey, owner: &InstanceIdentity) -> Result<()> {
+        let mut reports = self
+            .no_helper
+            .lock()
+            .map_err(|_| crate::failed_evidence())?;
+        if reports.len() >= NO_HELPER_REPORTS && !reports.contains_key(key) {
+            return Err(Error::new(
+                ErrorCode::ResourceUnavailable,
+                "too many unreconciled launch reports",
+            ));
+        }
+        reports.insert(key.clone(), owner.clone());
+        Ok(())
+    }
+
+    /// Whether the owner reported that this grant has no helper.
+    pub fn no_helper_reported(&self, key: &AttemptKey) -> bool {
+        self.no_helper
+            .lock()
+            .is_ok_and(|reports| reports.contains_key(key))
+    }
+
+    /// Drop a report once its attempt is released.
+    pub fn forget_no_helper(&self, key: &AttemptKey) {
+        if let Ok(mut reports) = self.no_helper.lock() {
+            reports.remove(key);
         }
     }
 
@@ -53,9 +96,9 @@ impl NativeBackend {
         self.scopes.helper(pid, owner, &self.clock)
     }
 
-    /// Stop tracking a scope that no attempt claimed. A claimed scope stays
-    /// tracked until its termination is observed.
-    pub fn forget_unclaimed(&self, scope: &ScopeIdentity) -> Result<()> {
+    /// Stop tracking a scope that no attempt claimed, or whose attempt was
+    /// released. A claimed scope stays tracked until its termination is observed.
+    pub fn forget_scope(&self, scope: &ScopeIdentity) -> Result<()> {
         self.scopes.forget(scope)
     }
 
@@ -90,10 +133,10 @@ pub(crate) fn macos_plan() -> ExecutionPlan {
     }
 }
 
-fn not_installed() -> Error {
+fn not_reported() -> Error {
     Error::new(
         ErrorCode::ReconciliationRequired,
-        "launcher evidence is not installed",
+        "the owner has not reported that no helper exists",
     )
 }
 
@@ -116,10 +159,89 @@ impl Backend for NativeBackend {
 
     fn unbound_launch(
         &self,
-        _: &AttemptKey,
-        _: &InstanceIdentity,
+        key: &AttemptKey,
+        owner: &InstanceIdentity,
     ) -> Result<UnboundLaunchEvidence> {
-        // Only the launcher can positively rule out helper creation.
-        Err(not_installed())
+        // Only the launcher side can positively rule out helper creation: the
+        // owner that alone held the permit reports it, bound to its identity.
+        let reported = self
+            .no_helper
+            .lock()
+            .map_err(|_| crate::failed_evidence())?
+            .get(key)
+            == Some(owner);
+        if !reported {
+            return Err(not_reported());
+        }
+        Ok(UnboundLaunchEvidence {
+            key: key.clone(),
+            owner: owner.clone(),
+            observed_at: self.clock.now(),
+            helper_creation_ruled_out: true,
+            no_pending_spawn: true,
+        })
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod tests {
+    use super::*;
+
+    fn key(attempt: &str) -> AttemptKey {
+        AttemptKey {
+            consumer_id: "consumer".into(),
+            consumer_generation: "generation".into(),
+            attempt_id: attempt.into(),
+        }
+    }
+
+    fn owner(pid: u32) -> InstanceIdentity {
+        InstanceIdentity {
+            instance_id: format!("instance-{pid}"),
+            process: ProcessIdentity {
+                boot_id: "boot".into(),
+                pid,
+                start_ticks: 1,
+            },
+        }
+    }
+
+    #[test]
+    fn unbound_launch_evidence_needs_the_owners_own_report() {
+        let backend = NativeBackend::new(BootClock::for_tests("boot"));
+        let unreported = backend.unbound_launch(&key("a"), &owner(1));
+        assert_eq!(
+            unreported.unwrap_err().code,
+            ErrorCode::ReconciliationRequired
+        );
+        backend.record_no_helper(&key("a"), &owner(1)).unwrap();
+        assert!(backend.no_helper_reported(&key("a")));
+        // Another owner's report cannot stand in for this owner's.
+        assert!(backend.unbound_launch(&key("a"), &owner(2)).is_err());
+        let evidence = backend.unbound_launch(&key("a"), &owner(1)).unwrap();
+        assert!(evidence.helper_creation_ruled_out && evidence.no_pending_spawn);
+        assert_eq!(evidence.observed_at.boot_id, "boot");
+        backend.forget_no_helper(&key("a"));
+        assert!(backend.unbound_launch(&key("a"), &owner(1)).is_err());
+    }
+
+    #[test]
+    fn launch_reports_are_bounded_without_dropping_evidence() {
+        let backend = NativeBackend::new(BootClock::for_tests("boot"));
+        for n in 0..NO_HELPER_REPORTS {
+            backend
+                .record_no_helper(&key(&format!("k{n}")), &owner(1))
+                .unwrap();
+        }
+        assert_eq!(
+            backend
+                .record_no_helper(&key("overflow"), &owner(1))
+                .unwrap_err()
+                .code,
+            ErrorCode::ResourceUnavailable
+        );
+        // A repeated report for a kept attempt is still accepted.
+        backend.record_no_helper(&key("k0"), &owner(1)).unwrap();
+        assert!(backend.unbound_launch(&key("k0"), &owner(1)).is_ok());
     }
 }

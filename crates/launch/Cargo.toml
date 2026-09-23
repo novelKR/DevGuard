@@ -22,3 +22,4 @@ serde_json.workspace = true
 [dev-dependencies]
 devguard-daemon = { path = "../daemon", features = ["test-fixtures"] }
 tempfile.workspace = true
+rusqlite.workspace = true

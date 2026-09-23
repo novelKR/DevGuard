@@ -42,6 +42,9 @@ jobs:
         if: runner.os == 'macOS'
         # The same clamp leaves the unclamped-helper refusal case not run there.
         run: python3 scripts/qualify.py dg1-launch --allow-incomplete --output target/qualification/dg1-launch
+      - name: Native reconciliation functional checks
+        if: runner.os == 'macOS'
+        run: python3 scripts/qualify.py dg1-reconcile --output target/qualification/dg1-reconcile
       - name: Preserve qualification evidence
         if: always()
         uses: actions/upload-artifact@v6
@@ -56,9 +59,9 @@ jobs:
           import json, os
           from pathlib import Path
           with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as out:
-              for name in ['ci', 'dg1-authority', 'dg1-auth', 'dg1-probes', 'dg1-scopes', 'dg1-launch']:
+              for name in ['ci', 'dg1-authority', 'dg1-auth', 'dg1-probes', 'dg1-scopes', 'dg1-launch', 'dg1-reconcile']:
                   path = Path('target/qualification') / name / 'report.json'
                   status = json.loads(path.read_text())['status'] if path.exists() else 'not_run'
                   out.write(name + ': ' + status + '\n\n')
-              out.write('Contract regression, service/UDS, native host evidence, native scope and launch helper functional checks only; native suites run on macOS. The normal service keeps launch closed; self-use and foreground SLO qualification are not run.\n')
+              out.write('Contract regression, service/UDS, native host evidence, native scope, launch helper and reconciliation functional checks only; native suites run on macOS. Self-use and foreground SLO qualification are not run.\n')
           PY

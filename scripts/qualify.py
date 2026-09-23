@@ -60,6 +60,19 @@ SUITES = {
           "cancelled-before-claim", "exec-failure", "lost-authorization-replay",
           "claimed-then-refused", "pseudo-terminal", "deadline-missed", "concurrent-launches"]),
     ],
+    "dg1-reconcile": [
+        ("reconcile-contract", ["-p", "devguard-core", "--test", "authority_contract", "reconcile_"]),
+        ("launcher-evidence", ["-p", "devguard-macos", "--lib", "backend::tests"]),
+        ("wire-reconcile", ["-p", "devguard-client", "--test", "wire_compatibility", "reconcile"]),
+        ("owner-liveness", ["-p", "devguard-daemon", "--lib", "server::tests::a_process_of_an_earlier_boot"]),
+        ("service-reconciler", ["-p", "devguard-daemon", "--lib",
+                                "server::tests::launch::launch_reconciler_stops"]),
+        ("native-reconcile", ["-p", "devguard-launch", "--test", "reconcile"],
+         ["prepared-cancel-expiry", "no-helper-created", "claimed-abandonment",
+          "observe-before-reap", "reaped-before-observation", "known-escape", "terminate-scope",
+          "cancel-after-authorization", "dead-owner", "retired-instance", "unresponsive-helper",
+          "daemon-crash-restart", "journal-failure"]),
+    ],
 }
 STAGE_TIMEOUT_SECONDS = 1800
 SCOPES = {
@@ -67,12 +80,13 @@ SCOPES = {
     "dg1-auth": "native UDS peer/credential transport and closed readiness",
     "dg1-probes": "native macOS boot clock, process identity and host pressure evidence with registration closed",
     "dg1-scopes": "native macOS cooperative CPU policy readback, observed process-group scopes and identity-checked termination without a launch helper",
-    "dg1-launch": "native macOS launch helper through an isolated authority: one claimed helper per grant, scope binding and authorization before READY and exec, with launch still closed in the normal service",
+    "dg1-launch": "native macOS launch helper through an isolated authority: one claimed helper per grant, and scope binding and authorization before READY and exec",
+    "dg1-reconcile": "native macOS reconciliation through isolated authorities: prepared cancellation and expiry, owner reports that no helper exists, releases only on scope termination, sticky escape and tracking loss, scope termination signals, dead owners, and a daemon crash with restart",
 }
 # Suites that start real workloads through the launch helper (in fixtures).
-LAUNCHING = {"dg1-launch"}
+LAUNCHING = {"dg1-launch", "dg1-reconcile"}
 # Native suites observe the actual host; elsewhere they are not run, never passed.
-NATIVE = {"dg1-probes", "dg1-scopes", "dg1-launch"}
+NATIVE = {"dg1-probes", "dg1-scopes", "dg1-launch", "dg1-reconcile"}
 
 
 def host_facts():

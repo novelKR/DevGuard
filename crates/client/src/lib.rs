@@ -98,6 +98,24 @@ impl Client {
     pub fn cancel(&mut self, key: AttemptKey) -> Result<AttemptRecord> {
         self.attempt(Request::Cancel { key })
     }
+    /// Report that this owner holds no helper for the grant and will start none.
+    pub fn abandon_launch(
+        &mut self,
+        key: AttemptKey,
+        reason: AbandonReason,
+    ) -> Result<AttemptRecord> {
+        self.attempt(Request::AbandonLaunch { key, reason })
+    }
+    /// Observe the attempt's scope now, before its exited root is reaped.
+    pub fn observe(&mut self, key: AttemptKey) -> Result<AttemptRecord> {
+        self.attempt(Request::Observe { key })
+    }
+    pub fn terminate(&mut self, key: AttemptKey, signal: StopSignal) -> Result<Termination> {
+        match self.call(Request::Terminate { key, signal })? {
+            Response::Terminated(termination) => Ok(termination),
+            _ => Err(unavailable()),
+        }
+    }
     /// Present a launch grant as its helper. A missing or invalid response is
     /// not permission to exec.
     pub fn launch(

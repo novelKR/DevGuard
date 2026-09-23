@@ -46,6 +46,16 @@ impl Principal {
     }
 }
 
+/// A registered instance that is not retired. `active` is false while it is
+/// suspect, for example after a restart until its owner registers again.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InstanceRecord {
+    pub consumer_id: String,
+    pub generation: String,
+    pub instance: InstanceIdentity,
+    pub active: bool,
+}
+
 #[derive(Debug)]
 pub struct LaunchDecision {
     pub attempt: AttemptRecord,
@@ -571,7 +581,14 @@ impl<B: Backend, C: Clock> Authority<B, C> {
             if record.phase.terminal() || record.phase == AttemptPhase::Prepared {
                 return Ok(record);
             }
+            let before = record.clone();
             match &record.scope {
+                // Every process of an earlier boot has ended, including any
+                // member whose tracking was lost; the history is kept.
+                Some(scope) if scope.root.boot_id != now.boot_id => {
+                    record.phase = AttemptPhase::Released;
+                    record.release_reason = Some(ReleaseReason::PreviousBoot);
+                }
                 Some(scope) => match backend.observe_scope(scope) {
                     Ok(observation) => {
                         // Freshness is judged after the observation completes.
@@ -625,8 +642,51 @@ impl<B: Backend, C: Clock> Authority<B, C> {
                     }
                 }
             }
-            journal::save(tx, &record)?;
+            // A periodic pass changes nothing most of the time; skip the write.
+            if record != before {
+                journal::save(tx, &record)?;
+            }
             Ok(record)
+        })
+    }
+
+    /// Charged attempts, after expiring Prepared attempts past their deadline.
+    /// For the trusted reconciler; it changes no other attempt.
+    pub fn attempts(&mut self) -> Result<Vec<AttemptRecord>> {
+        let now = self.clock.now();
+        self.journal.transaction(|tx| {
+            journal::expire_prepared(tx, &now)?;
+            journal::active(tx)
+        })
+    }
+
+    /// Instances that are not retired, with their registered identities.
+    pub fn instances(&mut self) -> Result<Vec<InstanceRecord>> {
+        self.journal.transaction(|tx| {
+            let mut statement = tx
+                .prepare("SELECT consumer,generation,identity,state FROM instances WHERE state!='retired'")
+                .map_err(db_error)?;
+            let mut rows = statement.query([]).map_err(db_error)?;
+            let mut instances = Vec::new();
+            while let Some(row) = rows.next().map_err(db_error)? {
+                let state: String = row.get(3).map_err(db_error)?;
+                instances.push(InstanceRecord {
+                    consumer_id: row.get(0).map_err(db_error)?,
+                    generation: row.get(1).map_err(db_error)?,
+                    instance: decode(&row.get::<_, String>(2).map_err(db_error)?)?,
+                    active: match state.as_str() {
+                        "active" => true,
+                        "suspect" => false,
+                        _ => {
+                            return Err(Error::new(
+                                ErrorCode::JournalInvalid,
+                                "invalid instance state",
+                            ))
+                        }
+                    },
+                });
+            }
+            Ok(instances)
         })
     }
 
@@ -654,11 +714,14 @@ impl<B: Backend, C: Clock> Authority<B, C> {
         instance: &str,
     ) -> Result<bool> {
         let backend = &self.backend;
+        let now = self.clock.now();
         self.journal.transaction(|tx| {
             let raw: String = tx.query_row("SELECT identity FROM instances WHERE consumer=?1 AND generation=?2 AND instance=?3",
                 params![consumer, generation, instance], |r| r.get(0)).optional().map_err(db_error)?.ok_or_else(not_found)?;
             let identity: InstanceIdentity = decode(&raw)?;
-            let alive = backend.process_identity(identity.process.pid)?.as_ref() == Some(&identity.process);
+            // A process of an earlier boot has ended, whatever holds its PID now.
+            let alive = identity.process.boot_id == now.boot_id
+                && backend.process_identity(identity.process.pid)?.as_ref() == Some(&identity.process);
             let occupied = journal::active(tx)?.iter().any(|r| r.key.consumer_id == consumer
                 && r.key.consumer_generation == generation && r.owner == identity);
             let retired = !alive && !occupied;

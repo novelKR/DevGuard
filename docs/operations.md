@@ -2,7 +2,7 @@
 
 [English](operations.md) | [한국어](ko/operations.md)
 
-C01 provides explicit bootstrap/canonical storage, C02 authenticated local transport, C03 native macOS boot, process and host pressure evidence, C04 cooperative policy readback and scope evidence, and C05 the fenced launch helper. PR and post-merge main delivery evidence is tracked separately from implementation. `devguardd serve` runs a foreground service that activates the journal with that evidence. Registration over the wire, principals, resource leases and execution remain closed in the normal service until DG1-C06 ships reconciliation with launch. The normal authority is currently macOS-only; Linux CI checks portable contracts and bounded fixtures, not DG-LINUX controls.
+C01 provides explicit bootstrap/canonical storage, C02 authenticated local transport, C03 native macOS boot, process and host pressure evidence, C04 cooperative policy readback and scope evidence, C05 the fenced launch helper and C06 reconciliation. PR and post-merge main delivery evidence is tracked separately from implementation. `devguardd serve` runs a foreground service that activates the journal with that evidence and then opens registration over the wire, fenced launch and reconciliation. There is no execution CLI until C07. The normal authority is currently macOS-only; Linux CI checks portable contracts and bounded fixtures, not DG-LINUX controls.
 
 ## Available commands
 
@@ -31,12 +31,13 @@ When native evidence is available, `serve` derives the policy from the observed 
   - `pressure_control_lag` when the loop wakes at least 200 ms late without a state change
   - `pressure_observation_failed` for the first failed reading and once a minute while failures continue
   - `pressure_stopped` if the sampler ends abnormally
+  - launch and reconciliation receipts, listed in [contracts](contracts.md#reconciliation)
 
   Receipts contain host counters, pressure states, the state and registered project paths, and their mount points. They never contain credentials.
 
 On a platform without native evidence, or when the macOS observation fails, `serve` keeps the storage-only closed behavior and reports which case applies.
 
-Authenticated status reports `storage_validated: true`, `registration_ready: false`, `execution_ready: false`, a reason and the configuration fingerprint. The reason distinguishes active native evidence, an unsupported platform and a failed native observation. `devguard-launch` is built for the launch path, but the normal service does not open that path in C05. Generic execution, installation, a LaunchAgent and repair remain future work. Configuration or a successful handshake alone does not govern commands. Necessary bootstrap builds are not self-use evidence. Do not use the disposable `target` path for a persistent service; protected installation is C09 work.
+Authenticated status reports `storage_validated`, `registration_ready`, `execution_ready`, a reason and the configuration fingerprint. With native evidence registration and execution are ready, and admission still follows host pressure and capacity. Otherwise both are false, and the reason distinguishes an unsupported platform from a failed native observation. `devguard-launch` must be built alongside the service for owners to start helpers. Generic execution, installation, a LaunchAgent and repair remain future work. Configuration or a successful handshake alone does not govern commands. Necessary bootstrap builds are not self-use evidence. Do not use the disposable `target` path for a persistent service; protected installation is C09 work.
 
 ## Canonical ownership and paths
 
@@ -87,13 +88,13 @@ The client library connects to the canonical endpoint, checks the OS-observed au
 
 The wire uses a four-byte length prefix, at most 64 KiB per JSON payload, at most 32 active sessions and an absolute 250 ms deadline for each frame read/write. That deadline includes idle waiting before a new frame, so idle connections expire. Use a fresh authenticated session when explicitly beginning a later operation; the client does not automatically reconnect or retry. Its `poll` and nonblocking descriptor I/O handle partial frames, slow readers and buffered final responses without changing Darwin timeout options after peer closure. No response loss is treated as proof of execution, nonexecution or resource release.
 
-The private-FD API passes only a descriptor identifier through startup metadata. The receiver consumes and closes the credential FD before a later `exec`; tests exercise that boundary in real subprocesses. Do not put secrets in argv, environment, debugging or payload-inherited descriptors. These tests do not establish C05 helper authorization or payload startup. OS UID/PID observations are available, and C03 joins them with native boot/start identity inside the authority. The normal service still refuses instance registration until DG1-C06. No authenticated caller of the normal service can obtain a principal, lease or execution grant.
+The private-FD API passes only a descriptor identifier through startup metadata. The receiver consumes and closes the credential FD before a later `exec`; tests exercise that boundary in real subprocesses. Do not put secrets in argv, environment, debugging or payload-inherited descriptors. These tests do not establish C05 helper authorization or payload startup. OS UID/PID observations are available, and C03 joins them with native boot/start identity inside the authority. With native evidence an authenticated consumer registers its own observed process as an instance, and can then obtain admission and a one-time launch grant. The grant is presented by its helper, never by the caller.
 
 The SDK inspection example can be built with `CARGO_BUILD_JOBS=1 cargo build --locked -p devguard-client --example inspect`. Its interface is `inspect SOCKET UID CONSUMER GENERATION CREDENTIAL_FD`: a parent must supply the secret bytes through that dedicated inherited FD, while arguments carry only the FD number and non-secret connection metadata. It prints observed peers and authenticated status. It is a status example, not the future generic execution CLI.
 
 ## Compatibility, checks and rollback
 
-Core `AuthorityStorage` holds the original exclusive lock and validates the existing schema-1 journal without changing attempt state. Activation with a real `Backend`/`Clock` revalidates accounting in the same transaction as boot-aware recovery. Existing `Authority::open` preserves its recovery behavior and the DG-0 tests. C01–C05 do not change the journal schema or contract serialization. C05 adds wire requests and responses that clients use only after the service advertises fenced launch. The new local protocol strictly rejects unknown fields, versions and unsupported required capabilities; added fields need explicit compatibility tests.
+Core `AuthorityStorage` holds the original exclusive lock and validates the existing schema-1 journal without changing attempt state. Activation with a real `Backend`/`Clock` revalidates accounting in the same transaction as boot-aware recovery. Existing `Authority::open` preserves its recovery behavior and the DG-0 tests. C01–C06 do not change the journal schema or contract serialization. C05 and C06 add wire requests and responses that clients use only after the service advertises fenced launch. The new local protocol strictly rejects unknown fields, versions and unsupported required capabilities; added fields need explicit compatibility tests.
 
 Available checks:
 
@@ -103,6 +104,7 @@ python3 scripts/qualify.py dg1-auth --offline
 python3 scripts/qualify.py dg1-probes --offline
 python3 scripts/qualify.py dg1-scopes --offline
 python3 scripts/qualify.py dg1-launch --offline
+python3 scripts/qualify.py dg1-reconcile --offline
 python3 scripts/validate.py --offline
 ```
 
@@ -145,6 +147,24 @@ Scripted-table unit tests cover creation races, PID reuse and tracking loss. Sco
 
 Core, scripted-table, transcript, wire and session tests cover the claim transitions, cancellation that leaves Suspect, Draining and terminal attempts unchanged, helper identity checks, strict transcripts and messages, and helper sessions that can make no other request.
 
-These suites leave registration and launch in the normal service, reconciliation, Linux enforcement, self-use and foreground SLO `not_run`. The full validator retains the 44 original tests and validates all six workspace crates and their explicit dependency graph. The launch crate depends on the daemon only for its tests' isolated authorities. Core/contract remain independent of daemon configuration and native adapters, and client does not depend on core.
+`dg1-reconcile` also runs only on macOS. It drives the real helper through isolated authorities, one of them served in a child process that the test kills and restarts. It checks:
+- prepared cancellation, and expiry at the original deadline after the attempt stayed Prepared and charged until then, both known not started
+- an owner's reports that no helper exists (a failed spawn, a helper that exited before READY and a lost grant response), released as `NoHelperCreated`, with a late helper refused
+- a report that cannot release a claimed grant
+- release only after every member of a scope ends, with the owner observing before it reaps the root while the background reconciler is paused, so only that observation adopts the survivor
+- a root reaped before any observation, whose survivor is tracking loss: the attempt stays Suspect and is never released
+- a known escape that keeps the attempt Suspect after everything exits
+- termination of every member of a scope, with release following their end
+- cancellation after authorization, which keeps the reservation until the scope ends
+- a dead owner's unclaimed grant turning Suspect and keeping its instance, and an exited owner without work being retired
+- an unresponsive helper that time never settles, even past the Prepared deadline, and its owner's report settling it
+- a daemon crash: the committed totals are the same before the crash and after the restart, every committed attempt is Suspect, a late helper is refused, a running scope with lost tracking is not released after it ends, and the owner's report releases an unclaimed grant
+- journal writes that fail: a failed bind write stops the claimed helper before exec and settles it through its scope, and a failed release write is reported and retried until it is written
 
-To roll back this boundary, stop its task-owned foreground process and select a source/artifact compatible with the preserved configuration and schema-1 journal. Keep persistent state and credentials. A C02 artifact can reopen the same state: C03 activation adds no record type and only runs the existing recovery. No workloads can have started through the normal service in C01–C05. Later live-lease rollback requires actual reconciliation; it cannot use this early empty-state assumption.
+Child-process authorities keep their receipts, which are checked to hold no permit or caller credential.
+
+Core, launcher-evidence, service and wire tests cover previous-boot release, previous-boot instance retirement whatever holds the old PID, release-reason record invariants, write-free reconciliation, attempt and instance listings, owner-bound reports, the owner liveness rule, a reconciler that stops the service on a poisoned authority, and strict request decoding.
+
+These suites leave the execution CLI, Linux enforcement, self-use and foreground SLO `not_run`. The full validator retains the 44 original tests and validates all six workspace crates and their explicit dependency graph. The launch crate depends on the daemon only for its tests' isolated authorities. Core/contract remain independent of daemon configuration and native adapters, and client does not depend on core.
+
+To roll back this boundary, stop its task-owned foreground process and select a source/artifact compatible with the preserved configuration and schema-1 journal. Keep persistent state and credentials. A C02 artifact can reopen the same state: C03 activation adds no record type and only runs the existing recovery. From C06, workloads can start through the normal service. Before rolling back to an artifact without reconciliation, stop starting new work and let charged attempts reach a terminal phase. A C05 artifact reads the same journal but keeps launch closed and does not reconcile, so any remaining attempt stays charged and Suspect. If the service stops while scopes run, start it again: their attempts stay Suspect and charged until their owners report unclaimed grants or a reboot proves termination. Never delete the journal or its tombstones to make a rollback or restart succeed.

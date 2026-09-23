@@ -18,7 +18,7 @@ extern "C" fn stop_signal(_: libc::c_int) {
 fn run() -> Result<()> {
     let args: Vec<_> = std::env::args().skip(1).collect();
     if args == ["--help"] || args == ["help"] {
-        println!("devguardd paths | init | check | serve\nNormal authority paths come from the OS account. No path or test-budget override is accepted.\nserve observes native boot, process and host pressure evidence. Runtime execution is unavailable until launch and reconciliation are implemented; registration stays closed.");
+        println!("devguardd paths | init | check | serve\nNormal authority paths come from the OS account. No path or test-budget override is accepted.\nserve observes native boot, process and host pressure evidence and, with it, opens registration, fenced launch through devguard-launch and reconciliation. There is no execution CLI yet; init and check never start workloads.");
         return Ok(());
     }
     if args.len() != 1 || !matches!(args[0].as_str(), "paths" | "init" | "check" | "serve") {
@@ -44,7 +44,7 @@ fn run() -> Result<()> {
             let _storage = AuthorityStorage::open(&paths.journal())?;
             println!(
                 "{}",
-                serde_json::json!({"configuration":config.fingerprint()?,"journal_valid":true,"runtime_ready":false,"reason":"registration, launch and reconciliation are not installed"})
+                serde_json::json!({"configuration":config.fingerprint()?,"journal_valid":true,"runtime_ready":false,"reason":"check validates storage only; serve opens registration, launch and reconciliation with native host evidence"})
             );
         }
         "serve" => {

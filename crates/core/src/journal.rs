@@ -153,6 +153,19 @@ pub(crate) fn validate_record(record: &AttemptRecord) -> Result<()> {
             "release reason does not match execution phase",
         ));
     }
+    // No helper can have been created for an attempt that recorded a scope,
+    // and scope termination needs the scope it observed.
+    let consistent = match record.release_reason {
+        Some(ReleaseReason::NoHelperCreated) => record.scope.is_none() && record.applied.is_none(),
+        Some(ReleaseReason::ScopeTerminated) => record.scope.is_some(),
+        _ => true,
+    };
+    if !consistent {
+        return Err(Error::new(
+            ErrorCode::JournalInvalid,
+            "release reason does not match the recorded scope",
+        ));
+    }
     record
         .key
         .validate()

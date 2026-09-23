@@ -8,7 +8,7 @@ use crate::paths::{read_private, AuthorityPaths};
 use crate::server::{NativeAuthority, Options, Server};
 use devguard_client::protocol::CallerCredential;
 use devguard_contract::{AttemptKey, AttemptRecord, Budget, Error, ErrorCode, Result, Secret};
-use devguard_core::PressureState;
+use devguard_core::{InstanceRecord, PressureState};
 use devguard_macos::{HostProbe, HostReading, VolumeReading};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -47,6 +47,7 @@ pub struct TestAuthority {
     paths: AuthorityPaths,
     config: HostConfig,
     authority: Arc<Mutex<NativeAuthority>>,
+    reconcile_paused: Arc<AtomicBool>,
     stop: Arc<AtomicBool>,
     worker: Option<JoinHandle<Result<()>>>,
 }
@@ -68,11 +69,12 @@ impl TestAuthority {
     }
 
     fn serve(paths: AuthorityPaths, config: HostConfig) -> Result<Self> {
+        let reconcile_paused = Arc::new(AtomicBool::new(false));
         let server = Server::open_with(
             &paths,
             Options {
-                launch: true,
                 probe: Some(Box::new(HealthyProbe)),
+                reconcile_paused: Some(reconcile_paused.clone()),
             },
         )?;
         let authority = server.native_authority().ok_or_else(|| {
@@ -91,6 +93,7 @@ impl TestAuthority {
             paths,
             config,
             authority,
+            reconcile_paused,
             stop,
             worker: Some(worker),
         })
@@ -160,6 +163,12 @@ impl TestAuthority {
         self.authority()?.committed_budget()
     }
 
+    /// Pause or resume the background reconciler. Owner requests such as
+    /// `Observe` still reconcile while it is paused.
+    pub fn pause_reconciler(&self, paused: bool) {
+        self.reconcile_paused.store(paused, Ordering::Relaxed);
+    }
+
     /// Hold the authority lock on another thread for `duration`, as a slow
     /// transition would. Returns once the lock is held.
     pub fn hold_authority(&self, duration: Duration) -> std::thread::JoinHandle<()> {
@@ -178,6 +187,16 @@ impl TestAuthority {
     /// Run the trusted reconciliation path for one attempt.
     pub fn reconcile(&self, key: &AttemptKey) -> Result<AttemptRecord> {
         self.authority()?.reconcile(key)
+    }
+
+    /// Charged attempts, as the reconciler sees them.
+    pub fn attempts(&self) -> Result<Vec<AttemptRecord>> {
+        self.authority()?.attempts()
+    }
+
+    /// Registered instances that are not retired.
+    pub fn instances(&self) -> Result<Vec<InstanceRecord>> {
+        self.authority()?.instances()
     }
 
     fn shutdown(&mut self) -> Result<()> {

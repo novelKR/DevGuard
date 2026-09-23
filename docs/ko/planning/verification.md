@@ -31,6 +31,7 @@ python3 scripts/qualify.py dg1-auth --offline
 python3 scripts/qualify.py dg1-probes --offline
 python3 scripts/qualify.py dg1-scopes --offline
 python3 scripts/qualify.py dg1-launch --offline
+python3 scripts/qualify.py dg1-reconcile --offline
 git diff --check
 ```
 
@@ -72,7 +73,7 @@ V-DOC-DG는 scripts/check_docs.py와 수동 의미 검토로 영어/한국어 ha
 
 ## 향후 suite와 장애 주입 계약
 
-scripts/qualify.py dg1-authority --offline은 C01 설정·저장소, scripts/qualify.py dg1-auth --offline은 C02 인증·transport, scripts/qualify.py dg1-probes --offline은 C03 native 증거, scripts/qualify.py dg1-scopes --offline은 C04 정책·scope 증거, scripts/qualify.py dg1-launch --offline은 C05 launch helper 검증을 제공한다. 그 밖의 DevGuard suite와 CodeSpace scripts/qualify-devguard.py는 해당 작업에서 제공할 예정 인터페이스다. 각 구현 PR이 실제 CLI·case inventory·nonzero case assertion·timeout·log 수집·격리 cleanup을 구현하고 제공 명령을 갱신해야 한다. macOS/Ubuntu CI는 전체 validator와 이식 가능한 두 기능 suite를 실행하고 각각의 report·log를 보존한다. Native suite는 macOS CI에서만 실행하고 그 밖의 환경에서는 `not_run`으로 기록한다. 증거를 제공할 수 없는 플랫폼에서 통과로 처리하지 않는다. 각 native 단계는 만들어야 할 raw receipt를 선언한다. 어떤 경우를 `not_run`으로 기록한 receipt가 있으면 suite는 `passed`가 아니라 `incomplete`가 된다.
+scripts/qualify.py dg1-authority --offline은 C01 설정·저장소, scripts/qualify.py dg1-auth --offline은 C02 인증·transport, scripts/qualify.py dg1-probes --offline은 C03 native 증거, scripts/qualify.py dg1-scopes --offline은 C04 정책·scope 증거, scripts/qualify.py dg1-launch --offline은 C05 launch helper, scripts/qualify.py dg1-reconcile --offline은 C06 대조 검증을 제공한다. 그 밖의 DevGuard suite와 CodeSpace scripts/qualify-devguard.py는 해당 작업에서 제공할 예정 인터페이스다. 각 구현 PR이 실제 CLI·case inventory·nonzero case assertion·timeout·log 수집·격리 cleanup을 구현하고 제공 명령을 갱신해야 한다. macOS/Ubuntu CI는 전체 validator와 이식 가능한 두 기능 suite를 실행하고 각각의 report·log를 보존한다. Native suite는 macOS CI에서만 실행하고 그 밖의 환경에서는 `not_run`으로 기록한다. 증거를 제공할 수 없는 플랫폼에서 통과로 처리하지 않는다. 각 native 단계는 만들어야 할 raw receipt를 선언한다. 어떤 경우를 `not_run`으로 기록한 receipt가 있으면 suite는 `passed`가 아니라 `incomplete`가 된다.
 
 C03 증거는 다음 파일에 기록한다.
 - **Raw receipt** (보고서의 `raw/` 디렉터리): 단위를 포함한 boot ID·시계 읽기, 호스트 용량, zombie·reap·거부 관측을 포함한 반복 프로세스 정체성, 계산된 비율을 포함한 native 압력 읽기, 마지막 sample 이후 admission이 닫히기까지 측정한 시간, 주입한 실패부터 Critical까지 걸린 서비스 loop 시간과 멈춘 probe에 대한 서비스 loop의 동작.
@@ -94,7 +95,15 @@ C05 증거는 다음을 포함한다.
 - **단위 시험**: core claim transition, owner 확인 중 재사용된 PID를 포함한 scripted helper 정체성 검사, 엄격한 transcript 해석, 엄격한 launch wire fixture, 다른 요청을 할 수 없는 helper session.
 - **Clamp된 환경**: claim 뒤에 거절된 helper 경우에는 utility clamp가 없는 helper가 필요하다. Harness의 모든 자식에 clamp가 걸리는 환경에서는 이 경우를 `not_run`으로 기록하고 suite는 `incomplete`를 보고한다. Hosted macOS 14 runner가 그런 환경이며 CI는 `dg1-launch`를 `--allow-incomplete`로 실행한다.
 
-정상 서비스는 C05에서 등록과 launch를 닫아 두므로, 이는 launch 경로의 증거이며 아직 서비스의 관리 실행 증거는 아니다.
+C05만 적용된 정상 서비스는 등록과 launch를 닫아 두었으며, C06이 대조와 함께 이를 연다.
+
+C06 증거는 다음을 포함한다.
+- **Raw receipt**: Prepared 취소와 만료, 각 owner 보고에 따른 `NoHelperCreated` 회수와 거절된 늦은 helper, claim된 grant를 회수하지 못하는 보고, 살아남은 구성원이 있는 동안 과금을 유지하는 reap 전 관측, 관측 전에 reap된 root, 알려진 이탈, scope 종료, authorization 뒤의 취소, 죽은 owner, 폐기된 instance, Prepared 기한이 지난 응답 없는 helper, crash 전후에 과금 합계를 측정한 daemon crash와 재시작, bind와 회수의 journal 쓰기 실패.
+- **실제 프로세스**: 격리 authority 아래의 실제 helper와 workload. 그중 하나는 시험이 같은 journal에서 종료하고 다시 시작하는 자식 프로세스에서 동작한다.
+- **단위 시험**: 추적 상실 뒤 bind된 scope의 이전 boot 회수, 바뀐 것이 없을 때 쓰지 않는 대조, attempt·instance 목록, 크기가 제한된 보고 집합과 owner에 묶인 launcher 증거, 새 요청의 엄격한 decoding.
+- **결정성**: 관측 시험은 배경 reconciler를 멈추므로, owner의 관측 또는 reap 전 관측의 부재가 무엇을 추적할지를 정한다. 자식 프로세스 authority의 receipt는 보관하며, permit이나 호출자 자격이 들어 있지 않은지 확인한다.
+
+이 suite는 실행 CLI, 실행 중인 scope의 재시작 후 재편입, Linux 강제를 시험하지 않는다.
 
 C02 증거는 양쪽 실제 OS socket UID/PID 관측, 분리된 consumer·관리 자격, helper-role 인증 거절, 현재·미래 wire fixture의 엄격한 decoding, 64 KiB frame, 세션 32개 제한, idle 대기를 포함한 frame별 절대 250 ms 기한, 부분·느린·마지막 응답과 private 자격 FD 전달을 포함한다. 전용 subprocess helper는 후속 exec 전 FD 닫기를 관측하고 argv·환경·debug·출력의 secret 누출을 확인한다. Parent test가 helper를 실행하며 별도의 ignored test를 독립 qualification 성공으로 세지 않는다. 0개가 아닌 parent case 수와 프로세스 정리를 함께 기록한다.
 

@@ -224,3 +224,48 @@ fn launch_responses_decode_strictly_and_never_print_the_permit() {
     });
     assert!(format!("{authorized:?}").contains("may_exec: false"));
 }
+
+#[test]
+fn reconcile_requests_decode_strictly_and_carry_no_process_identity() {
+    let requests = [
+        json!({"method": "abandon_launch", "params": {"key": key(), "reason": "spawn_failed"}}),
+        json!({"method": "abandon_launch", "params": {"key": key(), "reason": "helper_exited"}}),
+        json!({"method": "abandon_launch", "params": {"key": key(), "reason": "grant_not_received"}}),
+        json!({"method": "observe", "params": {"key": key()}}),
+        json!({"method": "terminate", "params": {"key": key(), "signal": "terminate"}}),
+        json!({"method": "terminate", "params": {"key": key(), "signal": "kill"}}),
+    ];
+    for body in requests {
+        let frame = json!({"version": 1, "request_id": 7, "body": body});
+        assert!(
+            serde_json::from_value::<Frame<Request>>(frame.clone()).is_ok(),
+            "{frame}"
+        );
+        for field in ["pid", "uid", "evidence", "future_field"] {
+            let mut changed = frame.clone();
+            changed["body"]["params"][field] = json!(1);
+            assert!(
+                serde_json::from_value::<Frame<Request>>(changed).is_err(),
+                "accepted {field} in {frame}"
+            );
+        }
+    }
+    // Unknown reasons and signals, including raw numbers, are refused.
+    for (method, field, value) in [
+        ("abandon_launch", "reason", json!("process_died")),
+        ("terminate", "signal", json!("stop")),
+        ("terminate", "signal", json!(9)),
+    ] {
+        let mut params = json!({"key": key()});
+        params[field] = value;
+        let frame =
+            json!({"version": 1, "request_id": 8, "body": {"method": method, "params": params}});
+        assert!(serde_json::from_value::<Frame<Request>>(frame).is_err());
+    }
+    let terminated = json!({"version": 1, "request_id": 9, "body": {"result": "terminated",
+        "value": {"attempt": serde_json::to_value(attempt()).unwrap(), "signalled": 2, "complete": true}}});
+    assert!(serde_json::from_value::<Frame<Response>>(terminated.clone()).is_ok());
+    let mut future = terminated;
+    future["body"]["value"]["future_field"] = json!(true);
+    assert!(serde_json::from_value::<Frame<Response>>(future).is_err());
+}

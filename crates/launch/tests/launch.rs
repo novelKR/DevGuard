@@ -78,6 +78,14 @@ fn an_authorized_helper_reports_ready_and_becomes_the_executable() {
     let ready_ms = began.elapsed().as_millis() as u64;
     assert_eq!(outcome, LaunchOutcome::Started, "{phases:?}");
     assert_eq!(phases, [HelperPhase::Ready {}]);
+    // An exited but unreaped root still holds its PID: the run stays charged.
+    exited_unreaped(helper);
+    let authorized = owner.lookup("normal");
+    assert_eq!(authorized.phase, AttemptPhase::RunAuthorized);
+    assert_eq!(
+        fixture.authority.committed().unwrap(),
+        quantities(&committed)
+    );
     let status = launched.child.wait().unwrap();
     assert_eq!(status.code(), Some(7));
     // The executable replaced the helper: same PID and process group, with
@@ -85,20 +93,17 @@ fn an_authorized_helper_reports_ready_and_becomes_the_executable() {
     let seen = inventory(&out);
     assert_eq!(seen["pid"], helper);
     assert_eq!(seen["pgid"], helper);
-    assert!(seen["nice"].as_i64().unwrap() >= 10, "{seen}");
-    let authorized = owner.lookup("normal");
-    assert_eq!(authorized.phase, AttemptPhase::RunAuthorized);
+    assert!(
+        seen["nice"].as_i64().unwrap() >= 10,
+        "{}",
+        inventory_summary(&seen)
+    );
     let scope = authorized.scope.clone().unwrap();
     assert_eq!(scope.root.pid, helper);
     let applied = authorized.applied.clone().unwrap();
     assert!(applied.confirms(authorized.plan.as_ref().unwrap(), quantities(&committed)));
-    // Still charged until the scope's end is observed.
-    assert_eq!(
-        fixture.authority.committed().unwrap(),
-        quantities(&committed)
-    );
-    let released = fixture.authority.reconcile(&owner.key("normal")).unwrap();
-    assert_eq!(released.phase, AttemptPhase::Released);
+    // Once reaped, the reconciler observes the scope's end and releases it.
+    let released = wait_released(&owner, "normal");
     assert_eq!(
         released.release_reason,
         Some(ReleaseReason::ScopeTerminated)
@@ -293,11 +298,13 @@ fn a_helper_not_created_by_the_owner_or_without_the_grant_claims_nothing() {
     );
     let (owner_outcome, _) = launched.report.wait(REPORT_LIMIT).unwrap();
     assert_eq!(owner_outcome, LaunchOutcome::Started);
-    assert!(launched.child.wait().unwrap().success());
+    exited_unreaped(launched.child.id());
     assert_eq!(
         fixture.authority.committed().unwrap(),
         quantities(&committed)
     );
+    assert!(launched.child.wait().unwrap().success());
+    wait_released(&owner, "refusals");
     record(
         "helper-refusals",
         json!({"refusals": observed, "owner_helper_after_refusals": format!("{owner_outcome:?}")}),
@@ -371,20 +378,18 @@ fn exec_failure_after_ready_is_reported_apart_from_refusal() {
             }
         ]
     );
-    assert_eq!(
-        launched.child.wait().unwrap().code(),
-        Some(NOT_FOUND_STATUS)
-    );
     // An authorized run whose executable failed is a managed execution:
     // its release is scope termination, not proof that nothing started.
+    exited_unreaped(launched.child.id());
     assert_eq!(
         owner.lookup("missing-program").phase,
         AttemptPhase::RunAuthorized
     );
-    let released = fixture
-        .authority
-        .reconcile(&owner.key("missing-program"))
-        .unwrap();
+    assert_eq!(
+        launched.child.wait().unwrap().code(),
+        Some(NOT_FOUND_STATUS)
+    );
+    let released = wait_released(&owner, "missing-program");
     assert_eq!(
         released.release_reason,
         Some(ReleaseReason::ScopeTerminated)
@@ -403,6 +408,8 @@ fn a_replayed_authorization_never_permits_a_second_exec() {
     let (_, permit) = owner.grant("replay");
     let out = fixture.directory.path().join("replay.json");
     let mut child = start_raw_helper(&owner, "replay", &permit, &out, true, "raw_helper");
+    exited_unreaped(child.id());
+    assert_eq!(owner.lookup("replay").phase, AttemptPhase::RunAuthorized);
     assert!(child.wait().unwrap().success());
     let evidence = inventory(&out);
     let results = evidence["results"].as_array().unwrap();
@@ -411,7 +418,7 @@ fn a_replayed_authorization_never_permits_a_second_exec() {
     assert_eq!(results[0]["may_exec"], true, "{evidence}");
     assert_eq!(results[1]["may_exec"], false, "{evidence}");
     assert_eq!(results[1]["phase"], "run_authorized");
-    let released = fixture.authority.reconcile(&owner.key("replay")).unwrap();
+    let released = wait_released(&owner, "replay");
     assert_eq!(
         released.release_reason,
         Some(ReleaseReason::ScopeTerminated)
@@ -426,6 +433,9 @@ fn a_helper_refused_after_its_claim_is_stopped_and_reconciled_through_its_scope(
     let (committed, permit) = owner.grant("unclamped");
     let out = fixture.directory.path().join("unclamped.json");
     let mut child = start_raw_helper(&owner, "unclamped", &permit, &out, false, "raw_helper");
+    exited_unreaped(child.id());
+    let before_reap = owner.lookup("unclamped");
+    let charged_before_reap = fixture.authority.committed().unwrap();
     let status = child.wait().unwrap();
     let evidence = inventory(&out);
     let clamped = evidence["readback"]["max_thread_priority"]
@@ -444,22 +454,15 @@ fn a_helper_refused_after_its_claim_is_stopped_and_reconciled_through_its_scope(
         return;
     }
     // The helper's readback shows no utility clamp: it is claimed, binding is
-    // refused, and the authority stops it before any reply.
+    // refused, and the authority stops it before any reply. Until it is
+    // reaped its claimed scope keeps the reservation.
     assert_eq!(status.signal(), Some(libc::SIGKILL), "{evidence}");
-    let claimed = owner.lookup("unclamped");
-    assert_eq!(claimed.phase, AttemptPhase::LaunchCommitted);
-    let scope = claimed.scope.clone().unwrap();
+    assert_eq!(before_reap.phase, AttemptPhase::LaunchCommitted);
+    let scope = before_reap.scope.clone().unwrap();
     assert_eq!(scope.root.pid, child.id());
-    assert!(claimed.applied.is_none());
-    assert_eq!(
-        fixture.authority.committed().unwrap(),
-        quantities(&committed)
-    );
-    let released = fixture
-        .authority
-        .reconcile(&owner.key("unclamped"))
-        .unwrap();
-    assert_eq!(released.phase, AttemptPhase::Released);
+    assert!(before_reap.applied.is_none());
+    assert_eq!(charged_before_reap, quantities(&committed));
+    let released = wait_released(&owner, "unclamped");
     assert_eq!(
         released.release_reason,
         Some(ReleaseReason::ScopeTerminated)
@@ -468,7 +471,7 @@ fn a_helper_refused_after_its_claim_is_stopped_and_reconciled_through_its_scope(
     record(
         "claimed-then-refused",
         json!({"status": "passed", "helper": evidence, "signal": status.signal(),
-               "claimed": claimed, "released": released}),
+               "claimed": before_reap, "released": released}),
     );
 }
 
@@ -598,9 +601,19 @@ fn a_reply_that_misses_its_deadline_never_leads_to_exec() {
         fixture.authority.committed().unwrap(),
         quantities(&committed)
     );
+    // The owner reaped its helper before READY, so it settles the grant.
+    let settled = owner
+        .session()
+        .abandon_launch(
+            owner.key("contention"),
+            devguard_client::protocol::AbandonReason::HelperExited,
+        )
+        .unwrap();
+    assert_eq!(settled.release_reason, Some(ReleaseReason::NoHelperCreated));
     record(
         "deadline-missed",
-        json!({"phases": phases, "executed": marker.exists(), "attempt": after}),
+        json!({"phases": phases, "executed": marker.exists(), "attempt": after,
+               "settled": settled}),
     );
 }
 

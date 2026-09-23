@@ -1,8 +1,8 @@
 use crate::{config::HostConfig, paths::AuthorityPaths};
 use devguard_client::{connect::connect_timeout, framing, peer, protocol::*};
 use devguard_contract::{
-    validate_id, AppliedResources, AttemptKey, AttemptPhase, Capability, Error, ErrorCode,
-    InstanceIdentity, ProcessIdentity, Result, ScopeIdentity, Secret, PROTOCOL_VERSION,
+    validate_id, AppliedResources, AttemptKey, AttemptPhase, AttemptRecord, Capability, Error,
+    ErrorCode, InstanceIdentity, ProcessIdentity, Result, ScopeIdentity, Secret, PROTOCOL_VERSION,
 };
 use devguard_core::{
     Authority, AuthorityStorage, Backend as _, Clock, ConsumerRole, PressureState, Principal,
@@ -28,9 +28,9 @@ use std::time::Duration;
 
 pub(crate) type NativeAuthority = Authority<NativeBackend, BootClock>;
 
-const NATIVE_REASON: &str = "native boot, process and host pressure evidence is observed; registration and execution remain closed until launch and reconciliation are installed";
-const LAUNCH_REASON: &str =
-    "native registration and fenced launch are open; admission follows host pressure and capacity";
+const LAUNCH_REASON: &str = "native registration, fenced launch and reconciliation are open; admission follows host pressure and capacity";
+/// How often the reconciler observes charged attempts and registered owners.
+pub(crate) const RECONCILE_INTERVAL_MS: u64 = 1_000;
 const UNSUPPORTED_REASON: &str = "native host evidence is unsupported on this platform; registration and execution remain closed";
 const FAILED_REASON: &str =
     "native host observation failed; registration and execution remain closed";
@@ -38,12 +38,12 @@ const FAILED_REASON: &str =
 /// How the service opens. The normal service uses the defaults.
 #[derive(Default)]
 pub(crate) struct Options {
-    /// Open registration and fenced launch. DG1-C05 keeps this off in the
-    /// normal service until DG1-C06 ships reconciliation with it.
-    pub launch: bool,
     /// A substitute host probe for isolated fixtures, which cannot assume the
     /// real host is free of pressure.
     pub probe: Option<Box<dyn HostProbe>>,
+    /// Lets an isolated fixture pause reconciler passes, so a test can tell an
+    /// owner's own observation apart from the background pass.
+    pub reconcile_paused: Option<Arc<AtomicBool>>,
 }
 
 /// Exclusive storage, activated with actual host evidence when it is available.
@@ -146,7 +146,7 @@ fn activate(
             backend: host.backend(),
             probe: Some(probe),
         },
-        NATIVE_REASON,
+        LAUNCH_REASON,
     ))
 }
 
@@ -297,6 +297,21 @@ struct Launcher {
     authority: Arc<Mutex<NativeAuthority>>,
     backend: NativeBackend,
     principals: Arc<Mutex<Principals>>,
+    clock: BootClock,
+    paused: Arc<AtomicBool>,
+}
+
+/// Whether `identity` still names a running process. A process of an earlier
+/// boot has ended, whatever holds its PID now. Within this boot an observation
+/// that fails, as for a setuid exec, counts as running, which only defers
+/// reconciliation.
+fn still_running(
+    identity: &ProcessIdentity,
+    boot_id: &str,
+    observe: impl FnOnce() -> Result<Option<ProcessIdentity>>,
+) -> bool {
+    identity.boot_id == boot_id
+        && observe().map_or(true, |current| current.as_ref() == Some(identity))
 }
 
 impl Launcher {
@@ -434,7 +449,7 @@ impl Launcher {
         trail.cpu = established.cpu;
         if let Err(error) = authority.claim_launch(&owner, key, permit, &established.scope) {
             // Nothing claimed this scope, so nothing reconciles through it.
-            let _ = self.backend.forget_unclaimed(&established.scope);
+            let _ = self.backend.forget_scope(&established.scope);
             return Err(error);
         }
         trail.claimed = true;
@@ -474,6 +489,200 @@ struct HelperTrail {
     stopped: Option<serde_json::Value>,
 }
 
+impl Launcher {
+    /// Whether a registered process is still running (see `still_running`).
+    fn running(&self, identity: &ProcessIdentity) -> bool {
+        still_running(identity, &self.clock.now().boot_id, || {
+            self.backend.process_identity(identity.pid)
+        })
+    }
+
+    /// Reconcile one charged attempt by the service's rules, under the caller's
+    /// authority lock. Prepared attempts expire on their own deadline. An
+    /// unclaimed grant whose owner is still running is left alone unless the
+    /// owner reported that no helper exists, because a helper may still claim
+    /// it; once its owner is gone no helper can, and it becomes Suspect.
+    fn reconcile_attempt(
+        &self,
+        authority: &mut NativeAuthority,
+        record: &AttemptRecord,
+    ) -> Result<Option<AttemptRecord>> {
+        if record.phase == AttemptPhase::Prepared
+            || (record.scope.is_none()
+                && !self.backend.no_helper_reported(&record.key)
+                && self.running(&record.owner.process))
+        {
+            return Ok(None);
+        }
+        let reconciled = authority.reconcile(&record.key)?;
+        if reconciled.phase == AttemptPhase::Released {
+            self.backend.forget_no_helper(&reconciled.key);
+            if let Some(scope) = &reconciled.scope {
+                let _ = self.backend.forget_scope(scope);
+            }
+        }
+        if reconciled.phase != record.phase || reconciled.tracking_lost != record.tracking_lost {
+            receipt(json!({"event": "attempt_reconciled", "key": reconciled.key,
+                           "from": record.phase, "phase": reconciled.phase,
+                           "release_reason": reconciled.release_reason,
+                           "tracking_lost": reconciled.tracking_lost}));
+        }
+        Ok(Some(reconciled))
+    }
+
+    /// One reconciler pass: every charged attempt, then every registered
+    /// instance whose process is gone. The authority lock is taken per item,
+    /// so admission and helpers are never held behind a whole pass.
+    fn reconcile_pass(&self) -> Result<()> {
+        let attempts = self.authority()?.attempts()?;
+        for record in &attempts {
+            let result = {
+                let mut authority = self.authority()?;
+                self.reconcile_attempt(&mut authority, record)
+            };
+            if let Err(error) = result {
+                receipt(json!({"event": "reconcile_failed", "key": record.key, "error": error}));
+            }
+        }
+        let instances = self.authority()?.instances()?;
+        let charged = self.authority()?.attempts()?;
+        for instance in instances {
+            if self.running(&instance.instance.process) {
+                continue;
+            }
+            // Its helpers can no longer be accepted.
+            self.principals.lock().map_err(|_| poisoned())?.remove(&(
+                instance.consumer_id.clone(),
+                instance.generation.clone(),
+                instance.instance.instance_id.clone(),
+            ));
+            let occupied = charged
+                .iter()
+                .any(|record| record.owner == instance.instance);
+            // A suspect instance that still owns charged work needs no rewrite.
+            if occupied && !instance.active {
+                continue;
+            }
+            let retired = self.authority()?.reconcile_instance(
+                &instance.consumer_id,
+                &instance.generation,
+                &instance.instance.instance_id,
+            )?;
+            receipt(
+                json!({"event": "instance_reconciled", "consumer": instance.consumer_id,
+                           "instance": instance.instance,
+                           "state": if retired { "retired" } else { "suspect" }}),
+            );
+        }
+        Ok(())
+    }
+
+    /// The owner reports that it holds no helper for the grant. The report and
+    /// the reconciliation run under one lock, so no helper claims in between.
+    fn abandon(
+        &self,
+        principal: &Principal,
+        key: &AttemptKey,
+        reason: AbandonReason,
+    ) -> Result<AttemptRecord> {
+        let mut authority = self.authority()?;
+        let record = authority.lookup(principal, key)?;
+        if record.phase == AttemptPhase::Prepared {
+            return Err(fenced("a prepared attempt is cancelled, not abandoned"));
+        }
+        if record.phase.terminal() {
+            return Ok(record);
+        }
+        // A claimed grant has a helper; only its scope can settle it.
+        if record.scope.is_none() {
+            self.backend.record_no_helper(key, &record.owner)?;
+        }
+        let reconciled = self
+            .reconcile_attempt(&mut authority, &record)?
+            .unwrap_or(record);
+        drop(authority);
+        receipt(
+            json!({"event": "launch_abandoned", "key": key, "reason": reason,
+                       "phase": reconciled.phase, "release_reason": reconciled.release_reason}),
+        );
+        Ok(reconciled)
+    }
+
+    /// Observe the owner's attempt now, by the same rules as the reconciler.
+    fn observe(&self, principal: &Principal, key: &AttemptKey) -> Result<AttemptRecord> {
+        let mut authority = self.authority()?;
+        let record = authority.lookup(principal, key)?;
+        if record.phase.terminal() {
+            return Ok(record);
+        }
+        Ok(self
+            .reconcile_attempt(&mut authority, &record)?
+            .unwrap_or(record))
+    }
+
+    /// Signal the owner's attempt scope; the phase does not change.
+    fn terminate(
+        &self,
+        principal: &Principal,
+        key: &AttemptKey,
+        signal: StopSignal,
+    ) -> Result<Termination> {
+        let record = self.authority()?.lookup(principal, key)?;
+        let scope = record
+            .scope
+            .clone()
+            .ok_or_else(|| fenced("the attempt has no scope to signal"))?;
+        let delivered = self.backend.signal_scope(&scope, signal.number())?;
+        receipt(
+            json!({"event": "scope_signalled", "key": key, "signal": signal,
+                       "signalled": delivered.signalled, "complete": delivered.complete}),
+        );
+        Ok(Termination {
+            attempt: record,
+            signalled: delivered.signalled.len() as u32,
+            complete: delivered.complete,
+        })
+    }
+}
+
+/// Join a service thread that should finish within three seconds of the
+/// stop request. A thread that does not still holds the authority and its
+/// lock until the process exits, so the shutdown is reported as failed.
+fn finish(handle: JoinHandle<Result<()>>, done: std::sync::mpsc::Receiver<()>) -> Result<()> {
+    match done.recv_timeout(Duration::from_secs(3)) {
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => handle
+            .join()
+            .unwrap_or_else(|_| Err(unavailable("a service thread panicked"))),
+        _ => Err(unavailable(
+            "a service thread did not finish within three seconds",
+        )),
+    }
+}
+
+/// Run reconciler passes until the service stops.
+fn reconcile(launcher: Launcher, stop: Arc<AtomicBool>) -> Result<()> {
+    let interval = Duration::from_millis(RECONCILE_INTERVAL_MS);
+    while !stop.load(Ordering::Relaxed) {
+        if launcher.paused.load(Ordering::Relaxed) {
+            std::thread::sleep(Duration::from_millis(20));
+            continue;
+        }
+        if let Err(error) = launcher.reconcile_pass() {
+            receipt(json!({"event": "reconcile_failed", "error": error}));
+            // A poisoned authority cannot recover: stop rather than keep
+            // launch open without reconciliation.
+            if launcher.authority.is_poisoned() {
+                return Err(error);
+            }
+        }
+        let began = std::time::Instant::now();
+        while began.elapsed() < interval && !stop.load(Ordering::Relaxed) {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+    Ok(())
+}
+
 impl Server {
     pub fn open(paths: &AuthorityPaths) -> Result<Self> {
         Self::open_with(paths, Options::default())
@@ -483,19 +692,23 @@ impl Server {
         paths.validate_existing()?;
         let config = HostConfig::load(paths)?;
         let storage = AuthorityStorage::open(&paths.journal())?;
-        let (evidence, mut reason) = activate(storage, &config, paths, options.probe)?;
+        let (evidence, reason) = activate(storage, &config, paths, options.probe)?;
+        // Registration and launch open only with native evidence, together
+        // with the reconciler that run() starts.
         let launcher = match &evidence {
             Evidence::Native {
-                authority, backend, ..
-            } if options.launch => {
-                reason = LAUNCH_REASON;
-                Some(Launcher {
-                    authority: authority.clone(),
-                    backend: backend.clone(),
-                    principals: Arc::default(),
-                })
-            }
-            _ => None,
+                authority,
+                backend,
+                clock,
+                ..
+            } => Some(Launcher {
+                authority: authority.clone(),
+                backend: backend.clone(),
+                principals: Arc::default(),
+                clock: clock.clone(),
+                paused: options.reconcile_paused.unwrap_or_default(),
+            }),
+            Evidence::Closed { .. } => None,
         };
         paths.prepare_runtime()?;
         let socket = paths.socket();
@@ -595,6 +808,26 @@ impl Server {
             Evidence::Closed { .. } => None,
         }
         .transpose()?;
+        // Launch is open only while its reconciler runs; if it ends, the
+        // service stops rather than keep admitting without reconciliation.
+        let reconciler = self
+            .launcher
+            .clone()
+            .map(|launcher| {
+                let stop = stop.clone();
+                let (finished, done) = std::sync::mpsc::channel::<()>();
+                std::thread::Builder::new()
+                    .name("devguard-reconcile".into())
+                    .spawn(move || {
+                        let _finished = finished;
+                        let _stop = StopOnExit(stop.clone());
+                        reconcile(launcher, stop)
+                    })
+                    .map(|handle| (handle, done))
+                    .map_err(|_| unavailable("cannot start the reconciler"))
+            })
+            .transpose()
+            .inspect_err(|_| stop.store(true, Ordering::Relaxed))?;
         while !stop.load(Ordering::Relaxed) {
             let mut index = 0;
             while index < workers.len() {
@@ -638,27 +871,15 @@ impl Server {
         for worker in workers {
             let _ = worker.join();
         }
-        if let Some((handle, done)) = sampler {
-            // A probe blocked in the kernel (for example statfs on a hung
-            // network volume) must not hold shutdown hostage.
-            match done.recv_timeout(Duration::from_secs(3)) {
-                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-                    let outcome = handle
-                        .join()
-                        .unwrap_or_else(|_| Err(unavailable("host pressure sampler panicked")));
-                    if let Err(error) = outcome {
-                        receipt(json!({"event": "pressure_stopped", "error": error}));
-                        if result.is_ok() {
-                            result = Err(error);
-                        }
-                    }
-                }
-                _ => {
-                    // The stuck thread still holds the authority and its lock
-                    // until the process exits; report the shutdown as failed.
-                    let error =
-                        unavailable("host pressure sampler did not finish within three seconds");
-                    receipt(json!({"event": "pressure_stopped", "error": error}));
+        // A probe blocked in the kernel (for example statfs on a hung network
+        // volume) or a stuck observation must not hold shutdown hostage.
+        for (event, thread) in [
+            ("pressure_stopped", sampler),
+            ("reconcile_stopped", reconciler),
+        ] {
+            if let Some((handle, done)) = thread {
+                if let Err(error) = finish(handle, done) {
+                    receipt(json!({"event": event, "error": error}));
                     if result.is_ok() {
                         result = Err(error);
                     }
@@ -935,6 +1156,22 @@ fn handle(session: &mut Session, request: Request, context: &Context<'_>) -> Res
             receipt(json!({"event": "cancelled", "key": record.key, "phase": record.phase}));
             Ok(Response::Attempt(record))
         }
+        Request::AbandonLaunch { key, reason } => {
+            let (launcher, principal) = registered(session, context)?;
+            Ok(Response::Attempt(
+                launcher.abandon(principal, &key, reason)?,
+            ))
+        }
+        Request::Observe { key } => {
+            let (launcher, principal) = registered(session, context)?;
+            Ok(Response::Attempt(launcher.observe(principal, &key)?))
+        }
+        Request::Terminate { key, signal } => {
+            let (launcher, principal) = registered(session, context)?;
+            Ok(Response::Terminated(
+                launcher.terminate(principal, &key, signal)?,
+            ))
+        }
         Request::Launch {
             key,
             instance_id,
@@ -1037,7 +1274,7 @@ mod tests {
     }
 
     #[test]
-    fn authenticated_peer_is_os_observed_but_registration_and_execution_stay_closed() {
+    fn authenticated_peer_is_os_observed_and_registration_opens_only_with_native_evidence() {
         let fixture = Fixture::new();
         let mut client = fixture.client();
         assert_eq!(client.hello.caller.pid, std::process::id());
@@ -1049,17 +1286,19 @@ mod tests {
         );
         let status = client.status().unwrap();
         assert!(status.storage_validated);
-        assert!(!status.registration_ready && !status.execution_ready);
-        let expected = if cfg!(target_os = "macos") {
-            NATIVE_REASON
+        if cfg!(target_os = "macos") {
+            assert!(status.registration_ready && status.execution_ready);
+            assert_eq!(status.reason, LAUNCH_REASON);
+            let instance = client.register("owner".into()).unwrap();
+            assert_eq!(instance.process.pid, std::process::id());
         } else {
-            UNSUPPORTED_REASON
-        };
-        assert_eq!(status.reason, expected);
-        assert_eq!(
-            client.register("owner".into()).unwrap_err().code,
-            ErrorCode::ResourceControlUnavailable
-        );
+            assert!(!status.registration_ready && !status.execution_ready);
+            assert_eq!(status.reason, UNSUPPORTED_REASON);
+            assert_eq!(
+                client.register("owner".into()).unwrap_err().code,
+                ErrorCode::ResourceControlUnavailable
+            );
+        }
         assert!(Server::open(&fixture.paths).is_err());
     }
 
@@ -1107,8 +1346,9 @@ mod tests {
             client.register("owner".into()).unwrap_err().code,
             ErrorCode::Unauthorized
         );
+        // No macOS service provides Linux cgroup control.
         let required = Compatibility {
-            required: BTreeSet::from([Capability::DurableAdmission]),
+            required: BTreeSet::from([Capability::LinuxCgroupV2]),
             ..Fixture::compatibility()
         };
         assert!(
@@ -1122,7 +1362,8 @@ mod tests {
     #[test]
     fn concurrent_registration_requests_never_create_unobserved_principals() {
         let fixture = Fixture::new();
-        let threads: Vec<_> = (0..8)
+        // Ten concurrent registrations against the consumer's eight slots.
+        let threads: Vec<_> = (0..10)
             .map(|n| {
                 let path = fixture.paths.socket();
                 let uid = fixture.paths.uid();
@@ -1130,15 +1371,29 @@ mod tests {
                 std::thread::spawn(move || {
                     let mut client = Client::connect(&path, uid, Fixture::compatibility()).unwrap();
                     client.authenticate(credential).unwrap();
-                    assert_eq!(
-                        client.register(format!("owner-{n}")).unwrap_err().code,
-                        ErrorCode::ResourceControlUnavailable
-                    );
+                    client.register(format!("owner-{n}"))
                 })
             })
             .collect();
-        for thread in threads {
-            thread.join().unwrap();
+        let results: Vec<_> = threads
+            .into_iter()
+            .map(|thread| thread.join().unwrap())
+            .collect();
+        if cfg!(target_os = "macos") {
+            let registered: Vec<_> = results.iter().filter_map(|r| r.as_ref().ok()).collect();
+            assert_eq!(registered.len(), 8, "{results:?}");
+            // Every principal is this OS-observed process.
+            assert!(registered
+                .iter()
+                .all(|instance| instance.process.pid == std::process::id()));
+            assert!(results
+                .iter()
+                .filter_map(|r| r.as_ref().err())
+                .all(|error| error.code == ErrorCode::ResourceUnavailable));
+        } else {
+            assert!(results
+                .iter()
+                .all(|r| r.as_ref().unwrap_err().code == ErrorCode::ResourceControlUnavailable));
         }
     }
 
@@ -1243,6 +1498,35 @@ mod tests {
         fixture.worker.take().unwrap().join().unwrap().unwrap();
         assert!(began.elapsed() < Duration::from_secs(2));
         assert!(!fixture.paths.socket().exists());
+    }
+
+    #[test]
+    fn a_process_of_an_earlier_boot_is_never_running() {
+        use devguard_contract::ProcessIdentity;
+        let identity = ProcessIdentity {
+            boot_id: "old".into(),
+            pid: 42,
+            start_ticks: 7,
+        };
+        // No observation is made for an identity of an earlier boot.
+        assert!(!still_running(
+            &identity,
+            "new",
+            || -> Result<Option<ProcessIdentity>> { panic!("observed an earlier boot") }
+        ));
+        assert!(still_running(&identity, "old", || Ok(Some(
+            identity.clone()
+        ))));
+        assert!(!still_running(&identity, "old", || Ok(None)));
+        let mut reused = identity.clone();
+        reused.start_ticks += 1;
+        assert!(!still_running(&identity, "old", || Ok(Some(
+            reused.clone()
+        ))));
+        // Within this boot a refused observation defers; it never ends a process.
+        assert!(still_running(&identity, "old", || Err(unavailable(
+            "refused"
+        ))));
     }
 
     /// Sessions of a service with registration and fenced launch open.
@@ -1413,6 +1697,37 @@ mod tests {
         }
 
         #[test]
+        fn launch_reconciler_stops_the_service_on_a_poisoned_authority() {
+            let directory = tempfile::Builder::new()
+                .prefix("dg-p-")
+                .tempdir_in("/private/tmp")
+                .unwrap();
+            let paths = AuthorityPaths::fixture(directory.path());
+            config::initialize(&paths).unwrap();
+            let server = Server::open_with(&paths, Options::default()).unwrap();
+            let launcher = server.launcher.clone().unwrap();
+            let poisoner = launcher.authority.clone();
+            let _ = std::thread::spawn(move || {
+                let _held = poisoner.lock().unwrap();
+                panic!("poison the authority for this test");
+            })
+            .join();
+            assert!(launcher.authority.is_poisoned());
+            let stop = Arc::new(AtomicBool::new(false));
+            let signal = stop.clone();
+            let result = std::thread::spawn(move || {
+                let _stop = StopOnExit(signal.clone());
+                reconcile(launcher, signal)
+            })
+            .join()
+            .unwrap();
+            assert!(result.is_err());
+            // The ended reconciler stopped the service.
+            assert!(stop.load(Ordering::Relaxed));
+            drop(server);
+        }
+
+        #[test]
         fn launch_helper_session_presents_one_grant_and_nothing_else() {
             let open = open();
             let permit = Secret::new("d".repeat(64)).unwrap();
@@ -1539,7 +1854,7 @@ mod tests {
                 let config = config::initialize(&paths).unwrap();
                 let storage = AuthorityStorage::open(&paths.journal()).unwrap();
                 let (evidence, reason) = activate(storage, &config, &paths, None).unwrap();
-                assert_eq!(reason, NATIVE_REASON);
+                assert_eq!(reason, LAUNCH_REASON);
                 let Evidence::Native {
                     authority, clock, ..
                 } = evidence
