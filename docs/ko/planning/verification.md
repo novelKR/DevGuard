@@ -83,7 +83,7 @@ C04 증거는 다음을 포함한다.
 - **Raw receipt**: clamp가 있는 root와 없는 root의 수립 readback(`pbi_nice`, task 우선순위, thread 최대 우선순위), 요청·계획·적용 capability 행렬, 수명주기 timeline, 종료 receipt, 고정된 Suspect 결과를 동반한 이탈 정체성, 공유되거나 비어 있지 않은 group·다른 사용자의 프로세스·kernel 요구·알 수 없는 scope의 거절.
 - **실제 프로세스**: 수명주기는 실행 중인 root, reap되지 않은 root, 자손이 남은 채 reap된 root, 정체성을 확인한 종료를 거치며 모든 구성원이 끝난 뒤에만 회수한다.
 - **Scripted-table 단위 시험**: 실제 프로세스로 결정적으로 만들 수 없는 경쟁. 관측 중 생성된 구성원, 재사용된 구성원·부모 PID, readback 중 교체된 root, group을 나열하는 동안 교체된 root, 부모 관계를 확인할 수 없는 자식, scope 종료 뒤 재사용된 group ID, scope의 것임을 입증할 수 없는 group, 거부되거나 실패한 읽기, 실패한 signal 전달을 다룬다.
-- **Clamp된 환경**: 자가 적용처럼 환경이 harness의 모든 자식에 clamp를 걸면 clamp 없는 root를 만들 수 없다. 이 경우 두 readback과 함께 `not_run`으로 기록하며 suite는 `passed`가 아니라 `incomplete`를 보고한다.
+- **Clamp된 환경**: 자가 적용처럼 환경이 harness의 모든 자식에 clamp를 걸면 clamp 없는 root를 만들 수 없다. 이 경우 두 readback과 함께 `not_run`으로 기록하며 suite는 `passed`가 아니라 `incomplete`를 보고한다. Hosted macOS 14 CI runner가 바로 이런 환경으로, harness의 task·thread 우선순위가 20으로 읽힌다. 그래서 CI는 `dg1-scopes`를 `--allow-incomplete`로 실행하고 요약에 `incomplete`를 표시한다. Clamp 없는 경우는 로컬 qualification 호스트에서 통과해야 한다.
 
 서비스는 P3 launch helper 전에는 scope를 수립하지 않으므로 이 결과는 관리 실행이 아니라 라이브러리 증거를 입증한다.
 

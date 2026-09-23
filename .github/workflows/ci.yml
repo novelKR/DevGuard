@@ -35,7 +35,9 @@ jobs:
         run: python3 scripts/qualify.py dg1-probes --output target/qualification/dg1-probes
       - name: Native scope and policy readback functional checks
         if: runner.os == 'macOS'
-        run: python3 scripts/qualify.py dg1-scopes --output target/qualification/dg1-scopes
+        # Hosted runners clamp every process, so the unclamped-root case can only
+        # be recorded as not run there; the summary still shows incomplete.
+        run: python3 scripts/qualify.py dg1-scopes --allow-incomplete --output target/qualification/dg1-scopes
       - name: Preserve qualification evidence
         if: always()
         uses: actions/upload-artifact@v6

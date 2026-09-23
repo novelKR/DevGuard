@@ -92,6 +92,9 @@ def main():
     parser.add_argument("suite",choices=sorted(SUITES))
     parser.add_argument("--offline",action="store_true")
     parser.add_argument("--output",type=Path)
+    # Only for environments known to be unable to produce a case (for example
+    # hosted runners that clamp every process): the report stays incomplete.
+    parser.add_argument("--allow-incomplete",action="store_true")
     args=parser.parse_args()
     run_id=datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")+"-"+uuid.uuid4().hex[:8]
     output=(args.output or ROOT/"target/qualification"/(args.suite+"-"+run_id)).resolve()
@@ -149,6 +152,9 @@ def main():
     finally:
         (output/"report.json").write_text(json.dumps(report,indent=2)+"\n")
         print(json.dumps({"status":report["status"],"report":str(output/"report.json")}))
+    if report["status"]=="incomplete" and args.allow_incomplete:
+        print("incomplete accepted by --allow-incomplete; the report still records it",flush=True)
+        return 0
     return {"passed":0,"incomplete":2,"not_run":2}.get(report["status"],1)
 
 

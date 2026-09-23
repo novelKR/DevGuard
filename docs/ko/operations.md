@@ -115,7 +115,7 @@ python3 scripts/validate.py --offline
 - 관측한 socket peer의 native 등록
 - 주입한 실패와, authority 잠금을 붙잡으면 안 되는 kernel 안에서 멈춘 probe를 포함한 서비스 sampling loop
 
-각 native 단계는 선언한 raw receipt를 보고서의 `raw/` 디렉터리에 남겨야 하며 단계 로그는 hash로 기록한다. 환경이 만들 수 없는 경우는 `not_run`으로 기록하며, 그러면 suite는 `passed`가 아니라 `incomplete`가 된다.
+각 native 단계는 선언한 raw receipt를 보고서의 `raw/` 디렉터리에 남겨야 하며 단계 로그는 hash로 기록한다. 환경이 만들 수 없는 경우는 `not_run`으로 기록하며, 그러면 suite는 `passed`가 아니라 `incomplete`가 된다. `--allow-incomplete`는 보고서를 바꾸지 않고 incomplete suite에 성공을 반환한다. 환경이 해당 경우를 만들 수 없다고 알려진 곳에서만 사용한다.
 
 `dg1-scopes`도 macOS에서만 실행한다. 자기 process group을 이끌고 utility QoS clamp로 다시 실행한 실제 scope root를 사용하며 검사 항목은 다음과 같다.
 - nice·QoS readback과 clamp 없는 root의 적용 실패

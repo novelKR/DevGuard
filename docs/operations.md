@@ -117,7 +117,7 @@ Functional suites reject zero executed cases and record source fingerprints, too
 - native registration of an observed socket peer
 - the service sampling loop, including an injected failure and a probe stuck in the kernel, which must not hold the authority lock
 
-Each native stage must also leave its declared raw receipts under the report's `raw/` directory, and stage logs are hashed. A case the environment cannot produce is recorded as `not_run`, which makes the suite `incomplete` rather than `passed`.
+Each native stage must also leave its declared raw receipts under the report's `raw/` directory, and stage logs are hashed. A case the environment cannot produce is recorded as `not_run`, which makes the suite `incomplete` rather than `passed`. `--allow-incomplete` returns success for an incomplete suite without changing its report; use it only where the environment is known to be unable to produce a case.
 
 `dg1-scopes` also runs only on macOS. It drives real scope roots that lead their own process group and re-execute under the utility QoS clamp. It checks:
 - nice and QoS readback, and a failed application for an unclamped root
