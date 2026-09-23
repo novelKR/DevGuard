@@ -1,18 +1,61 @@
 use crate::clock::BootClock;
+use crate::scope::{CpuReadback, Establishment, ScopeTracker, SignalReceipt};
+use crate::table::NativeTable;
 use devguard_contract::*;
 use devguard_core::{Backend, BindingEvidence, ScopeObservation, UnboundLaunchEvidence};
+use std::sync::Arc;
 
-/// Native evidence behind the core `Backend` trait. Process identity is read
-/// from the kernel; scopes, applied policy and launcher evidence are not yet
-/// installed, so every request for them fails without granting anything.
-#[derive(Debug, Clone)]
+/// Native evidence behind the core `Backend` trait: kernel process identity,
+/// observed process-group scopes with policy readback, and termination by
+/// rechecked identity. Launcher evidence is not installed, so an unbound
+/// launch can never be released through this backend.
+#[derive(Clone)]
 pub struct NativeBackend {
     clock: BootClock,
+    scopes: Arc<ScopeTracker<NativeTable>>,
+}
+
+impl std::fmt::Debug for NativeBackend {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("NativeBackend")
+            .field("boot_id", &self.clock.boot_id())
+            .finish_non_exhaustive()
+    }
 }
 
 impl NativeBackend {
     pub(crate) fn new(clock: BootClock) -> Self {
-        Self { clock }
+        Self {
+            clock,
+            scopes: Arc::new(ScopeTracker::new(NativeTable)),
+        }
+    }
+
+    /// Establish the observed scope of a started root for a prepared launch,
+    /// apply nice and read back the resulting policy. Binding must still
+    /// confirm the readback; a failed application stays tracked so it can be
+    /// terminated before any authorization.
+    pub fn establish_scope(
+        &self,
+        key: &AttemptKey,
+        owner: &InstanceIdentity,
+        root: &ProcessIdentity,
+        plan: &ExecutionPlan,
+        quantities: Budget,
+    ) -> Result<Establishment> {
+        self.scopes
+            .establish(key, owner, root, plan, quantities, &self.clock)
+    }
+
+    /// Signal the scope's rechecked identities. Delivery is not release evidence.
+    pub fn signal_scope(&self, scope: &ScopeIdentity, signal: i32) -> Result<SignalReceipt> {
+        self.scopes.signal(scope, signal, &self.clock)
+    }
+
+    /// Scheduler readback (nice, task and thread priorities) for a live process,
+    /// for diagnostics and evidence. It applies nothing.
+    pub fn scheduler_readback(&self, pid: u32) -> Result<CpuReadback> {
+        self.scopes.scheduler(pid)
     }
 }
 
@@ -38,7 +81,7 @@ pub(crate) fn macos_plan() -> ExecutionPlan {
 fn not_installed() -> Error {
     Error::new(
         ErrorCode::ReconciliationRequired,
-        "native scope evidence is not installed",
+        "launcher evidence is not installed",
     )
 }
 
@@ -51,12 +94,12 @@ impl Backend for NativeBackend {
         Ok(macos_plan())
     }
 
-    fn binding(&self, _: &ScopeIdentity) -> Result<BindingEvidence> {
-        Err(not_installed())
+    fn binding(&self, scope: &ScopeIdentity) -> Result<BindingEvidence> {
+        self.scopes.binding(scope, &self.clock)
     }
 
-    fn observe_scope(&self, _: &ScopeIdentity) -> Result<ScopeObservation> {
-        Err(not_installed())
+    fn observe_scope(&self, scope: &ScopeIdentity) -> Result<ScopeObservation> {
+        self.scopes.observe(scope, &self.clock)
     }
 
     fn unbound_launch(

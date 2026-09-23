@@ -696,3 +696,84 @@ fn live_control_registration_prevents_policy_rotation_from_underaccounting_it() 
         ));
     }
 }
+
+#[test]
+fn evidence_observed_during_a_transition_is_fresh_but_stale_evidence_is_not() {
+    let h = Harness::new();
+    let (mut a, p) = h.ready();
+    let record = h.prepare(&mut a, &p, "observed-during");
+    let permit = a.begin_launch(&p, &record.key).unwrap().permit.unwrap();
+    let scope = h.provide_binding(&record);
+    // A real backend timestamps evidence when its observation completes, after
+    // the transition sampled its own clock.
+    {
+        let mut fake = h.backend.0.lock().unwrap();
+        let binding = fake.bindings.get_mut(&scope.scope_id).unwrap();
+        binding.applied.observed_at.monotonic_ms += 5;
+        fake.advance_during_evidence = Some((h.clock.clone(), 5));
+    }
+    let bound = a.bind_scope(&p, &record.key, &permit, &scope).unwrap();
+    assert_eq!(bound.phase, AttemptPhase::ScopeBound);
+    assert!(
+        a.authorize_run(&p, &record.key, &permit, &scope.root)
+            .unwrap()
+            .may_exec
+    );
+    h.closed(&scope);
+    h.backend
+        .0
+        .lock()
+        .unwrap()
+        .observations
+        .get_mut(&scope.scope_id)
+        .unwrap()
+        .observed_at
+        .monotonic_ms += 5;
+    let released = a.reconcile(&record.key).unwrap();
+    assert_eq!(released.phase, AttemptPhase::Released);
+    assert_eq!(
+        released.release_reason,
+        Some(ReleaseReason::ScopeTerminated)
+    );
+
+    // Evidence that is older than two seconds when the backend returns is not
+    // fresh, however it was produced.
+    let other = h.prepare(&mut a, &p, "stale-after-return");
+    let permit = a.begin_launch(&p, &other.key).unwrap().permit.unwrap();
+    let scope = h.provide_binding(&other);
+    h.backend.0.lock().unwrap().advance_during_evidence = Some((h.clock.clone(), 2_001));
+    assert_eq!(
+        a.bind_scope(&p, &other.key, &permit, &scope)
+            .unwrap_err()
+            .code,
+        ErrorCode::ResourcePolicyUnsupported
+    );
+
+    // Positive launcher evidence for an unbound launch is also judged after
+    // the backend returns.
+    h.backend.0.lock().unwrap().advance_during_evidence = None;
+    let unbound = h.prepare(&mut a, &p, "unbound-during");
+    a.begin_launch(&p, &unbound.key).unwrap();
+    {
+        let mut fake = h.backend.0.lock().unwrap();
+        let mut observed_at = h.clock.now();
+        observed_at.monotonic_ms += 5;
+        fake.unbound.insert(
+            unbound.key.clone(),
+            UnboundLaunchEvidence {
+                key: unbound.key.clone(),
+                owner: unbound.owner.clone(),
+                observed_at,
+                helper_creation_ruled_out: true,
+                no_pending_spawn: true,
+            },
+        );
+        fake.advance_during_evidence = Some((h.clock.clone(), 5));
+    }
+    let resolved = a.reconcile(&unbound.key).unwrap();
+    assert_eq!(resolved.phase, AttemptPhase::Released);
+    assert_eq!(
+        resolved.release_reason,
+        Some(ReleaseReason::NoHelperCreated)
+    );
+}

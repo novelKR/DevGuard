@@ -2,7 +2,7 @@
 
 [English](../operations.md) | [한국어](operations.md)
 
-C01은 명시 bootstrap·고정 저장소를, C02는 인증된 로컬 transport를, C03은 native macOS boot·프로세스·호스트 압력 증거를 제공한다. PR과 병합 후 main 전달 증거는 구현과 별도로 추적한다. devguardd serve는 이 증거로 journal을 활성화하는 foreground 서비스를 실행하지만 wire 등록·Principal·자원 lease·실행은 P3가 launch와 대조를 제공할 때까지 닫혀 있다. 정상 authority는 현재 macOS만 지원하며 Linux CI는 이식 가능한 계약과 제한된 fixture를 검사한다. DG-LINUX 제어 자격을 부여하지 않는다.
+C01은 명시 bootstrap·고정 저장소를, C02는 인증된 로컬 transport를, C03은 native macOS boot·프로세스·호스트 압력 증거를, C04는 후속 launch helper를 위한 협조적 정책 readback과 scope 증거를 제공한다. PR과 병합 후 main 전달 증거는 구현과 별도로 추적한다. devguardd serve는 이 증거로 journal을 활성화하는 foreground 서비스를 실행하지만 wire 등록·Principal·자원 lease·실행은 P3가 launch와 대조를 제공할 때까지 닫혀 있다. 정상 authority는 현재 macOS만 지원하며 Linux CI는 이식 가능한 계약과 제한된 fixture를 검사한다. DG-LINUX 제어 자격을 부여하지 않는다.
 
 ## 제공 명령
 
@@ -93,12 +93,13 @@ SDK 조회 예제는 CARGO_BUILD_JOBS=1 cargo build --locked -p devguard-client 
 
 ## 호환성·검사·복귀
 
-Core의 AuthorityStorage는 기존 배타 잠금을 보유하고 schema 1 journal을 검사하되 attempt 상태를 바꾸지 않는다. 실제 Backend·Clock으로 활성화할 때 boot 기반 복구와 같은 transaction 안에서 회계를 다시 검증한다. 기존 Authority::open의 복구 동작과 DG-0 시험을 유지하며 C01–C03은 journal schema·contract 직렬화·wire protocol을 바꾸지 않는다. 새 로컬 protocol은 미지 필드·버전·필수 capability 미지원을 엄격히 거절하며 필드 추가도 명시적 호환성 시험이 필요하다.
+Core의 AuthorityStorage는 기존 배타 잠금을 보유하고 schema 1 journal을 검사하되 attempt 상태를 바꾸지 않는다. 실제 Backend·Clock으로 활성화할 때 boot 기반 복구와 같은 transaction 안에서 회계를 다시 검증한다. 기존 Authority::open의 복구 동작과 DG-0 시험을 유지하며 C01–C04는 journal schema·contract 직렬화·wire protocol을 바꾸지 않는다. 새 로컬 protocol은 미지 필드·버전·필수 capability 미지원을 엄격히 거절하며 필드 추가도 명시적 호환성 시험이 필요하다.
 
 ```sh
 python3 scripts/qualify.py dg1-authority --offline
 python3 scripts/qualify.py dg1-auth --offline
 python3 scripts/qualify.py dg1-probes --offline
+python3 scripts/qualify.py dg1-scopes --offline
 python3 scripts/validate.py --offline
 ```
 
@@ -116,6 +117,16 @@ python3 scripts/validate.py --offline
 
 각 native 단계는 선언한 raw receipt를 보고서의 `raw/` 디렉터리에 남겨야 하며 단계 로그는 hash로 기록한다. 환경이 만들 수 없는 경우는 `not_run`으로 기록하며, 그러면 suite는 `passed`가 아니라 `incomplete`가 된다.
 
-이 suite들은 wire 등록·launch·자원 정책 적용·Linux 강제·자기 적용·foreground SLO를 not_run으로 남긴다. 전체 검증은 기존 44개 시험과 workspace crate 5개의 명시적 전체 의존 그래프를 검사한다. Core·contract는 daemon 설정과 native adapter에 독립적이며 client는 core에 의존하지 않는다.
+`dg1-scopes`도 macOS에서만 실행한다. 자기 process group을 이끌고 utility QoS clamp로 다시 실행한 실제 scope root를 사용하며 검사 항목은 다음과 같다.
+- nice·QoS readback과 clamp 없는 root의 적용 실패
+- binding, 실행 권한, 모든 구성원이 끝난 뒤에만 이루어지는 회수
+- 자손이 남은 상태에서 root가 종료·reap되어도 회수하지 않음
+- 자손이 group을 떠난 뒤 고정되는 이탈
+- 정체성을 확인한 종료
+- 공유되거나 비어 있지 않은 group, 다른 사용자의 프로세스, kernel 요구, 알 수 없는 scope의 거절
 
-복귀할 때 작업 소유 foreground 프로세스를 중지하고 보존한 설정과 schema 1 journal에 호환되는 source/artifact를 선택하며 영속 상태·자격을 유지한다. C03 활성화는 새 record 종류를 추가하지 않고 기존 복구만 수행하므로 C02 artifact로 같은 상태를 다시 열 수 있다. C01–C03을 통해 시작한 workload는 없다. 후속 live lease의 복귀에는 실제 대조가 필요하므로 이 초기 빈 상태 가정을 재사용할 수 없다.
+Scripted-table 단위 시험은 생성 경쟁, PID 재사용, 추적 상실을 다룬다. Scope 증거는 라이브러리로만 검증하며 서비스는 P3 전까지 scope를 수립하지 않는다.
+
+이 suite들은 wire 등록·launch helper·Linux 강제·자기 적용·foreground SLO를 not_run으로 남긴다. 전체 검증은 기존 44개 시험과 workspace crate 5개의 명시적 전체 의존 그래프를 검사한다. Core·contract는 daemon 설정과 native adapter에 독립적이며 client는 core에 의존하지 않는다.
+
+복귀할 때 작업 소유 foreground 프로세스를 중지하고 보존한 설정과 schema 1 journal에 호환되는 source/artifact를 선택하며 영속 상태·자격을 유지한다. C03 활성화는 새 record 종류를 추가하지 않고 기존 복구만 수행하므로 C02 artifact로 같은 상태를 다시 열 수 있다. C01–C04를 통해 시작한 workload는 없다. 후속 live lease의 복귀에는 실제 대조가 필요하므로 이 초기 빈 상태 가정을 재사용할 수 없다.

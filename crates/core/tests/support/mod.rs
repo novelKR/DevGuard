@@ -34,6 +34,16 @@ pub struct FakeState {
     pub observations: BTreeMap<String, ScopeObservation>,
     pub unbound: BTreeMap<AttemptKey, UnboundLaunchEvidence>,
     pub kernel: bool,
+    /// Like a real backend, finish observing after the caller's transition began.
+    pub advance_during_evidence: Option<(FakeClock, u64)>,
+}
+
+impl FakeState {
+    fn observing(&self) {
+        if let Some((clock, milliseconds)) = &self.advance_during_evidence {
+            clock.advance(*milliseconds);
+        }
+    }
 }
 #[derive(Clone, Default)]
 pub struct FakeBackend(pub Arc<Mutex<FakeState>>);
@@ -74,18 +84,18 @@ impl Backend for FakeBackend {
         })
     }
     fn binding(&self, scope: &ScopeIdentity) -> Result<BindingEvidence> {
-        self.0
-            .lock()
-            .unwrap()
+        let state = self.0.lock().unwrap();
+        state.observing();
+        state
             .bindings
             .get(&scope.scope_id)
             .cloned()
             .ok_or_else(missing_evidence)
     }
     fn observe_scope(&self, scope: &ScopeIdentity) -> Result<ScopeObservation> {
-        self.0
-            .lock()
-            .unwrap()
+        let state = self.0.lock().unwrap();
+        state.observing();
+        state
             .observations
             .get(&scope.scope_id)
             .cloned()
@@ -96,13 +106,9 @@ impl Backend for FakeBackend {
         key: &AttemptKey,
         _: &InstanceIdentity,
     ) -> Result<UnboundLaunchEvidence> {
-        self.0
-            .lock()
-            .unwrap()
-            .unbound
-            .get(key)
-            .cloned()
-            .ok_or_else(missing_evidence)
+        let state = self.0.lock().unwrap();
+        state.observing();
+        state.unbound.get(key).cloned().ok_or_else(missing_evidence)
     }
 }
 fn missing_evidence() -> Error {

@@ -36,6 +36,13 @@ impl BootClock {
     pub fn boot_id(&self) -> &str {
         &self.boot_id
     }
+
+    #[cfg(test)]
+    pub(crate) fn for_tests(boot_id: &str) -> Self {
+        Self {
+            boot_id: boot_id.into(),
+        }
+    }
 }
 
 impl Clock for BootClock {

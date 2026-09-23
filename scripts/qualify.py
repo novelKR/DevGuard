@@ -42,15 +42,21 @@ SUITES = {
         ("service-sampling", ["-p", "devguard-daemon", "--lib", "server::tests::native"],
          ["service-probe-failure", "service-delayed-probe"]),
     ],
+    "dg1-scopes": [
+        ("scope-logic", ["-p", "devguard-macos", "--lib", "scope::tests"]),
+        ("native-scopes", ["-p", "devguard-macos", "--test", "scopes"],
+         ["scope-lifecycle", "capability-matrix", "scope-escape", "scope-refusals"]),
+    ],
 }
 STAGE_TIMEOUT_SECONDS = 1800
 SCOPES = {
     "dg1-authority": "canonical configuration, ownership and storage",
     "dg1-auth": "native UDS peer/credential transport and closed readiness",
     "dg1-probes": "native macOS boot clock, process identity and host pressure evidence with registration closed",
+    "dg1-scopes": "native macOS cooperative CPU policy readback, observed process-group scopes and identity-checked termination without a launch helper",
 }
 # Native suites observe the actual host; elsewhere they are not run, never passed.
-NATIVE = {"dg1-probes"}
+NATIVE = {"dg1-probes", "dg1-scopes"}
 
 
 def host_facts():

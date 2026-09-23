@@ -2,7 +2,7 @@
 
 [English](operations.md) | [한국어](ko/operations.md)
 
-C01 provides explicit bootstrap/canonical storage, C02 authenticated local transport, and C03 native macOS boot, process and host pressure evidence. PR and post-merge main delivery evidence is tracked separately from implementation. `devguardd serve` runs a foreground service that activates the journal with that evidence; registration over the wire, principals, resource leases and execution remain closed until P3 provides launch and reconciliation. The normal authority is currently macOS-only; Linux CI checks portable contracts and bounded fixtures, not DG-LINUX controls.
+C01 provides explicit bootstrap/canonical storage, C02 authenticated local transport, C03 native macOS boot, process and host pressure evidence, and C04 cooperative policy readback and scope evidence for a future launch helper. PR and post-merge main delivery evidence is tracked separately from implementation. `devguardd serve` runs a foreground service that activates the journal with that evidence; registration over the wire, principals, resource leases and execution remain closed until P3 provides launch and reconciliation. The normal authority is currently macOS-only; Linux CI checks portable contracts and bounded fixtures, not DG-LINUX controls.
 
 ## Available commands
 
@@ -93,7 +93,7 @@ The SDK inspection example can be built with `CARGO_BUILD_JOBS=1 cargo build --l
 
 ## Compatibility, checks and rollback
 
-Core `AuthorityStorage` holds the original exclusive lock and validates the existing schema-1 journal without changing attempt state. Activation with a real `Backend`/`Clock` revalidates accounting in the same transaction as boot-aware recovery. Existing `Authority::open` preserves its recovery behavior and the DG-0 tests. C01–C03 do not change the journal schema, contract serialization or wire protocol. The new local protocol strictly rejects unknown fields, versions and unsupported required capabilities; added fields need explicit compatibility tests.
+Core `AuthorityStorage` holds the original exclusive lock and validates the existing schema-1 journal without changing attempt state. Activation with a real `Backend`/`Clock` revalidates accounting in the same transaction as boot-aware recovery. Existing `Authority::open` preserves its recovery behavior and the DG-0 tests. C01–C04 do not change the journal schema, contract serialization or wire protocol. The new local protocol strictly rejects unknown fields, versions and unsupported required capabilities; added fields need explicit compatibility tests.
 
 Available checks:
 
@@ -101,6 +101,7 @@ Available checks:
 python3 scripts/qualify.py dg1-authority --offline
 python3 scripts/qualify.py dg1-auth --offline
 python3 scripts/qualify.py dg1-probes --offline
+python3 scripts/qualify.py dg1-scopes --offline
 python3 scripts/validate.py --offline
 ```
 
@@ -118,6 +119,16 @@ Functional suites reject zero executed cases and record source fingerprints, too
 
 Each native stage must also leave its declared raw receipts under the report's `raw/` directory, and stage logs are hashed. A case the environment cannot produce is recorded as `not_run`, which makes the suite `incomplete` rather than `passed`.
 
-These suites leave wire registration, launch, applied resource policy, Linux enforcement, self-use and foreground SLO `not_run`. The full validator retains the 44 original tests and validates all five workspace crates and their explicit dependency graph. Core/contract remain independent of daemon configuration and native adapters, and client does not depend on core.
+`dg1-scopes` also runs only on macOS. It drives real scope roots that lead their own process group and re-execute under the utility QoS clamp. It checks:
+- nice and QoS readback, and a failed application for an unclamped root
+- binding, run authorization and release only after every member exits
+- no release after a root exit or reap while descendants survive
+- sticky escape after a descendant leaves the group
+- identity-checked termination
+- refusal of shared or non-empty groups, another user's process, kernel requirements and unknown scopes
 
-To roll back this boundary, stop its task-owned foreground process and select a source/artifact compatible with the preserved configuration and schema-1 journal. Keep persistent state and credentials. A C02 artifact can reopen the same state: C03 activation adds no record type and only runs the existing recovery. No workloads can have started through C01–C03. Later live-lease rollback requires actual reconciliation; it cannot use this early empty-state assumption.
+Scripted-table unit tests cover creation races, PID reuse and tracking loss. Scope evidence is exercised through the library only; the service establishes no scopes until P3.
+
+These suites leave wire registration, the launch helper, Linux enforcement, self-use and foreground SLO `not_run`. The full validator retains the 44 original tests and validates all five workspace crates and their explicit dependency graph. Core/contract remain independent of daemon configuration and native adapters, and client does not depend on core.
+
+To roll back this boundary, stop its task-owned foreground process and select a source/artifact compatible with the preserved configuration and schema-1 journal. Keep persistent state and credentials. A C02 artifact can reopen the same state: C03 activation adds no record type and only runs the existing recovery. No workloads can have started through C01–C04. Later live-lease rollback requires actual reconciliation; it cannot use this early empty-state assumption.

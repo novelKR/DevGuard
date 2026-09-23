@@ -8,6 +8,10 @@ use devguard_contract::{ProcessIdentity, Result};
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Snapshot {
+    pub ppid: u32,
+    pub pgid: u32,
+    pub uid: u32,
+    pub nice: i32,
     pub start_ticks: u64,
 }
 
@@ -16,7 +20,9 @@ pub(crate) struct Snapshot {
 pub(crate) enum Presence {
     Live(Snapshot),
     /// Exited but not yet reaped by its parent (a zombie).
-    Exited,
+    Exited {
+        start_ticks: u64,
+    },
     /// Reaped, or never existed. A reused PID appears as a different start.
     Absent,
 }
@@ -31,7 +37,7 @@ pub fn process_identity(boot_id: &str, pid: u32) -> Result<Option<ProcessIdentit
             pid,
             start_ticks: snapshot.start_ticks,
         }),
-        Presence::Exited | Presence::Absent => None,
+        Presence::Exited { .. } | Presence::Absent => None,
     })
 }
 
@@ -54,9 +60,15 @@ pub(crate) fn presence(pid: u32) -> Result<Presence> {
             continue;
         }
         return Ok(match info {
-            Some(info) if info.pbi_pid == pid => Presence::Live(Snapshot { start_ticks: start }),
+            Some(info) if info.pbi_pid == pid => Presence::Live(Snapshot {
+                ppid: info.pbi_ppid,
+                pgid: info.pbi_pgid,
+                uid: info.pbi_uid,
+                nice: info.pbi_nice,
+                start_ticks: start,
+            }),
             Some(_) => return Err(crate::failed("process table returned another PID")),
-            None => Presence::Exited,
+            None => Presence::Exited { start_ticks: start },
         });
     }
     Err(crate::failed("process identity changed during observation"))

@@ -5,11 +5,26 @@ use crate::failed;
 use devguard_contract::Result;
 use std::ffi::CStr;
 
+/// `<sys/proc_info.h>` listing filters and a flavor absent from libc.
+pub const PROC_PGRP_ONLY: u32 = 2;
+pub const PROC_PPID_ONLY: u32 = 6;
+pub const PROC_PIDLISTTHREADS: libc::c_int = 6;
+
+/// `qos_class_t` from `<sys/qos.h>`.
+pub type QosClass = libc::c_uint;
+pub const QOS_CLASS_UTILITY: QosClass = 0x11;
+
 extern "C" {
     /// `<mach/mach_init.h>`. libc deprecates its binding in favor of another crate.
     fn mach_host_self() -> libc::mach_port_t;
     /// `<mach/mach_host.h>`: the kernel's page size, which host VM counters use.
     fn host_page_size(host: libc::mach_port_t, size: *mut libc::vm_size_t) -> libc::kern_return_t;
+    /// `<pthread/spawn.h>`: the QoS class a spawned image runs under, which
+    /// also bounds the classes its threads may request.
+    pub fn posix_spawnattr_set_qos_class_np(
+        attributes: *mut libc::posix_spawnattr_t,
+        class: QosClass,
+    ) -> libc::c_int;
 }
 
 /// Read a fixed-size sysctl value, rejecting a short or oversized result.
