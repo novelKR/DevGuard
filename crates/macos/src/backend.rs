@@ -47,6 +47,18 @@ impl NativeBackend {
             .establish(key, owner, root, plan, quantities, &self.clock)
     }
 
+    /// The identity of a process presenting a launch grant: a live process of
+    /// this user created by the attempt owner, which must still be running.
+    pub fn helper_process(&self, pid: u32, owner: &ProcessIdentity) -> Result<ProcessIdentity> {
+        self.scopes.helper(pid, owner, &self.clock)
+    }
+
+    /// Stop tracking a scope that no attempt claimed. A claimed scope stays
+    /// tracked until its termination is observed.
+    pub fn forget_unclaimed(&self, scope: &ScopeIdentity) -> Result<()> {
+        self.scopes.forget(scope)
+    }
+
     /// Signal the scope's rechecked identities. Delivery is not release evidence.
     pub fn signal_scope(&self, scope: &ScopeIdentity, signal: i32) -> Result<SignalReceipt> {
         self.scopes.signal(scope, signal, &self.clock)

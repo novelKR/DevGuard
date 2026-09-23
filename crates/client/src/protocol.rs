@@ -1,4 +1,7 @@
-use devguard_contract::{Capability, Compatibility, Error, ErrorCode, InstanceIdentity, Secret};
+use devguard_contract::{
+    AdmissionRequest, AttemptKey, AttemptRecord, Capability, Compatibility, Error, ErrorCode,
+    InstanceIdentity, Secret,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
@@ -59,10 +62,33 @@ pub enum Request {
         credential: CallerCredential,
     },
     Status,
-    /// The server derives the process identity from its OS-observed peer.
-    /// C02 deliberately refuses this operation until C03 supplies native identity.
+    /// The server derives the process identity from its OS-observed peer and
+    /// its native start identity. A caller cannot declare either.
     Register {
         instance_id: String,
+    },
+    /// The requests below act for the instance registered in this session.
+    Admit {
+        request: AdmissionRequest,
+    },
+    /// Durably commits the launch. Only the first response carries the
+    /// one-time helper permit; a replay returns the stored attempt without one.
+    BeginLaunch {
+        key: AttemptKey,
+    },
+    Lookup {
+        key: AttemptKey,
+    },
+    Cancel {
+        key: AttemptKey,
+    },
+    /// A launch helper presents the owner's one-time grant. This is not caller
+    /// authentication: the helper's identity is observed by the authority, and
+    /// the session can make no other request.
+    Launch {
+        key: AttemptKey,
+        instance_id: String,
+        permit: Secret,
     },
 }
 
@@ -86,6 +112,23 @@ pub struct ServiceStatus {
     pub execution_ready: bool,
     pub reason: String,
     pub configuration_fingerprint: String,
+}
+
+/// The result of `BeginLaunch`. `permit` is present only in the first response.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LaunchGrant {
+    pub attempt: AttemptRecord,
+    pub permit: Option<Secret>,
+}
+
+/// The result of a helper's `Launch`. Only the first successful authorization
+/// sets `may_exec`; a helper that did not receive it must not exec.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LaunchAuthorization {
+    pub attempt: AttemptRecord,
+    pub may_exec: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -123,5 +166,8 @@ pub enum Response {
     Authenticated { role: SessionRole },
     Status(ServiceStatus),
     Registered { instance: InstanceIdentity },
+    Attempt(AttemptRecord),
+    LaunchGranted(LaunchGrant),
+    LaunchAuthorized(LaunchAuthorization),
     Error(WireError),
 }

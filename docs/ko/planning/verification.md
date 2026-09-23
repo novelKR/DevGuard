@@ -30,6 +30,7 @@ python3 scripts/qualify.py dg1-authority --offline
 python3 scripts/qualify.py dg1-auth --offline
 python3 scripts/qualify.py dg1-probes --offline
 python3 scripts/qualify.py dg1-scopes --offline
+python3 scripts/qualify.py dg1-launch --offline
 git diff --check
 ```
 
@@ -71,7 +72,7 @@ V-DOC-DG는 scripts/check_docs.py와 수동 의미 검토로 영어/한국어 ha
 
 ## 향후 suite와 장애 주입 계약
 
-scripts/qualify.py dg1-authority --offline은 C01 설정·저장소, scripts/qualify.py dg1-auth --offline은 C02 인증·transport, scripts/qualify.py dg1-probes --offline은 C03 native 증거, scripts/qualify.py dg1-scopes --offline은 C04 정책·scope 증거 검증을 제공한다. 그 밖의 DevGuard suite와 CodeSpace scripts/qualify-devguard.py는 해당 작업에서 제공할 예정 인터페이스다. 각 구현 PR이 실제 CLI·case inventory·nonzero case assertion·timeout·log 수집·격리 cleanup을 구현하고 제공 명령을 갱신해야 한다. macOS/Ubuntu CI는 전체 validator와 이식 가능한 두 기능 suite를 실행하고 각각의 report·log를 보존한다. Native suite는 macOS CI에서만 실행하고 그 밖의 환경에서는 `not_run`으로 기록한다. 증거를 제공할 수 없는 플랫폼에서 통과로 처리하지 않는다. 각 native 단계는 만들어야 할 raw receipt를 선언한다. 어떤 경우를 `not_run`으로 기록한 receipt가 있으면 suite는 `passed`가 아니라 `incomplete`가 된다.
+scripts/qualify.py dg1-authority --offline은 C01 설정·저장소, scripts/qualify.py dg1-auth --offline은 C02 인증·transport, scripts/qualify.py dg1-probes --offline은 C03 native 증거, scripts/qualify.py dg1-scopes --offline은 C04 정책·scope 증거, scripts/qualify.py dg1-launch --offline은 C05 launch helper 검증을 제공한다. 그 밖의 DevGuard suite와 CodeSpace scripts/qualify-devguard.py는 해당 작업에서 제공할 예정 인터페이스다. 각 구현 PR이 실제 CLI·case inventory·nonzero case assertion·timeout·log 수집·격리 cleanup을 구현하고 제공 명령을 갱신해야 한다. macOS/Ubuntu CI는 전체 validator와 이식 가능한 두 기능 suite를 실행하고 각각의 report·log를 보존한다. Native suite는 macOS CI에서만 실행하고 그 밖의 환경에서는 `not_run`으로 기록한다. 증거를 제공할 수 없는 플랫폼에서 통과로 처리하지 않는다. 각 native 단계는 만들어야 할 raw receipt를 선언한다. 어떤 경우를 `not_run`으로 기록한 receipt가 있으면 suite는 `passed`가 아니라 `incomplete`가 된다.
 
 C03 증거는 다음 파일에 기록한다.
 - **Raw receipt** (보고서의 `raw/` 디렉터리): 단위를 포함한 boot ID·시계 읽기, 호스트 용량, zombie·reap·거부 관측을 포함한 반복 프로세스 정체성, 계산된 비율을 포함한 native 압력 읽기, 마지막 sample 이후 admission이 닫히기까지 측정한 시간, 주입한 실패부터 Critical까지 걸린 서비스 loop 시간과 멈춘 probe에 대한 서비스 loop의 동작.
@@ -86,6 +87,14 @@ C04 증거는 다음을 포함한다.
 - **Clamp된 환경**: 자가 적용처럼 환경이 harness의 모든 자식에 clamp를 걸면 clamp 없는 root를 만들 수 없다. 이 경우 두 readback과 함께 `not_run`으로 기록하며 suite는 `passed`가 아니라 `incomplete`를 보고한다. Hosted macOS 14 CI runner가 바로 이런 환경으로, harness의 task·thread 우선순위가 20으로 읽힌다. 그래서 CI는 `dg1-scopes`를 `--allow-incomplete`로 실행하고 요약에 `incomplete`를 표시한다. Clamp 없는 경우는 로컬 qualification 호스트에서 통과해야 한다.
 
 서비스는 P3 launch helper 전에는 scope를 수립하지 않으므로 이 결과는 관리 실행이 아니라 라이브러리 증거를 입증한다.
+
+C05 증거는 다음을 포함한다.
+- **Raw receipt**: launch 수명주기(단계, READY까지 걸린 시간, 종료 상태, authorize된 attempt와 scope 종료를 통한 회수), executable의 descriptor·인자·디렉터리·환경 변수 이름(값은 기록하지 않음), 하나의 grant에 대한 경쟁 helper와 늦은 helper, claim 전 거절, claim 전 취소, READY 뒤의 exec 실패, bare helper의 replay와 claim 뒤 거절, 기한을 넘긴 응답, 여러 thread의 동시 launch, pseudo-terminal 위의 helper. Receipt에 환경의 자격 값이 없는지 확인한다.
+- **실제 프로세스**: 등록된 owner인 시험 프로세스가 실제 `devguard-launch` binary를 시작하고, helper는 같은 프로세스에서 합성 정상 probe로 동작하는 격리 authority에 grant를 제시한다.
+- **단위 시험**: core claim transition, owner 확인 중 재사용된 PID를 포함한 scripted helper 정체성 검사, 엄격한 transcript 해석, 엄격한 launch wire fixture, 다른 요청을 할 수 없는 helper session.
+- **Clamp된 환경**: claim 뒤에 거절된 helper 경우에는 utility clamp가 없는 helper가 필요하다. Harness의 모든 자식에 clamp가 걸리는 환경에서는 이 경우를 `not_run`으로 기록하고 suite는 `incomplete`를 보고한다. Hosted macOS 14 runner가 그런 환경이며 CI는 `dg1-launch`를 `--allow-incomplete`로 실행한다.
+
+정상 서비스는 C05에서 등록과 launch를 닫아 두므로, 이는 launch 경로의 증거이며 아직 서비스의 관리 실행 증거는 아니다.
 
 C02 증거는 양쪽 실제 OS socket UID/PID 관측, 분리된 consumer·관리 자격, helper-role 인증 거절, 현재·미래 wire fixture의 엄격한 decoding, 64 KiB frame, 세션 32개 제한, idle 대기를 포함한 frame별 절대 250 ms 기한, 부분·느린·마지막 응답과 private 자격 FD 전달을 포함한다. 전용 subprocess helper는 후속 exec 전 FD 닫기를 관측하고 argv·환경·debug·출력의 secret 누출을 확인한다. Parent test가 helper를 실행하며 별도의 ignored test를 독립 qualification 성공으로 세지 않는다. 0개가 아닌 parent case 수와 프로세스 정리를 함께 기록한다.
 

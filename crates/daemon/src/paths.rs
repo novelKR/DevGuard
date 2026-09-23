@@ -142,8 +142,10 @@ impl AuthorityPaths {
         secure_directory(&self.runtime, self.uid, true)
     }
 
-    #[cfg(test)]
-    pub(crate) fn fixture(base: &Path) -> Self {
+    /// Paths for an isolated test authority under `base`. Only tests and the
+    /// `test-fixtures` feature can construct them; `devguardd` never does.
+    #[cfg(any(test, feature = "test-fixtures"))]
+    pub fn fixture(base: &Path) -> Self {
         // Test-only fixture paths are not a production daemon argument or budget mode.
         Self::for_account(
             unsafe { libc::getuid() },

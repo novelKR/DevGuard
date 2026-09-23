@@ -62,6 +62,12 @@ pub trait HostProbe: Send {
     fn read(&mut self) -> Result<HostReading>;
 }
 
+impl<P: HostProbe + ?Sized> HostProbe for Box<P> {
+    fn read(&mut self) -> Result<HostReading> {
+        (**self).read()
+    }
+}
+
 /// Kernel counters plus `statfs` for each configured workload/state path.
 /// Any failed path fails the whole reading; no volume is silently dropped.
 pub struct NativeProbe {

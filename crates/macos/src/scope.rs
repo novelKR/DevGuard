@@ -182,6 +182,53 @@ impl<T: ProcessTable> ScopeTracker<T> {
         Ok(tracked)
     }
 
+    /// The identity of a process presenting a launch grant. It must be a live
+    /// process of this user whose parent is the attempt owner, and the owner
+    /// must still be running as the registered identity: only the owner can
+    /// have created the helper. The helper is read again after the owner
+    /// check, so a PID reused in between yields no identity.
+    pub fn helper(
+        &self,
+        pid: u32,
+        owner: &ProcessIdentity,
+        clock: &impl Clock,
+    ) -> Result<ProcessIdentity> {
+        let boot_id = clock.now().boot_id;
+        let refused = |message: &'static str| Error::new(ErrorCode::Unauthorized, message);
+        if pid == 0 || pid == self.table.own_pid() {
+            return Err(refused("the authority cannot be a launch helper"));
+        }
+        if owner.boot_id != boot_id {
+            return Err(refused("the attempt owner is from another boot"));
+        }
+        let snapshot = match self.table.presence(pid)? {
+            Presence::Live(snapshot) => snapshot,
+            _ => return Err(unavailable("launch helper is not running")),
+        };
+        if snapshot.uid != self.table.effective_uid() {
+            return Err(refused("launch helper belongs to another user"));
+        }
+        let owner_running = matches!(
+            self.table.presence(owner.pid)?,
+            Presence::Live(current) if current.start_ticks == owner.start_ticks
+        );
+        if snapshot.ppid != owner.pid || !owner_running {
+            return Err(refused(
+                "launch helper was not created by the running attempt owner",
+            ));
+        }
+        match self.table.presence(pid)? {
+            Presence::Live(current)
+                if current.start_ticks == snapshot.start_ticks && current.ppid == owner.pid => {}
+            _ => return Err(unavailable("launch helper changed during observation")),
+        }
+        Ok(ProcessIdentity {
+            boot_id,
+            pid,
+            start_ticks: snapshot.start_ticks,
+        })
+    }
+
     /// Establish the observed scope of a started root before any payload runs.
     /// The root must be alive, lead its own process group alone and belong to
     /// this user. The authority applies nice; the root must already carry the
@@ -231,7 +278,7 @@ impl<T: ProcessTable> ScopeTracker<T> {
             scope_id: format!("pg-{}-{}", root.pid, root.start_ticks),
             root: root.clone(),
         };
-        {
+        let inserted = {
             let mut scopes = self.scopes.lock().map_err(|_| poisoned())?;
             if let Some(existing) = scopes.get(&identity.scope_id) {
                 let existing = existing.lock().map_err(|_| poisoned())?;
@@ -245,6 +292,7 @@ impl<T: ProcessTable> ScopeTracker<T> {
                         "scope root is already bound to another attempt",
                     ));
                 }
+                false
             } else {
                 scopes.insert(
                     identity.scope_id.clone(),
@@ -261,8 +309,9 @@ impl<T: ProcessTable> ScopeTracker<T> {
                         group_ended: false,
                     })),
                 );
+                true
             }
-        }
+        };
         // Never lower an already higher nice value, and recheck the identity
         // immediately before changing it. A failure leaves the CPU policy
         // unapplied, which the readback below reports.
@@ -274,12 +323,35 @@ impl<T: ProcessTable> ScopeTracker<T> {
         {
             let _ = self.table.renice(root.pid, WORKLOAD_NICE);
         }
-        let (applied, cpu) = self.read_back(&identity, plan, quantities, clock)?;
-        Ok(Establishment {
-            scope: identity,
-            applied,
-            cpu,
-        })
+        match self.read_back(&identity, plan, quantities, clock) {
+            Ok((applied, cpu)) => Ok(Establishment {
+                scope: identity,
+                applied,
+                cpu,
+            }),
+            Err(error) => {
+                // The root is gone before any readback: nothing was applied
+                // and nothing is left to terminate.
+                if inserted {
+                    self.forget(&identity)?;
+                }
+                Err(error)
+            }
+        }
+    }
+
+    /// Stop tracking a scope that no attempt claimed, for example because the
+    /// grant was refused after establishment. A claimed scope must instead stay
+    /// tracked until its termination is observed.
+    pub fn forget(&self, scope: &ScopeIdentity) -> Result<()> {
+        let mut scopes = self.scopes.lock().map_err(|_| poisoned())?;
+        if scopes
+            .get(&scope.scope_id)
+            .is_some_and(|tracked| tracked.lock().is_ok_and(|t| t.identity == *scope))
+        {
+            scopes.remove(&scope.scope_id);
+        }
+        Ok(())
     }
 
     fn read_back(
@@ -677,6 +749,8 @@ mod tests {
         after_priorities: Option<Edit>,
         after_children: Option<Edit>,
         after_listing: VecDeque<Edit>,
+        /// A mutation applied right after the first presence read of a PID.
+        after_presence_of: Option<(u32, Edit)>,
         /// Listings left before every further listing fails.
         listings_before_failure: Option<u32>,
         fail_children: bool,
@@ -698,11 +772,11 @@ mod tests {
 
     impl ProcessTable for Scripted {
         fn presence(&self, pid: u32) -> Result<Presence> {
-            let state = self.0.lock().unwrap();
+            let mut state = self.0.lock().unwrap();
             if state.fail_presence.contains(&pid) {
                 return Err(unavailable("scripted refusal"));
             }
-            Ok(match state.procs.get(&pid) {
+            let presence = match state.procs.get(&pid) {
                 Some(p) if p.zombie => Presence::Exited {
                     start_ticks: p.start,
                 },
@@ -714,7 +788,15 @@ mod tests {
                     start_ticks: p.start,
                 }),
                 None => Presence::Absent,
-            })
+            };
+            if state
+                .after_presence_of
+                .is_some_and(|(target, _)| target == pid)
+            {
+                let (_, edit) = state.after_presence_of.take().unwrap();
+                edit(&mut state);
+            }
+            Ok(presence)
         }
         fn group_members(&self, pgid: u32) -> Result<Vec<u32>> {
             let mut state = self.0.lock().unwrap();
@@ -1433,5 +1515,159 @@ mod tests {
         assert!(backend.binding(&altered).is_err());
         assert!(backend.observe_scope(&altered).is_err());
         assert!(backend.signal_scope(&altered, 15).is_err());
+    }
+
+    const OWNER: u32 = 50;
+
+    fn owner_process() -> ProcessIdentity {
+        ProcessIdentity {
+            boot_id: "boot".into(),
+            pid: OWNER,
+            start_ticks: 500,
+        }
+    }
+
+    /// The owner (PID 50) and its helper child (PID 100), each in its own group.
+    fn with_helper() -> ScopeTracker<Scripted> {
+        let table = Scripted::default();
+        table.with(|s| {
+            s.procs.insert(OWNER, proc(1, OWNER, 500));
+            s.procs.insert(ROOT, proc(OWNER, ROOT, 1_000));
+        });
+        ScopeTracker::new(table)
+    }
+
+    #[test]
+    fn launch_helper_must_be_a_live_child_of_the_running_owner() {
+        let tracker = with_helper();
+        assert_eq!(
+            tracker.helper(ROOT, &owner_process(), &Fixed).unwrap(),
+            root()
+        );
+        let refusals: [(Edit, ErrorCode); 7] = [
+            // Created by another process.
+            (
+                |s| s.procs.get_mut(&ROOT).unwrap().ppid = 1,
+                ErrorCode::Unauthorized,
+            ),
+            // The owner has exited, is a zombie, or its PID was reused.
+            (
+                |s| {
+                    s.procs.remove(&OWNER);
+                },
+                ErrorCode::Unauthorized,
+            ),
+            (
+                |s| s.procs.get_mut(&OWNER).unwrap().zombie = true,
+                ErrorCode::Unauthorized,
+            ),
+            (
+                |s| s.procs.get_mut(&OWNER).unwrap().start = 501,
+                ErrorCode::Unauthorized,
+            ),
+            // Another user's process.
+            (
+                |s| s.procs.get_mut(&ROOT).unwrap().uid = UID + 1,
+                ErrorCode::Unauthorized,
+            ),
+            // The helper is gone or unreaped.
+            (
+                |s| {
+                    s.procs.remove(&ROOT);
+                },
+                ErrorCode::ResourceControlUnavailable,
+            ),
+            (
+                |s| s.procs.get_mut(&ROOT).unwrap().zombie = true,
+                ErrorCode::ResourceControlUnavailable,
+            ),
+        ];
+        for (edit, code) in refusals {
+            let tracker = with_helper();
+            tracker.table.with(edit);
+            assert_eq!(
+                tracker
+                    .helper(ROOT, &owner_process(), &Fixed)
+                    .unwrap_err()
+                    .code,
+                code
+            );
+        }
+        // An owner from another boot, the authority itself and PID 0.
+        let mut previous = owner_process();
+        previous.boot_id = "other".into();
+        for (pid, owner) in [(ROOT, previous), (7, owner_process()), (0, owner_process())] {
+            assert_eq!(
+                tracker.helper(pid, &owner, &Fixed).unwrap_err().code,
+                ErrorCode::Unauthorized
+            );
+        }
+        // A refused observation is an error, never a missing helper.
+        let tracker = with_helper();
+        tracker.table.with(|s| {
+            s.fail_presence.insert(OWNER);
+        });
+        assert_eq!(
+            tracker
+                .helper(ROOT, &owner_process(), &Fixed)
+                .unwrap_err()
+                .code,
+            ErrorCode::ResourceControlUnavailable
+        );
+    }
+
+    #[test]
+    fn launch_helper_pid_reused_during_the_owner_check_yields_no_identity() {
+        let tracker = with_helper();
+        tracker.table.with(|s| {
+            s.after_presence_of = Some((ROOT, |s| {
+                s.procs.get_mut(&ROOT).unwrap().start = 2_000;
+            }));
+        });
+        assert_eq!(
+            tracker
+                .helper(ROOT, &owner_process(), &Fixed)
+                .unwrap_err()
+                .code,
+            ErrorCode::ResourceControlUnavailable
+        );
+    }
+
+    #[test]
+    fn a_root_gone_before_readback_leaves_nothing_tracked() {
+        let tracker = tracker();
+        tracker.table.with(|s| {
+            s.after_listing.push_back(|s| {
+                s.procs.remove(&ROOT);
+            })
+        });
+        assert_eq!(
+            establish(&tracker).unwrap_err().code,
+            ErrorCode::ResourceControlUnavailable
+        );
+        let scope = ScopeIdentity {
+            kind: ScopeKind::ObservedProcessGroup,
+            scope_id: format!("pg-{ROOT}-1000"),
+            root: root(),
+        };
+        assert_eq!(
+            tracker.observe(&scope, &Fixed).unwrap_err().code,
+            ErrorCode::ReconciliationRequired
+        );
+    }
+
+    #[test]
+    fn forgetting_removes_only_the_matching_unclaimed_scope() {
+        let tracker = tracker();
+        let scope = established(&tracker);
+        let mut other = scope.clone();
+        other.root.start_ticks += 1;
+        tracker.forget(&other).unwrap();
+        assert!(tracker.tracked(&scope).is_ok());
+        tracker.forget(&scope).unwrap();
+        assert_eq!(
+            tracker.tracked(&scope).err().unwrap().code,
+            ErrorCode::ReconciliationRequired
+        );
     }
 }

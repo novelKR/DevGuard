@@ -1,13 +1,19 @@
 use crate::{config::HostConfig, paths::AuthorityPaths};
 use devguard_client::{connect::connect_timeout, framing, peer, protocol::*};
-use devguard_contract::{validate_id, Error, ErrorCode, Result, PROTOCOL_VERSION};
-use devguard_core::{Authority, AuthorityStorage, Clock, ConsumerRole, PressureState};
+use devguard_contract::{
+    validate_id, AppliedResources, AttemptKey, AttemptPhase, Capability, Error, ErrorCode,
+    InstanceIdentity, ProcessIdentity, Result, ScopeIdentity, Secret, PROTOCOL_VERSION,
+};
+use devguard_core::{
+    Authority, AuthorityStorage, Backend as _, Clock, ConsumerRole, PressureState, Principal,
+    Registration, TrustedPeer,
+};
 use devguard_macos::{
-    BootClock, HostProbe, NativeBackend, NativeHost, NativeProbe, Sampler, SamplerOutcome,
-    SAMPLE_INTERVAL_MS,
+    BootClock, CpuReadback, HostProbe, NativeBackend, NativeHost, NativeProbe, Sampler,
+    SamplerOutcome, SAMPLE_INTERVAL_MS,
 };
 use serde_json::json;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::os::fd::AsRawFd;
 use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
@@ -20,19 +26,33 @@ use std::sync::{
 use std::thread::JoinHandle;
 use std::time::Duration;
 
-type NativeAuthority = Authority<NativeBackend, BootClock>;
+pub(crate) type NativeAuthority = Authority<NativeBackend, BootClock>;
 
 const NATIVE_REASON: &str = "native boot, process and host pressure evidence is observed; registration and execution remain closed until launch and reconciliation are installed";
+const LAUNCH_REASON: &str =
+    "native registration and fenced launch are open; admission follows host pressure and capacity";
 const UNSUPPORTED_REASON: &str = "native host evidence is unsupported on this platform; registration and execution remain closed";
 const FAILED_REASON: &str =
     "native host observation failed; registration and execution remain closed";
+
+/// How the service opens. The normal service uses the defaults.
+#[derive(Default)]
+pub(crate) struct Options {
+    /// Open registration and fenced launch. DG1-C05 keeps this off in the
+    /// normal service until DG1-C06 ships reconciliation with it.
+    pub launch: bool,
+    /// A substitute host probe for isolated fixtures, which cannot assume the
+    /// real host is free of pressure.
+    pub probe: Option<Box<dyn HostProbe>>,
+}
 
 /// Exclusive storage, activated with actual host evidence when it is available.
 enum Evidence {
     Native {
         authority: Arc<Mutex<NativeAuthority>>,
         clock: BootClock,
-        probe: Option<NativeProbe>,
+        backend: NativeBackend,
+        probe: Option<Box<dyn HostProbe>>,
     },
     Closed {
         _storage: AuthorityStorage,
@@ -47,6 +67,7 @@ pub struct Server {
     uid: u32,
     status: ServiceStatus,
     evidence: Evidence,
+    launcher: Option<Launcher>,
 }
 
 /// Service receipts are JSON lines on stderr; they never include credentials.
@@ -79,6 +100,7 @@ fn activate(
     storage: AuthorityStorage,
     config: &HostConfig,
     paths: &AuthorityPaths,
+    substitute: Option<Box<dyn HostProbe>>,
 ) -> Result<(Evidence, &'static str)> {
     let host = match NativeHost::open() {
         Ok(host) => host,
@@ -94,12 +116,15 @@ fn activate(
     };
     let mut volumes = vec![paths.state()];
     volumes.extend(config.projects.values().map(|project| project.root.clone()));
-    let probe = match NativeProbe::new(volumes.clone()) {
-        Ok(probe) => probe,
-        Err(error) => {
-            receipt(json!({"event": "native_host_unavailable", "error": error}));
-            return Ok((Evidence::Closed { _storage: storage }, FAILED_REASON));
-        }
+    let probe: Box<dyn HostProbe> = match substitute {
+        Some(probe) => probe,
+        None => match NativeProbe::new(volumes.clone()) {
+            Ok(probe) => Box::new(probe),
+            Err(error) => {
+                receipt(json!({"event": "native_host_unavailable", "error": error}));
+                return Ok((Evidence::Closed { _storage: storage }, FAILED_REASON));
+            }
+        },
     };
     let policy = config.policy(host.capacity(), paths.uid())?;
     let work_capacity = policy.work_capacity()?;
@@ -118,6 +143,7 @@ fn activate(
         Evidence::Native {
             authority: Arc::new(Mutex::new(authority)),
             clock: host.clock(),
+            backend: host.backend(),
             probe: Some(probe),
         },
         NATIVE_REASON,
@@ -235,13 +261,242 @@ fn unauthorized() -> Error {
         "caller credential or role is not authorized",
     )
 }
+fn fenced(message: &'static str) -> Error {
+    Error::new(ErrorCode::InvalidTransition, message)
+}
+fn poisoned() -> Error {
+    unavailable("authority state is unavailable")
+}
+
+/// The capabilities of a service with registration and fenced launch open.
+fn launch_capabilities() -> BTreeSet<Capability> {
+    BTreeSet::from([
+        Capability::DurableAdmission,
+        Capability::FencedLaunch,
+        Capability::PerResourceEvidence,
+        Capability::StaticControlReservations,
+        Capability::MacosCooperative,
+    ])
+}
+
+/// A consumer's authenticated credential, kept only to register its instance.
+struct ConsumerCredential {
+    id: String,
+    generation: String,
+    secret: Secret,
+}
+
+/// Instances registered in this service lifetime, by consumer, generation and
+/// instance ID. A helper finds its owner here, so after a restart an owner
+/// must register again before any helper of its can proceed.
+type Principals = BTreeMap<(String, String, String), Principal>;
+
+/// The native authority as sessions use it once registration and launch are open.
+#[derive(Clone)]
+struct Launcher {
+    authority: Arc<Mutex<NativeAuthority>>,
+    backend: NativeBackend,
+    principals: Arc<Mutex<Principals>>,
+}
+
+impl Launcher {
+    fn authority(&self) -> Result<std::sync::MutexGuard<'_, NativeAuthority>> {
+        self.authority.lock().map_err(|_| poisoned())
+    }
+
+    /// Register the OS-observed peer with its native start identity.
+    fn register(
+        &self,
+        caller: PeerIdentity,
+        consumer: &ConsumerCredential,
+        instance_id: String,
+    ) -> Result<Principal> {
+        let process = self
+            .backend
+            .process_identity(caller.pid)?
+            .ok_or_else(unauthorized)?;
+        let instance = InstanceIdentity {
+            instance_id: instance_id.clone(),
+            process,
+        };
+        let principal = self.authority()?.register(
+            TrustedPeer {
+                uid: caller.uid,
+                pid: caller.pid,
+            },
+            Registration {
+                consumer_id: consumer.id.clone(),
+                generation: consumer.generation.clone(),
+                instance: instance.clone(),
+                credential: consumer.secret.clone(),
+            },
+        )?;
+        self.principals.lock().map_err(|_| poisoned())?.insert(
+            (
+                consumer.id.clone(),
+                consumer.generation.clone(),
+                instance_id,
+            ),
+            principal.clone(),
+        );
+        receipt(json!({"event": "registered", "consumer": consumer.id, "instance": instance}));
+        Ok(principal)
+    }
+
+    /// Verify and authorize a helper presenting its owner's launch grant.
+    /// Every presentation, including a refusal before any claim, yields one
+    /// receipt with how long the authorization took.
+    fn authorize_helper(
+        &self,
+        caller: PeerIdentity,
+        key: AttemptKey,
+        instance_id: String,
+        permit: Secret,
+    ) -> Result<LaunchAuthorization> {
+        let began = std::time::Instant::now();
+        let mut trail = HelperTrail::default();
+        let result = self.authorize_under_lock(caller, &key, instance_id, &permit, &mut trail);
+        let event = match &result {
+            Ok(_) if trail.replayed => "helper_replayed",
+            Ok(_) => "helper_authorized",
+            Err(_) => "helper_refused",
+        };
+        receipt(json!({"event": event, "key": key, "helper": trail.helper,
+                       "claimed": trail.claimed, "scope": trail.scope, "applied": trail.applied,
+                       "cpu": trail.cpu, "may_exec": result.as_ref().ok().map(|a| a.may_exec),
+                       "error": result.as_ref().err(), "stopped": trail.stopped,
+                       "authorization_ms": began.elapsed().as_millis() as u64}));
+        result
+    }
+
+    /// Every check and transition runs under one authority lock, so no
+    /// cancellation, reconciliation or other helper interleaves, and the owner
+    /// is still running when the grant is claimed.
+    fn authorize_under_lock(
+        &self,
+        caller: PeerIdentity,
+        key: &AttemptKey,
+        instance_id: String,
+        permit: &Secret,
+        trail: &mut HelperTrail,
+    ) -> Result<LaunchAuthorization> {
+        key.validate()?;
+        validate_id(&instance_id)?;
+        let mut authority = self.authority()?;
+        let owner = self
+            .principals
+            .lock()
+            .map_err(|_| poisoned())?
+            .get(&(
+                key.consumer_id.clone(),
+                key.consumer_generation.clone(),
+                instance_id,
+            ))
+            .cloned()
+            .ok_or_else(unauthorized)?;
+        // Only the running owner can have created this helper.
+        let helper = self
+            .backend
+            .helper_process(caller.pid, &owner.instance().process)?;
+        trail.helper = Some(helper.clone());
+        let record = authority.verify_launch(&owner, key, permit)?;
+        match (&record.scope, record.phase) {
+            (Some(scope), _) if scope.root != helper => {
+                return Err(fenced("the launch grant was claimed by another helper"));
+            }
+            // A replay after a lost reply is never a second authorization.
+            (Some(_), AttemptPhase::RunAuthorized) => {
+                trail.claimed = true;
+                trail.replayed = true;
+                let decision = authority.authorize_run(&owner, key, permit, &helper)?;
+                return Ok(LaunchAuthorization {
+                    attempt: decision.attempt,
+                    may_exec: decision.may_exec,
+                });
+            }
+            (Some(_), AttemptPhase::ScopeBound) | (_, AttemptPhase::LaunchCommitted) => {}
+            _ => return Err(fenced("the launch grant is fenced")),
+        }
+        let (Some(plan), Some(reservation)) = (&record.plan, &record.reservation) else {
+            return Err(fenced("the launch grant has no reservation"));
+        };
+        // Establish (nice and readback) before the claim: a presenter that
+        // fails establishment never uses up the grant.
+        let established = self.backend.establish_scope(
+            key,
+            owner.instance(),
+            &helper,
+            plan,
+            reservation.quantities,
+        )?;
+        trail.scope = Some(established.scope.clone());
+        trail.applied = Some(established.applied.clone());
+        trail.cpu = established.cpu;
+        if let Err(error) = authority.claim_launch(&owner, key, permit, &established.scope) {
+            // Nothing claimed this scope, so nothing reconciles through it.
+            let _ = self.backend.forget_unclaimed(&established.scope);
+            return Err(error);
+        }
+        trail.claimed = true;
+        let decision = authority
+            .bind_scope(&owner, key, permit, &established.scope)
+            .and_then(|_| authority.authorize_run(&owner, key, permit, &helper));
+        match decision {
+            Ok(decision) => Ok(LaunchAuthorization {
+                attempt: decision.attempt,
+                may_exec: decision.may_exec,
+            }),
+            Err(error) => {
+                drop(authority);
+                // The claimed helper must not continue. Its scope stays charged
+                // and is reconciled like any other until its end is observed.
+                trail.stopped = Some(
+                    match self.backend.signal_scope(&established.scope, libc::SIGKILL) {
+                        Ok(delivered) => json!(delivered),
+                        Err(failure) => json!({"error": failure}),
+                    },
+                );
+                Err(error)
+            }
+        }
+    }
+}
+
+/// What a helper presentation reached, for its single receipt.
+#[derive(Default)]
+struct HelperTrail {
+    helper: Option<ProcessIdentity>,
+    scope: Option<ScopeIdentity>,
+    applied: Option<AppliedResources>,
+    cpu: Option<CpuReadback>,
+    claimed: bool,
+    replayed: bool,
+    stopped: Option<serde_json::Value>,
+}
 
 impl Server {
     pub fn open(paths: &AuthorityPaths) -> Result<Self> {
+        Self::open_with(paths, Options::default())
+    }
+
+    pub(crate) fn open_with(paths: &AuthorityPaths, options: Options) -> Result<Self> {
         paths.validate_existing()?;
         let config = HostConfig::load(paths)?;
         let storage = AuthorityStorage::open(&paths.journal())?;
-        let (evidence, reason) = activate(storage, &config, paths)?;
+        let (evidence, mut reason) = activate(storage, &config, paths, options.probe)?;
+        let launcher = match &evidence {
+            Evidence::Native {
+                authority, backend, ..
+            } if options.launch => {
+                reason = LAUNCH_REASON;
+                Some(Launcher {
+                    authority: authority.clone(),
+                    backend: backend.clone(),
+                    principals: Arc::default(),
+                })
+            }
+            _ => None,
+        };
         paths.prepare_runtime()?;
         let socket = paths.socket();
         match fs::symlink_metadata(&socket) {
@@ -289,8 +544,8 @@ impl Server {
             .map_err(|_| unavailable("cannot observe bound endpoint"))?;
         let status = ServiceStatus {
             storage_validated: true,
-            registration_ready: false,
-            execution_ready: false,
+            registration_ready: launcher.is_some(),
+            execution_ready: launcher.is_some(),
             reason: reason.into(),
             configuration_fingerprint: config.fingerprint()?,
         };
@@ -302,7 +557,17 @@ impl Server {
             uid: paths.uid(),
             status,
             evidence,
+            launcher,
         })
+    }
+
+    /// The native authority, for isolated fixtures that wait on its pressure.
+    #[cfg(any(test, feature = "test-fixtures"))]
+    pub(crate) fn native_authority(&self) -> Option<Arc<Mutex<NativeAuthority>>> {
+        match &self.evidence {
+            Evidence::Native { authority, .. } => Some(authority.clone()),
+            Evidence::Closed { .. } => None,
+        }
     }
 
     pub fn run(mut self, stop: Arc<AtomicBool>) -> Result<()> {
@@ -313,6 +578,7 @@ impl Server {
                 authority,
                 clock,
                 probe,
+                ..
             } => probe.take().map(|probe| {
                 let (authority, clock, stop) = (authority.clone(), clock.clone(), stop.clone());
                 let (finished, done) = std::sync::mpsc::channel::<()>();
@@ -347,11 +613,12 @@ impl Server {
                     let config = self.config.clone();
                     let uid = self.uid;
                     let status = self.status.clone();
+                    let launcher = self.launcher.clone();
                     let stop = stop.clone();
                     if let Ok(worker) = std::thread::Builder::new()
                         .name("devguard-session".into())
                         .spawn(move || {
-                            let _ = session(stream, uid, &config, &status, &stop);
+                            let _ = session(stream, uid, &config, &status, launcher, &stop);
                         })
                     {
                         workers.push(worker);
@@ -422,7 +689,10 @@ fn digest_matches(left: &str, right: &str) -> bool {
             == 0
 }
 
-fn authenticate(config: &HostConfig, credential: CallerCredential) -> Result<SessionRole> {
+fn authenticate(
+    config: &HostConfig,
+    credential: CallerCredential,
+) -> Result<(SessionRole, Option<ConsumerCredential>)> {
     match credential {
         CallerCredential::Consumer {
             consumer_id,
@@ -440,18 +710,45 @@ fn authenticate(config: &HostConfig, credential: CallerCredential) -> Result<Ses
             {
                 return Err(unauthorized());
             }
-            Ok(match consumer.role {
+            let role = match consumer.role {
                 ConsumerRole::Workload => SessionRole::Workload,
                 ConsumerRole::ControlService => SessionRole::ControlService,
-            })
+            };
+            Ok((
+                role,
+                Some(ConsumerCredential {
+                    id: consumer_id,
+                    generation,
+                    secret,
+                }),
+            ))
         }
         CallerCredential::Administrator { secret } => {
             if !digest_matches(&config.admin_credential_sha256, &secret.digest()) {
                 return Err(unauthorized());
             }
-            Ok(SessionRole::Administrator)
+            Ok((SessionRole::Administrator, None))
         }
     }
+}
+
+/// What one session has established so far.
+#[derive(Default)]
+struct Session {
+    greeted: bool,
+    role: Option<SessionRole>,
+    consumer: Option<ConsumerCredential>,
+    principal: Option<Principal>,
+    /// A helper session presents one grant and makes no other request.
+    helper: bool,
+}
+
+struct Context<'a> {
+    uid: u32,
+    caller: PeerIdentity,
+    config: &'a HostConfig,
+    status: &'a ServiceStatus,
+    launcher: Option<&'a Launcher>,
 }
 
 fn session(
@@ -459,6 +756,7 @@ fn session(
     uid: u32,
     config: &HostConfig,
     status: &ServiceStatus,
+    launcher: Option<Launcher>,
     stop: &AtomicBool,
 ) -> Result<()> {
     // Framing uses poll and per-call nonblocking I/O with an absolute deadline;
@@ -467,9 +765,15 @@ fn session(
     if caller.uid != uid {
         return Err(unauthorized());
     }
+    let context = Context {
+        uid,
+        caller,
+        config,
+        status,
+        launcher: launcher.as_ref(),
+    };
     let timeout = Duration::from_millis(FRAME_DEADLINE_MS);
-    let mut greeted = false;
-    let mut role = None;
+    let mut state = Session::default();
     while !stop.load(Ordering::Relaxed) {
         let frame: Frame<Request> = framing::read_frame(&mut stream, timeout)?;
         if frame.version != WIRE_VERSION || frame.request_id == 0 {
@@ -491,63 +795,8 @@ fn session(
             )?;
             return Ok(());
         }
-        let response: Result<Response> = (|| match frame.body {
-            Request::Hello { compatibility } => {
-                if greeted {
-                    return Err(Error::new(
-                        ErrorCode::InvalidTransition,
-                        "session already negotiated",
-                    ));
-                }
-                let capabilities = BTreeSet::new();
-                compatibility.check(PROTOCOL_VERSION, &capabilities)?;
-                greeted = true;
-                Ok(Response::Hello(Hello {
-                    protocol: PROTOCOL_VERSION,
-                    authority: PeerIdentity {
-                        uid,
-                        pid: std::process::id(),
-                    },
-                    caller,
-                    capabilities,
-                    max_frame_bytes: MAX_FRAME_BYTES,
-                    frame_deadline_ms: FRAME_DEADLINE_MS,
-                    max_sessions: MAX_SESSIONS,
-                }))
-            }
-            Request::Authenticate { credential } => {
-                if !greeted {
-                    return Err(unauthorized());
-                }
-                if role.is_some() {
-                    return Err(Error::new(
-                        ErrorCode::InvalidTransition,
-                        "session already authenticated",
-                    ));
-                }
-                let authenticated = authenticate(config, credential)?;
-                role = Some(authenticated);
-                Ok(Response::Authenticated {
-                    role: authenticated,
-                })
-            }
-            Request::Status => {
-                if role.is_none() {
-                    return Err(unauthorized());
-                }
-                Ok(Response::Status(status.clone()))
-            }
-            Request::Register { instance_id } => {
-                validate_id(&instance_id)?;
-                match role {
-                    Some(SessionRole::Workload | SessionRole::ControlService) => Err(unavailable(
-                        "native registration is not ready; no principal or budget was issued",
-                    )),
-                    _ => Err(unauthorized()),
-                }
-            }
-        })();
-        let body = response.unwrap_or_else(|error| Response::Error(error.into()));
+        let body = handle(&mut state, frame.body, &context)
+            .unwrap_or_else(|error| Response::Error(error.into()));
         framing::write_frame(
             &mut stream,
             &Frame {
@@ -559,6 +808,154 @@ fn session(
         )?;
     }
     Ok(())
+}
+
+/// The launcher and the instance registered in this session.
+fn registered<'a>(
+    session: &'a Session,
+    context: &Context<'a>,
+) -> Result<(&'a Launcher, &'a Principal)> {
+    match (context.launcher, &session.principal) {
+        (Some(launcher), Some(principal)) => Ok((launcher, principal)),
+        (None, _) if session.consumer.is_some() => Err(unavailable(
+            "native registration is not ready; no principal or budget was issued",
+        )),
+        _ => Err(unauthorized()),
+    }
+}
+
+fn handle(session: &mut Session, request: Request, context: &Context<'_>) -> Result<Response> {
+    if session.helper {
+        return Err(Error::new(
+            ErrorCode::Unauthorized,
+            "a helper session makes no other request",
+        ));
+    }
+    match request {
+        Request::Hello { compatibility } => {
+            if session.greeted {
+                return Err(Error::new(
+                    ErrorCode::InvalidTransition,
+                    "session already negotiated",
+                ));
+            }
+            let capabilities = if context.launcher.is_some() {
+                launch_capabilities()
+            } else {
+                BTreeSet::new()
+            };
+            compatibility.check(PROTOCOL_VERSION, &capabilities)?;
+            session.greeted = true;
+            Ok(Response::Hello(Hello {
+                protocol: PROTOCOL_VERSION,
+                authority: PeerIdentity {
+                    uid: context.uid,
+                    pid: std::process::id(),
+                },
+                caller: context.caller,
+                capabilities,
+                max_frame_bytes: MAX_FRAME_BYTES,
+                frame_deadline_ms: FRAME_DEADLINE_MS,
+                max_sessions: MAX_SESSIONS,
+            }))
+        }
+        Request::Authenticate { credential } => {
+            if !session.greeted {
+                return Err(unauthorized());
+            }
+            if session.role.is_some() {
+                return Err(Error::new(
+                    ErrorCode::InvalidTransition,
+                    "session already authenticated",
+                ));
+            }
+            let (role, consumer) = authenticate(context.config, credential)?;
+            session.role = Some(role);
+            session.consumer = consumer;
+            Ok(Response::Authenticated { role })
+        }
+        Request::Status => {
+            if session.role.is_none() {
+                return Err(unauthorized());
+            }
+            Ok(Response::Status(context.status.clone()))
+        }
+        Request::Register { instance_id } => {
+            validate_id(&instance_id)?;
+            let Some(consumer) = &session.consumer else {
+                return Err(unauthorized());
+            };
+            let Some(launcher) = context.launcher else {
+                return Err(unavailable(
+                    "native registration is not ready; no principal or budget was issued",
+                ));
+            };
+            if session.principal.is_some() {
+                return Err(Error::new(
+                    ErrorCode::InvalidTransition,
+                    "this session already registered its instance",
+                ));
+            }
+            let principal = launcher.register(context.caller, consumer, instance_id)?;
+            let instance = principal.instance().clone();
+            session.principal = Some(principal);
+            Ok(Response::Registered { instance })
+        }
+        Request::Admit { request } => {
+            let (launcher, principal) = registered(session, context)?;
+            let record = launcher.authority()?.admit(principal, request)?;
+            receipt(
+                json!({"event": "admission", "key": record.key, "phase": record.phase,
+                           "denial": record.denial,
+                           "quantities": record.reservation.as_ref().map(|r| r.quantities)}),
+            );
+            Ok(Response::Attempt(record))
+        }
+        Request::BeginLaunch { key } => {
+            let (launcher, principal) = registered(session, context)?;
+            let decision = launcher.authority()?.begin_launch(principal, &key)?;
+            receipt(
+                json!({"event": "launch_committed", "key": decision.attempt.key,
+                           "phase": decision.attempt.phase,
+                           "permit_issued": decision.permit.is_some()}),
+            );
+            Ok(Response::LaunchGranted(LaunchGrant {
+                attempt: decision.attempt,
+                permit: decision.permit,
+            }))
+        }
+        Request::Lookup { key } => {
+            let (launcher, principal) = registered(session, context)?;
+            let record = launcher.authority()?.lookup(principal, &key)?;
+            Ok(Response::Attempt(record))
+        }
+        Request::Cancel { key } => {
+            let (launcher, principal) = registered(session, context)?;
+            let record = launcher.authority()?.cancel(principal, &key)?;
+            receipt(json!({"event": "cancelled", "key": record.key, "phase": record.phase}));
+            Ok(Response::Attempt(record))
+        }
+        Request::Launch {
+            key,
+            instance_id,
+            permit,
+        } => {
+            // A helper is not a caller: it presents only the grant.
+            if !session.greeted || session.role.is_some() {
+                return Err(unauthorized());
+            }
+            session.helper = true;
+            let launcher = context
+                .launcher
+                .ok_or_else(|| unavailable("fenced launch is not open"))?;
+            Ok(Response::LaunchAuthorized(launcher.authorize_helper(
+                context.caller,
+                key,
+                instance_id,
+                permit,
+            )?))
+        }
+    }
 }
 
 #[cfg(test)]
@@ -848,6 +1245,207 @@ mod tests {
         assert!(!fixture.paths.socket().exists());
     }
 
+    /// Sessions of a service with registration and fenced launch open.
+    #[cfg(target_os = "macos")]
+    mod launch {
+        use super::*;
+        use crate::fixture::{TestAuthority, CONSUMER};
+        use devguard_contract::{
+            AdmissionRequest, AttemptKey, Budget, Capability, Compatibility, ResourceIntent,
+            ResourceLevels, Secret,
+        };
+
+        struct Open {
+            authority: TestAuthority,
+            _directory: tempfile::TempDir,
+        }
+
+        fn open() -> Open {
+            let directory = tempfile::Builder::new()
+                .prefix("dg-s-")
+                .tempdir_in("/private/tmp")
+                .unwrap();
+            let authority = TestAuthority::start(directory.path()).unwrap();
+            Open {
+                authority,
+                _directory: directory,
+            }
+        }
+
+        fn connect(open: &Open) -> Client {
+            let compatibility = Compatibility {
+                minimum_protocol: 1,
+                maximum_protocol: 1,
+                required: BTreeSet::from([Capability::DurableAdmission, Capability::FencedLaunch]),
+            };
+            Client::connect(
+                &open.authority.socket(),
+                open.authority.uid(),
+                compatibility,
+            )
+            .unwrap()
+        }
+
+        fn consumer(open: &Open, instance: &str) -> Client {
+            let mut client = connect(open);
+            client
+                .authenticate(open.authority.consumer().unwrap())
+                .unwrap();
+            client.register(instance.into()).unwrap();
+            client
+        }
+
+        fn key(open: &Open, attempt: &str) -> AttemptKey {
+            AttemptKey {
+                consumer_id: CONSUMER.into(),
+                consumer_generation: open.authority.generation(),
+                attempt_id: attempt.into(),
+            }
+        }
+
+        #[test]
+        fn launch_open_service_advertises_fenced_launch_and_readiness() {
+            let open = open();
+            let mut client = connect(&open);
+            assert!(client
+                .hello
+                .capabilities
+                .contains(&Capability::FencedLaunch));
+            client
+                .authenticate(open.authority.consumer().unwrap())
+                .unwrap();
+            let status = client.status().unwrap();
+            assert!(status.registration_ready && status.execution_ready);
+            assert_eq!(status.reason, LAUNCH_REASON);
+        }
+
+        #[test]
+        fn launch_registration_binds_the_observed_peer_and_needs_a_consumer() {
+            let open = open();
+            let mut anonymous = connect(&open);
+            assert_eq!(
+                anonymous.register("anonymous".into()).unwrap_err().code,
+                ErrorCode::Unauthorized
+            );
+            let admin = Secret::new(
+                String::from_utf8(
+                    read_private(
+                        &open.authority.paths().admin_credential(),
+                        open.authority.uid(),
+                        64,
+                    )
+                    .unwrap(),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+            let mut administrator = connect(&open);
+            administrator
+                .authenticate(CallerCredential::Administrator { secret: admin })
+                .unwrap();
+            assert_eq!(
+                administrator.register("admin".into()).unwrap_err().code,
+                ErrorCode::Unauthorized
+            );
+            let mut client = connect(&open);
+            client
+                .authenticate(open.authority.consumer().unwrap())
+                .unwrap();
+            let instance = client.register("peer".into()).unwrap();
+            // The identity is the kernel's observation of this very process.
+            assert_eq!(instance.process.pid, std::process::id());
+            assert_eq!(
+                Some(instance.process.clone()),
+                devguard_macos::process_identity(&instance.process.boot_id, std::process::id())
+                    .unwrap()
+            );
+            assert_eq!(
+                client.register("second".into()).unwrap_err().code,
+                ErrorCode::InvalidTransition
+            );
+            // Another session must register before acting for an instance.
+            let mut unregistered = connect(&open);
+            unregistered
+                .authenticate(open.authority.consumer().unwrap())
+                .unwrap();
+            assert_eq!(
+                unregistered.lookup(key(&open, "any")).unwrap_err().code,
+                ErrorCode::Unauthorized
+            );
+        }
+
+        #[test]
+        fn launch_attempts_belong_to_the_registered_instance() {
+            let open = open();
+            open.authority
+                .wait_until_admitting(Duration::from_secs(10))
+                .unwrap();
+            let mut owner = consumer(&open, "owner");
+            let request = AdmissionRequest {
+                key: key(&open, "owned"),
+                execution_digest: devguard_contract::digest_bytes(b"session test"),
+                intent: ResourceIntent {
+                    profile: "interactive".into(),
+                    requested: Budget {
+                        cpu_milli: 500,
+                        memory_bytes: 64 * 1024 * 1024,
+                        tasks: 4,
+                    },
+                    minimum: ResourceLevels::MACOS,
+                },
+            };
+            assert!(owner.admit(request).unwrap().reservation.is_some());
+            let mut other = consumer(&open, "other");
+            for code in [
+                other.lookup(key(&open, "owned")).unwrap_err().code,
+                other.cancel(key(&open, "owned")).unwrap_err().code,
+                other.begin_launch(key(&open, "owned")).unwrap_err().code,
+            ] {
+                assert_eq!(code, ErrorCode::Unauthorized);
+            }
+            let grant = owner.begin_launch(key(&open, "owned")).unwrap();
+            assert!(grant.permit.is_some());
+            assert!(owner
+                .begin_launch(key(&open, "owned"))
+                .unwrap()
+                .permit
+                .is_none());
+        }
+
+        #[test]
+        fn launch_helper_session_presents_one_grant_and_nothing_else() {
+            let open = open();
+            let permit = Secret::new("d".repeat(64)).unwrap();
+            // A caller cannot present a grant on its authenticated session.
+            let mut caller = consumer(&open, "caller");
+            assert_eq!(
+                caller
+                    .launch(key(&open, "x"), "caller".into(), permit.clone())
+                    .unwrap_err()
+                    .code,
+                ErrorCode::Unauthorized
+            );
+            // The authority process is never a helper, and after presenting
+            // a grant a session can make no other request.
+            let mut helper = connect(&open);
+            assert_eq!(
+                helper
+                    .launch(key(&open, "x"), "caller".into(), permit)
+                    .unwrap_err()
+                    .code,
+                ErrorCode::Unauthorized
+            );
+            assert_eq!(helper.status().unwrap_err().code, ErrorCode::Unauthorized);
+            assert_eq!(
+                helper
+                    .authenticate(open.authority.consumer().unwrap())
+                    .unwrap_err()
+                    .code,
+                ErrorCode::Unauthorized
+            );
+        }
+    }
+
     #[cfg(target_os = "macos")]
     mod native {
         use super::*;
@@ -940,7 +1538,7 @@ mod tests {
                 let paths = AuthorityPaths::fixture(directory.path());
                 let config = config::initialize(&paths).unwrap();
                 let storage = AuthorityStorage::open(&paths.journal()).unwrap();
-                let (evidence, reason) = activate(storage, &config, &paths).unwrap();
+                let (evidence, reason) = activate(storage, &config, &paths, None).unwrap();
                 assert_eq!(reason, NATIVE_REASON);
                 let Evidence::Native {
                     authority, clock, ..

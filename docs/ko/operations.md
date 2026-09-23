@@ -2,14 +2,14 @@
 
 [English](../operations.md) | [한국어](operations.md)
 
-C01은 명시 bootstrap·고정 저장소를, C02는 인증된 로컬 transport를, C03은 native macOS boot·프로세스·호스트 압력 증거를, C04는 후속 launch helper를 위한 협조적 정책 readback과 scope 증거를 제공한다. PR과 병합 후 main 전달 증거는 구현과 별도로 추적한다. devguardd serve는 이 증거로 journal을 활성화하는 foreground 서비스를 실행하지만 wire 등록·Principal·자원 lease·실행은 P3가 launch와 대조를 제공할 때까지 닫혀 있다. 정상 authority는 현재 macOS만 지원하며 Linux CI는 이식 가능한 계약과 제한된 fixture를 검사한다. DG-LINUX 제어 자격을 부여하지 않는다.
+C01은 명시 bootstrap·고정 저장소를, C02는 인증된 로컬 transport를, C03은 native macOS boot·프로세스·호스트 압력 증거를, C04는 협조적 정책 readback과 scope 증거를, C05는 fenced launch helper를 제공한다. PR과 병합 후 main 전달 증거는 구현과 별도로 추적한다. devguardd serve는 이 증거로 journal을 활성화하는 foreground 서비스를 실행한다. 정상 서비스의 wire 등록·Principal·자원 lease·실행은 DG1-C06이 대조를 launch와 함께 제공할 때까지 닫혀 있다. 정상 authority는 현재 macOS만 지원하며 Linux CI는 이식 가능한 계약과 제한된 fixture를 검사한다. DG-LINUX 제어 자격을 부여하지 않는다.
 
 ## 제공 명령
 
 Bootstrap에서는 Rust 1.95.0과 단일 Cargo job을 사용한다.
 
 ```sh
-CARGO_BUILD_JOBS=1 cargo build --locked -p devguard-daemon
+CARGO_BUILD_JOBS=1 cargo build --locked -p devguard-daemon -p devguard-launch
 target/debug/devguardd paths
 target/debug/devguardd init
 target/debug/devguardd check
@@ -36,7 +36,7 @@ Native 증거를 사용할 수 있으면 `serve`는 관측한 호스트로 정�
 
 Native 증거가 없는 플랫폼이거나 macOS 관측이 실패하면 `serve`는 저장소만 보유한 닫힌 동작을 유지하고 어느 경우인지 보고한다.
 
-인증된 status는 storage_validated: true, registration_ready: false, execution_ready: false, 이유와 설정 fingerprint를 보고한다. 이유는 활성 native 증거, 미지원 플랫폼, native 관측 실패를 구분한다. 일반 실행·설치·LaunchAgent·repair는 후속 작업이다. 설정이나 handshake 성공만으로 명령이 관리되지는 않으며 bootstrap 빌드는 자기 적용 증거가 아니다. 영속 서비스는 제거 가능한 target 경로를 사용하지 않는다. 보호된 설치는 C09의 범위다.
+인증된 status는 storage_validated: true, registration_ready: false, execution_ready: false, 이유와 설정 fingerprint를 보고한다. 이유는 활성 native 증거, 미지원 플랫폼, native 관측 실패를 구분한다. Launch 경로를 위해 `devguard-launch`를 빌드하지만 정상 서비스는 C05에서 그 경로를 열지 않는다. 일반 실행·설치·LaunchAgent·repair는 후속 작업이다. 설정이나 handshake 성공만으로 명령이 관리되지는 않으며 bootstrap 빌드는 자기 적용 증거가 아니다. 영속 서비스는 제거 가능한 target 경로를 사용하지 않는다. 보호된 설치는 C09의 범위다.
 
 ## 정상 소유권과 경로
 
@@ -87,19 +87,20 @@ Client library는 정상 endpoint에 연결하고 OS가 관측한 authority UID/
 
 Wire는 4-byte 길이, JSON payload 최대 64 KiB, 활성 세션 최대 32개와 frame read/write마다 절대 250 ms 기한을 사용한다. 다음 frame을 기다리는 idle 시간도 포함하므로 idle 연결은 만료된다. 나중에 별도 작업을 명시적으로 시작할 때 새 인증 세션을 사용한다. Client가 자동으로 재접속하거나 재시도하지는 않는다. Poll·nonblocking descriptor I/O는 부분 frame·느린 reader·마지막 응답 버퍼를 처리하고 peer 종료 뒤 Darwin timeout 옵션을 바꾸지 않는다. 응답 유실로 실행·미실행·자원 회수를 입증했다고 판단하지 않는다.
 
-Private-FD API는 시작 metadata에 descriptor 식별자만 전달한다. Receiver는 이후 exec 전에 자격 FD를 소비하고 닫으며 실제 subprocess로 이 경계를 시험한다. Secret을 argv·환경·debug·payload 상속 descriptor에 두면 안 된다. 이 시험은 C05 helper 권한이나 사용자 프로그램 시작의 증거가 아니다. OS UID/PID 관측을 제공하며 C03은 authority 안에서 이를 native boot/start 정체성과 결합한다. Wire는 P3까지 instance 등록을 계속 거절한다. 인증된 caller는 Principal·lease·실행 권한을 받을 수 없다.
+Private-FD API는 시작 metadata에 descriptor 식별자만 전달한다. Receiver는 이후 exec 전에 자격 FD를 소비하고 닫으며 실제 subprocess로 이 경계를 시험한다. Secret을 argv·환경·debug·payload 상속 descriptor에 두면 안 된다. 이 시험은 C05 helper 권한이나 사용자 프로그램 시작의 증거가 아니다. OS UID/PID 관측을 제공하며 C03은 authority 안에서 이를 native boot/start 정체성과 결합한다. 정상 서비스는 DG1-C06까지 instance 등록을 계속 거절한다. 정상 서비스의 인증된 caller는 Principal·lease·실행 권한을 받을 수 없다.
 
 SDK 조회 예제는 CARGO_BUILD_JOBS=1 cargo build --locked -p devguard-client --example inspect로 빌드한다. 인터페이스는 inspect SOCKET UID CONSUMER GENERATION CREDENTIAL_FD다. 부모가 전용 상속 FD로 secret byte를 제공해야 하며 인자는 FD 번호와 비밀이 아닌 연결 metadata만 전달한다. 관측 peer와 인증된 status를 출력하는 예제이며 후속 일반 실행 CLI는 아니다.
 
 ## 호환성·검사·복귀
 
-Core의 AuthorityStorage는 기존 배타 잠금을 보유하고 schema 1 journal을 검사하되 attempt 상태를 바꾸지 않는다. 실제 Backend·Clock으로 활성화할 때 boot 기반 복구와 같은 transaction 안에서 회계를 다시 검증한다. 기존 Authority::open의 복구 동작과 DG-0 시험을 유지하며 C01–C04는 journal schema·contract 직렬화·wire protocol을 바꾸지 않는다. 새 로컬 protocol은 미지 필드·버전·필수 capability 미지원을 엄격히 거절하며 필드 추가도 명시적 호환성 시험이 필요하다.
+Core의 AuthorityStorage는 기존 배타 잠금을 보유하고 schema 1 journal을 검사하되 attempt 상태를 바꾸지 않는다. 실제 Backend·Clock으로 활성화할 때 boot 기반 복구와 같은 transaction 안에서 회계를 다시 검증한다. 기존 Authority::open의 복구 동작과 DG-0 시험을 유지하며 C01–C05는 journal schema와 contract 직렬화를 바꾸지 않는다. C05는 서비스가 fenced launch를 광고한 뒤에만 client가 사용하는 wire 요청과 응답을 추가한다. 새 로컬 protocol은 미지 필드·버전·필수 capability 미지원을 엄격히 거절하며 필드 추가도 명시적 호환성 시험이 필요하다.
 
 ```sh
 python3 scripts/qualify.py dg1-authority --offline
 python3 scripts/qualify.py dg1-auth --offline
 python3 scripts/qualify.py dg1-probes --offline
 python3 scripts/qualify.py dg1-scopes --offline
+python3 scripts/qualify.py dg1-launch --offline
 python3 scripts/validate.py --offline
 ```
 
@@ -127,6 +128,21 @@ python3 scripts/validate.py --offline
 
 Scripted-table 단위 시험은 생성 경쟁, PID 재사용, 추적 상실을 다룬다. Scope 증거는 라이브러리로만 검증하며 서비스는 P3 전까지 scope를 수립하지 않는다.
 
-이 suite들은 wire 등록·launch helper·Linux 강제·자기 적용·foreground SLO를 not_run으로 남긴다. 전체 검증은 기존 44개 시험과 workspace crate 5개의 명시적 전체 의존 그래프를 검사한다. Core·contract는 daemon 설정과 native adapter에 독립적이며 client는 core에 의존하지 않는다.
+`dg1-launch`도 macOS에서만 실행한다. Launch를 연 격리 시험 authority와 합성 정상 호스트 probe로 실제 `devguard-launch` helper를 실행하며 검사 항목은 다음과 같다.
+- READY 보고 뒤 helper가 argv·작업 디렉터리·환경·종료 상태를 유지한 executable로 바뀌고, scope가 끝난 뒤에만 회수되는지
+- Executable의 descriptor는 표준 세 개뿐이며 permit·transcript·authority session이 없고, 인자와 환경에도 permit이 없는지
+- Grant마다 claim된 helper가 하나뿐인지: replay한 commit에는 permit이 없고, 경쟁하는 두 helper 중 executable은 하나만 시작하며, 늦은 helper는 거절된다
+- Owner가 만들지 않은 helper, 등록되지 않은 instance, 잘못된 permit이 claim 전에 거절되고 grant는 계속 쓸 수 있는지
+- 취소 뒤에 도착한 helper가 차단되는지
+- READY 뒤의 exec 실패가 거절과 구분되어 보고되는지
+- 응답 유실 뒤처럼 같은 grant를 두 번 제시한 bare helper가 두 번째에는 실행하지 말라는 답을 받는지
+- Utility clamp 없이 claim 뒤에 거절된 bare helper가 종료되고 scope로만 회수되는지. 환경이 모든 자식에 clamp를 걸면 이 경우는 `not_run`으로 기록한다.
+- Authority가 바빠 helper의 250 ms 기한을 넘긴 응답이 실행으로 이어지지 않는지
+- 여러 thread에서 동시에 launch해도 각 executable이 owner가 상속 가능하게 남긴 것만 상속하는지
+- 이미 자기 session과 group을 이끄는 pseudo-terminal 위의 helper
 
-복귀할 때 작업 소유 foreground 프로세스를 중지하고 보존한 설정과 schema 1 journal에 호환되는 source/artifact를 선택하며 영속 상태·자격을 유지한다. C03 활성화는 새 record 종류를 추가하지 않고 기존 복구만 수행하므로 C02 artifact로 같은 상태를 다시 열 수 있다. C01–C04를 통해 시작한 workload는 없다. 후속 live lease의 복귀에는 실제 대조가 필요하므로 이 초기 빈 상태 가정을 재사용할 수 없다.
+Core·scripted-table·transcript·wire·session 시험은 claim transition, Suspect·Draining·종결 attempt를 바꾸지 않는 취소, helper 정체성 검사, 엄격한 transcript와 메시지, 다른 요청을 할 수 없는 helper session을 다룬다.
+
+이 suite들은 정상 서비스의 등록·launch, 대조, Linux 강제, 자기 적용, foreground SLO를 not_run으로 남긴다. 전체 검증은 기존 44개 시험과 workspace crate 6개의 명시적 전체 의존 그래프를 검사한다. Launch crate는 시험의 격리 authority를 위해서만 daemon에 의존한다. Core·contract는 daemon 설정과 native adapter에 독립적이며 client는 core에 의존하지 않는다.
+
+복귀할 때 작업 소유 foreground 프로세스를 중지하고 보존한 설정과 schema 1 journal에 호환되는 source/artifact를 선택하며 영속 상태·자격을 유지한다. C03 활성화는 새 record 종류를 추가하지 않고 기존 복구만 수행하므로 C02 artifact로 같은 상태를 다시 열 수 있다. C01–C05에서 정상 서비스를 통해 시작한 workload는 없다. 후속 live lease의 복귀에는 실제 대조가 필요하므로 이 초기 빈 상태 가정을 재사용할 수 없다.

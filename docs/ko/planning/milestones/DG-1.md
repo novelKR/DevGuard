@@ -4,7 +4,7 @@
 
 아래 ID·제목·PR 묶음은 **예정 값**이다. 실제 SHA나 GitHub PR 번호가 아니다. 모듈 경로는 구현 전까지 예정 책임을 나타낸다. 현재 daemon/client crate는 존재하며 launcher·platform-macos·cli·adapters는 후속 책임이다. crate 추가는 해당 PR에서 명시적 의존 allowlist와 전체 그래프 검증을 함께 확장하고 검사를 제거하지 않는다. 실제 상태는 ledger가 소유한다.
 
-구현된 C01은 정상 경로·명시 bootstrap·배타 journal 검사를 제공한다. C02는 foreground devguardd serve, 제한된 인증 UDS 통신, OS UID/PID 관측, 엄격한 client 호환성과 private 자격 FD 전달을 추가한다. C03은 `devguard-macos`의 boot 시계, native PID/start 정체성, 호스트 용량과 serve에서 journal을 활성화하는 2초 압력 sampler를 추가한다. C04는 후속 launch helper를 위한 협조적 QoS/nice 적용과 readback, 이탈·추적 상실이 고정되는 관측 process group scope, 정체성을 확인한 종료를 추가한다. PR과 병합 후 main 전달 증거는 별도로 추적한다. Wire 등록/Principal·lease·실행은 P3의 launch·대조 선행 조건이 구현될 때까지 닫혀 있다. [운영 문서](../../operations.md)를 참조한다.
+구현된 C01은 정상 경로·명시 bootstrap·배타 journal 검사를 제공한다. C02는 foreground devguardd serve, 제한된 인증 UDS 통신, OS UID/PID 관측, 엄격한 client 호환성과 private 자격 FD 전달을 추가한다. C03은 `devguard-macos`의 boot 시계, native PID/start 정체성, 호스트 용량과 serve에서 journal을 활성화하는 2초 압력 sampler를 추가한다. C04는 협조적 QoS/nice 적용과 readback, 이탈·추적 상실이 고정되는 관측 process group scope, 정체성을 확인한 종료를 추가한다. C05는 wire 등록과 fenced `devguard-launch` helper를 추가한다. Grant마다 claim된 helper는 하나이며, READY와 exec 전에 scope binding과 authorization을 거치고, transcript와 exec 실패 보고를 분리하며, payload descriptor를 정리한다. PR과 병합 후 main 전달 증거는 별도로 추적한다. 정상 서비스의 등록/Principal·lease·실행은 C06이 대조를 launch와 함께 제공할 때까지 닫혀 있다. [운영 문서](../../operations.md)를 참조한다.
 
 ## PR 순서와 활성화 경계
 
@@ -17,7 +17,7 @@
 | DG1-P5 | DG1-C09, DG1-C10, DG1-C11 | DG1-P4 | 설치·후보·독립 복구를 묶어 자기 적용 활성화 |
 | DG1-P6 | DG1-C12 | DG1-P5 | 기능 기준 artifact와 SLO 안정 artifact를 구분해 승격 |
 
-공통 현재 명령 python3 scripts/validate.py --offline은 Rust 1.95.0 계약 회귀를 확인하며 fake backend로 native 동작을 입증하지 않는다. C01 authority, C02 인증·transport, C03 native probe, C04 native scope suite는 현재 제공한다. 아래에서 예정이라고 명시한 나머지 명령은 미제공이며 각 PR에서 fixture·실행 case 수·log·정리를 함께 구현하고 제공 상태를 갱신한다. 이름만 있는 테스트나 0개 실행을 통과로 처리하지 않는다. 공통 toolchain·증거·SLO 규칙은 상위 검증 문서에 있다.
+공통 현재 명령 python3 scripts/validate.py --offline은 Rust 1.95.0 계약 회귀를 확인하며 fake backend로 native 동작을 입증하지 않는다. C01 authority, C02 인증·transport, C03 native probe, C04 native scope, C05 native launch suite는 현재 제공한다. 아래에서 예정이라고 명시한 나머지 명령은 미제공이며 각 PR에서 fixture·실행 case 수·log·정리를 함께 구현하고 제공 상태를 갱신한다. 이름만 있는 테스트나 0개 실행을 통과로 처리하지 않는다. 공통 toolchain·증거·SLO 규칙은 상위 검증 문서에 있다.
 
 P1은 runtime을 닫아 두고 P2는 실제 probe, P3는 launch·안전 정리, P4는 개발 진입점, P5는 설치·부모 예산·repair, P6는 측정·승격을 제공한다. C08까지 foreground daemon과 최소 단일 Cargo job·test thread bootstrap을 사용한다. P4 bundle은 삭제할 build 경로 밖에 보존한다. C10에서 부모 예산을 포함한 artifact를 먼저 기능 시험·동결한 직후 제한된 실제 자기 적용을 시작하며 SLO qualification은 C12에서 확립한다.
 
@@ -81,7 +81,7 @@ P1은 runtime을 닫아 두고 P2는 실제 probe, P3는 launch·안전 정리, 
 - 대상/산출물: 예정 launcher, pipe/PTY에 연결할 private API, launch transcript와 exec failure 채널.
 - 불변 조건: `begin_launch` replay는 새 permit 없음; `may_exec` 응답 유실은 불확실; READY·RunAuthorized·executable 성공을 구분; payload 전에 자격 FD 닫기.
 - 시험: 정상 argv 실행과 종료값; helper 생성 전 실패/READY 전 실패/READY 후 executable 실패; permit 응답 유실·중복 helper·지연 helper 경쟁.
-- 검증 명령: 현재 공통 회귀 + 예정 `python3 scripts/qualify.py dg1-launch`.
+- 검증 명령: 현재 공통 회귀 + **제공** `python3 scripts/qualify.py dg1-launch --offline`(macOS 전용; 다른 플랫폼은 `not_run` 기록). Launch를 연 격리 시험 authority로 실제 helper를 실행하며, 정상 서비스는 DG1-C06 전까지 launch를 닫아 둔다.
 - 완료 증거: attempt별 helper 생성 수 0/1, 단계별 관측 기록, payload FD 목록과 secret 비노출 결과.
 - rollback: 신규 launch를 fence하고 살아 있는 helper/scope를 C06 경로로 대조; 무조건 lease 반환 금지.
 - 인계: DG1-C06에 committed/unknown 분기와 취소 hook; 두 작업을 같은 PR에서 리뷰한다.

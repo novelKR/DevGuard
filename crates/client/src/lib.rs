@@ -2,10 +2,14 @@
 pub mod connect;
 pub mod credential;
 pub mod framing;
+pub mod launch;
 pub mod peer;
 pub mod protocol;
 
-use devguard_contract::{Compatibility, Error, ErrorCode, InstanceIdentity, Result};
+use devguard_contract::{
+    AdmissionRequest, AttemptKey, AttemptRecord, Compatibility, Error, ErrorCode, InstanceIdentity,
+    Result, Secret,
+};
 use protocol::*;
 use std::os::unix::net::UnixStream;
 use std::path::Path;
@@ -74,6 +78,46 @@ impl Client {
     pub fn register(&mut self, instance_id: String) -> Result<InstanceIdentity> {
         match self.call(Request::Register { instance_id })? {
             Response::Registered { instance } => Ok(instance),
+            _ => Err(unavailable()),
+        }
+    }
+    pub fn admit(&mut self, request: AdmissionRequest) -> Result<AttemptRecord> {
+        self.attempt(Request::Admit { request })
+    }
+    /// A lost response leaves the launch committed without a permit here; the
+    /// caller must reconcile rather than expect another grant.
+    pub fn begin_launch(&mut self, key: AttemptKey) -> Result<LaunchGrant> {
+        match self.call(Request::BeginLaunch { key })? {
+            Response::LaunchGranted(grant) => Ok(grant),
+            _ => Err(unavailable()),
+        }
+    }
+    pub fn lookup(&mut self, key: AttemptKey) -> Result<AttemptRecord> {
+        self.attempt(Request::Lookup { key })
+    }
+    pub fn cancel(&mut self, key: AttemptKey) -> Result<AttemptRecord> {
+        self.attempt(Request::Cancel { key })
+    }
+    /// Present a launch grant as its helper. A missing or invalid response is
+    /// not permission to exec.
+    pub fn launch(
+        &mut self,
+        key: AttemptKey,
+        instance_id: String,
+        permit: Secret,
+    ) -> Result<LaunchAuthorization> {
+        match self.call(Request::Launch {
+            key,
+            instance_id,
+            permit,
+        })? {
+            Response::LaunchAuthorized(authorization) => Ok(authorization),
+            _ => Err(unavailable()),
+        }
+    }
+    fn attempt(&mut self, request: Request) -> Result<AttemptRecord> {
+        match self.call(request)? {
+            Response::Attempt(attempt) => Ok(attempt),
             _ => Err(unavailable()),
         }
     }

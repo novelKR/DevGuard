@@ -380,6 +380,67 @@ impl<B: Backend, C: Clock> Authority<B, C> {
         })
     }
 
+    /// Check that `permit` is this owner's launch grant without changing the
+    /// attempt, so a helper can be refused before any policy is applied to it.
+    pub fn verify_launch(
+        &mut self,
+        principal: &Principal,
+        key: &AttemptKey,
+        permit: &Secret,
+    ) -> Result<AttemptRecord> {
+        self.journal.transaction(|tx| {
+            validate_principal(tx, principal)?;
+            let record = owned_record(tx, principal, key)?;
+            check_permit(tx, key, permit)?;
+            Ok(record)
+        })
+    }
+
+    /// The first helper to present the launch grant claims it, and its scope is
+    /// recorded durably before binding. A claimed helper whose application or
+    /// binding fails is then reconciled through that scope, and no other scope
+    /// can claim, bind or be authorized for the attempt. Presenting the same
+    /// scope again returns the stored attempt.
+    pub fn claim_launch(
+        &mut self,
+        principal: &Principal,
+        key: &AttemptKey,
+        permit: &Secret,
+        scope: &ScopeIdentity,
+    ) -> Result<AttemptRecord> {
+        let backend = &self.backend;
+        let clock = &self.clock;
+        self.journal.transaction(|tx| {
+            validate_principal(tx, principal)?;
+            let mut record = owned_record(tx, principal, key)?;
+            check_permit(tx, key, permit)?;
+            if record.scope.as_ref() == Some(scope) {
+                return Ok(record);
+            }
+            // A cancelled, expired, suspect or already claimed grant is fenced.
+            if record.phase != AttemptPhase::LaunchCommitted || record.scope.is_some() {
+                return Err(invalid_transition());
+            }
+            let kind = record
+                .plan
+                .as_ref()
+                .ok_or_else(invalid_transition)?
+                .scope_kind;
+            if scope.kind != kind
+                || scope.root.boot_id != clock.now().boot_id
+                || backend.process_identity(scope.root.pid)?.as_ref() != Some(&scope.root)
+            {
+                return Err(Error::new(
+                    ErrorCode::ResourcePolicyUnsupported,
+                    "helper scope was not verified",
+                ));
+            }
+            record.scope = Some(scope.clone());
+            journal::save(tx, &record)?;
+            Ok(record)
+        })
+    }
+
     pub fn bind_scope(
         &mut self,
         principal: &Principal,
@@ -396,7 +457,13 @@ impl<B: Backend, C: Clock> Authority<B, C> {
             if record.phase == AttemptPhase::ScopeBound && record.scope.as_ref() == Some(scope) {
                 return Ok(record);
             }
-            if record.phase != AttemptPhase::LaunchCommitted {
+            // A grant claimed by one helper can never bind another scope.
+            if record.phase != AttemptPhase::LaunchCommitted
+                || record
+                    .scope
+                    .as_ref()
+                    .is_some_and(|claimed| claimed != scope)
+            {
                 return Err(invalid_transition());
             }
             let evidence = backend.binding(scope)?;
@@ -467,16 +534,26 @@ impl<B: Backend, C: Clock> Authority<B, C> {
 
     /// Cancellation fences late helpers before reclamation. Post-commit cancellation
     /// keeps the reservation until a separately verified scope termination.
+    ///
+    /// Draining is already fenced, Suspect stays Suspect until reconciliation
+    /// settles it and a terminal attempt stays terminal: none is rewritten.
     pub fn cancel(&mut self, principal: &Principal, key: &AttemptKey) -> Result<AttemptRecord> {
+        let now = self.clock.now();
         self.journal.transaction(|tx| {
             validate_principal(tx, principal)?;
+            journal::expire_prepared(tx, &now)?;
             let mut record = owned_record(tx, principal, key)?;
-            if record.phase == AttemptPhase::Prepared {
-                record.phase = AttemptPhase::Cancelled;
-            } else if record.phase.charged() {
-                record.phase = AttemptPhase::Draining;
+            let before = record.phase;
+            record.phase = match before {
+                AttemptPhase::Prepared => AttemptPhase::Cancelled,
+                AttemptPhase::LaunchCommitted
+                | AttemptPhase::ScopeBound
+                | AttemptPhase::RunAuthorized => AttemptPhase::Draining,
+                unchanged => unchanged,
+            };
+            if record.phase != before {
+                journal::save(tx, &record)?;
             }
-            journal::save(tx, &record)?;
             Ok(record)
         })
     }
