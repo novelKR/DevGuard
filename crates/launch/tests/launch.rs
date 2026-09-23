@@ -655,7 +655,15 @@ fn concurrent_launches_from_several_threads_never_share_descriptors() {
                         assert!(launched.child.wait().unwrap().success());
                         let payload = inventory(&out);
                         assert_eq!(&payload["fds"], expected_fds, "{attempt}");
-                        fixture.authority.reconcile(&owner.key(&attempt)).unwrap();
+                        // Released before this worker's next grant, so at most
+                        // four launches are charged at once.
+                        let settled = fixture.authority.reconcile(&owner.key(&attempt)).unwrap();
+                        assert_eq!(settled.phase, AttemptPhase::Released, "{attempt}");
+                        assert_eq!(
+                            settled.release_reason,
+                            Some(ReleaseReason::ScopeTerminated),
+                            "{attempt}"
+                        );
                         seen.push(json!({"attempt": attempt, "fds": payload["fds"]}));
                     }
                     seen

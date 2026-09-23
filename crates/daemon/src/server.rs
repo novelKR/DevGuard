@@ -1670,8 +1670,9 @@ mod tests {
                 execution_digest: devguard_contract::digest_bytes(b"session test"),
                 intent: ResourceIntent {
                     profile: "interactive".into(),
+                    // Fits a 3-CPU host's 500 mCPU, even halved under pressure.
                     requested: Budget {
-                        cpu_milli: 500,
+                        cpu_milli: 100,
                         memory_bytes: 64 * 1024 * 1024,
                         tasks: 4,
                     },

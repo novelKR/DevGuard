@@ -115,6 +115,9 @@ impl Owner {
     }
 }
 
+/// The fixture authority charges real host capacity. A 3-CPU host has 500 mCPU
+/// of work capacity, half of it at Constrained pressure; four concurrent
+/// launches of this request still fit there.
 pub fn request(key: AttemptKey) -> AdmissionRequest {
     AdmissionRequest {
         key,
@@ -122,9 +125,9 @@ pub fn request(key: AttemptKey) -> AdmissionRequest {
         intent: ResourceIntent {
             profile: "interactive".into(),
             requested: Budget {
-                cpu_milli: 1_000,
-                memory_bytes: 512 * MIB,
-                tasks: 16,
+                cpu_milli: 50,
+                memory_bytes: 64 * MIB,
+                tasks: 4,
             },
             minimum: ResourceLevels::MACOS,
         },
