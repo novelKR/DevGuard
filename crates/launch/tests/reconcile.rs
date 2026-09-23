@@ -716,14 +716,22 @@ fn a_dead_owners_unclaimed_grant_turns_suspect_and_keeps_its_instance() {
     assert!(orphan.scope.is_none());
     assert_eq!(orphan.release_reason, None);
     assert_eq!(fixture.authority.committed().unwrap(), quantities(&orphan));
-    let instance = fixture
-        .authority
-        .instances()
-        .unwrap()
-        .into_iter()
-        .find(|instance| instance.instance.instance_id == "orphaning-owner")
-        .expect("an instance with charged work is kept");
-    assert!(!instance.active);
+    // A pass reconciles attempts before instances, so the instance may still
+    // be active for a moment after its attempt turns suspect.
+    let instance = loop {
+        let instance = fixture
+            .authority
+            .instances()
+            .unwrap()
+            .into_iter()
+            .find(|instance| instance.instance.instance_id == "orphaning-owner")
+            .expect("an instance with charged work is kept");
+        if !instance.active {
+            break instance;
+        }
+        assert!(Instant::now() < deadline, "{instance:?}");
+        std::thread::sleep(Duration::from_millis(100));
+    };
     record(
         "dead-owner",
         json!({"attempt": orphan, "instance_active": instance.active}),

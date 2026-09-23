@@ -571,8 +571,12 @@ fn a_reply_that_misses_its_deadline_never_leads_to_exec() {
     let (committed, permit) = owner.grant("contention");
     let marker = fixture.directory.path().join("ran");
     let script = format!("touch '{}'", marker.display());
-    // A transition holds the authority lock past the helper's 250 ms deadline.
-    let holder = fixture.authority.hold_authority(Duration::from_millis(800));
+    // A transition holds the authority lock past the helper's 250 ms deadline,
+    // long enough that a helper slow to start on a loaded host still presents
+    // while it is held.
+    let holder = fixture
+        .authority
+        .hold_authority(Duration::from_millis(2_000));
     let mut launched = launch(
         HELPER,
         &owner.ticket("contention"),
