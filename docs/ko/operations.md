@@ -260,6 +260,7 @@ launchd gui domain이 없는 session에서는 launchd 경우를 `not_run`으로 
 - 복구 사본으로 repair한 release에서의 upgrade
 - 멈추기가 실패해 drain된 release가 계속 제공하며 admission만 다시 여는 경우, signal로 취소된 drain
 - 다시 실행해 완료하는 중단된 upgrade, 관리자 명령으로 다시 여는 admission, 중단된 upgrade가 닫아 둔 admission을 다시 여는 repair, 한 번에 하나의 작업
+- 검증 중에 죽어 이전 release에 자리를 내주는 release, upgrade가 아니라 repair가 완료하는 중단된 repair
 - 관리자만 admission을 닫고, 닫힌 상태가 재시작 뒤에도 유지되며 다시 열 수 있고, drain wire fixture와 호환성 규칙이 엄격하다
 
 이 suite들은 Linux 강제, 자기 적용, foreground SLO를 not_run으로 남긴다. 전체 검증은 기존 44개 시험과 workspace crate 8개의 명시적 전체 의존 그래프를 검사한다. Daemon은 자기 시험에서 fixture를 켜기 위해서만 자신에게 의존한다. Launch crate는 시험의 격리 authority를 위해서만 daemon에 의존한다. CLI는 daemon의 경로·설정과 Cargo adapter에 의존하며, daemon fixture에는 시험에서만 의존한다. Cargo adapter는 contract에만 의존한다. Core·contract는 daemon 설정과 native adapter에 독립적이며 client는 core에 의존하지 않는다.

@@ -133,7 +133,7 @@ C10 증거는 다음을 포함한다.
 - **실제 자기 적용**: 동결해 설치한 C10 부모 아래에서 작업 tree로 실행한 `test-candidate`는 그 release에 대한 사용자 확인이 필요하며, 보고·receipt·부모 hash와 함께 C10 완료 증거로 기록한다. 호스트 메모리 압력이 admission을 허용해야 한다.
 
 C11 증거는 다음을 포함한다.
-- **Raw receipt**: drain·백업·닫힌 시작·재개를 거친 정상 upgrade, 현재 release와 그 과금을 유지한 drain 시간 초과와 작업 정리 뒤의 같은 upgrade, 시작할 수 없던 release와 다시 제공하는 이전 release, 거절된 호환되지 않는 downgrade, 과금된 작업이 있는 동안 거절된 drain 불가 release의 정지 교체, upgrade가 교체한 release로 되돌아가는 repair, 복구 사본을 쓴 repair, 열 수 없는 journal에서의 repair, 중단된 upgrade가 닫아 둔 admission을 다시 여는 repair, 복구 사본으로 repair한 release에서의 upgrade, 실패한 멈추기, signal로 취소된 drain, 다시 실행해 완료하는 중단된 upgrade.
+- **Raw receipt**: drain·백업·닫힌 시작·재개를 거친 정상 upgrade, 현재 release와 그 과금을 유지한 drain 시간 초과와 작업 정리 뒤의 같은 upgrade, 시작할 수 없던 release와 다시 제공하는 이전 release, 거절된 호환되지 않는 downgrade, 과금된 작업이 있는 동안 거절된 drain 불가 release의 정지 교체, upgrade가 교체한 release로 되돌아가는 repair, 복구 사본을 쓴 repair, 열 수 없는 journal에서의 repair, 중단된 upgrade가 닫아 둔 admission을 다시 여는 repair, 복구 사본으로 repair한 release에서의 upgrade, 실패한 멈추기, 검증 중에 죽은 release, signal로 취소된 drain, 다시 실행해 완료하는 중단된 upgrade, repair가 완료하는 중단된 repair, 서비스를 기록할 수 없어 다시 unload된 설치.
 - **실제 프로세스**: 각 패키지의 `devguardd`와 `devguard`로 시험 바이너리를 복사하므로, 각 upgrade는 실제로 자신이 설치하는 release에서 실행된다. 각 서비스는 격리 fixture authority를 제공하는 그 사본이며, fake manager가 launchd와 같은 방식으로 시작한다.
 - **단위·서비스 시험**: core quiescence 계약(Prepared attempt만 취소, 활성화 없이 읽는 유휴 journal의 과금, 완전한 journal인 백업, lease table이 없는 journal), 재시작 뒤에도 유지되는 관리자 drain 요청, 엄격한 drain wire fixture, 해제되지 않은 lease를 셀 수 없는 last known good release를 포함한 호환성 규칙, release id, 인자 parsing.
 - **실제 upgrade**: 사용자 확인이 필요한 qualification 호스트의 설치 release upgrade는 stage·upgrade 보고, 백업 hash, status와 함께 C11 완료 증거로 기록한다.

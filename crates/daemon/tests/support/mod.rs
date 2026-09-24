@@ -6,9 +6,7 @@
 #![allow(dead_code)]
 
 use devguard_contract::{digest_bytes, ErrorCode};
-use devguard_daemon::fixture::{
-    serve_until_terminated, serve_without_upgrade_drain_until_terminated, TestAuthority,
-};
+use devguard_daemon::fixture::{serve_fixture, ServiceFixture, TestAuthority};
 use devguard_daemon::install::{
     self, Artifact, InstallOptions, Manifest, ServiceManager, ServiceSpec, ServiceState, ARTIFACTS,
     MANIFEST_SCHEMA,
@@ -31,8 +29,10 @@ pub const DAEMON: &str = "DEVGUARD_TEST_DAEMON";
 
 /// The service program's role: serve the fixture authority under the base
 /// named in the environment until SIGTERM. A release whose id ends in
-/// `-nodrain` states no upgrade drain, as a release before C11; one whose id
-/// ends in `-broken` exits at once, as a release that cannot start.
+/// `-nodrain` acts as a release before C11; one whose id ends in `-broken`
+/// exits at once, as a release that cannot start; and one whose id ends in
+/// `-crashing` dies when asked what is charged, as a release that dies while
+/// an upgrade verifies it.
 pub fn daemon_child() {
     let Some(base) = std::env::var_os(DAEMON) else {
         return;
@@ -47,12 +47,12 @@ pub fn daemon_child() {
     if release.ends_with("-broken") {
         std::process::exit(1);
     }
-    let result =
-        if std::env::var_os(WITHOUT_UPGRADE_DRAIN).is_some() || release.ends_with("-nodrain") {
-            serve_without_upgrade_drain_until_terminated(Path::new(&base))
-        } else {
-            serve_until_terminated(Path::new(&base))
-        };
+    let fixture = ServiceFixture {
+        without_upgrade_drain: std::env::var_os(WITHOUT_UPGRADE_DRAIN).is_some()
+            || release.ends_with("-nodrain"),
+        exit_on_quiescence: release.ends_with("-crashing"),
+    };
+    let result = serve_fixture(Path::new(&base), fixture);
     if let Err(error) = result {
         eprintln!("fixture daemon failed: {error:?}");
         std::process::exit(1);

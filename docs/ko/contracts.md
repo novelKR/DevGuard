@@ -233,25 +233,25 @@ DG1-C11은 과금 중인 작업을 잃거나 중복하지 않고, 후보의 admi
   - Admission이 닫힌 동안 admission, launch commit, 부모 lease, lease 자식은 `ResourceUnavailable`로 거절되며, 대기 중인 CLI는 이를 다시 시도한다. 조회·취소·정지·owner 보고·대조는 계속된다. Status는 실행 미준비와 닫은 이유를 보고한다.
   - 다시 닫아도 처음의 닫기가 유지된다. 다시 열 때는 효력이 생기기 전에 marker를 지우고 그 삭제를 영속화한다.
   - 보고는 과금 중인 attempt와 lease의 수와 각각 최대 16개의 key를 담으므로 항상 frame 하나에 들어간다.
-  - C11 이전 release는 이 요청을 decode할 수 없어 응답 없이 연결을 닫는다. 따라서 release가 admission을 닫을 수 있는지는 그 manifest가 알리는 내용으로 판단한다.
+  - C11 이전 release는 이 요청을 decode할 수 없어 응답 없이 연결을 닫는다. 따라서 release가 admission을 닫을 수 있는지는 그 manifest가 알리는 내용으로 판단한다. Native 증거 없이 제공 중인 release는 capability를 알리지 않고 아무것도 admission하지 않으므로, 닫을 수 없는 release로 취급한다.
 - **한 번에 하나의 작업.** 설치·staging·upgrade·repair·재개는 authority root의 private 작업 lock `operations.lock`을 보유하며, 다른 작업이 보유 중이면 거절한다.
 - **Upgrade.** `devguard upgrade --release ID [--drain-timeout DURATION] [--stopped]`는 staged release 자신의 `devguard`로 실행해야 한다.
   1. 다른 wire version이나 protocol을 쓰거나, 다른 journal·설정 schema를 읽거나, 소비자가 요구하는 내구성 admission이나 fenced launch가 없는 release는 거절한다. 현재 release보다 적게 알리는 release는 downgrade로 보고하며 이 범위 안에서만 허용한다. 호환되지 않는 downgrade는 아무것도 바꾸기 전에 거절한다.
   2. 현재 release가 검증된 상태로 실행 중이어야 한다. Staged release의 복구 사본은 아무것도 바꾸기 전에 만든다.
-  3. 실행 중인 서비스의 admission을 닫고 과금 중인 attempt나 lease가 없을 때까지 기다린다. Drain이 제한 시간(기본 60초) 안에 끝나지 않거나 SIGINT·SIGTERM으로 취소되면 현재 release에서 admission을 다시 열고, 그 release가 모든 과금을 유지하며, 아무것도 교체하지 않는다. Drain이 끝난 뒤에는 signal로 중단되지 않으며, 교체는 끝까지 진행되거나 되돌려진다. C11 이전 release는 admission을 닫을 수 없다. `--stopped`는 그 release를 먼저 멈추고, journal에 과금된 것이 없을 때만 진행한다. 그렇지 않으면 그 release가 다시 제공한다.
+  3. 실행 중인 서비스의 admission을 닫고 과금 중인 attempt나 lease가 없을 때까지 기다린다. Drain이 제한 시간(기본 60초) 안에 끝나지 않거나 SIGINT·SIGTERM으로 취소되면 현재 release에서 admission을 다시 열고, 그 release가 모든 과금을 유지하며, 아무것도 교체하지 않는다. 서비스를 멈추기 전에 받은 signal도 admission을 다시 연 채 upgrade를 끝낸다. 멈춘 뒤부터는 교체가 끝까지 진행되거나 되돌려지며, `launchctl`은 별도 process group에서 실행되므로 terminal의 interrupt가 닿지 않는다. C11 이전 release는 admission을 닫을 수 없다. `--stopped`는 그 release를 먼저 멈추고, journal에 과금된 것이 없을 때만 진행한다. 그렇지 않으면 그 release가 다시 제공한다.
   4. 서비스를 멈춘다. Authority lock을 보유한 채 `backups/<time>-<from>-to-<to>/` 아래에 quiescent 백업을 만든다. 완전한 SQLite 사본인 journal, 선택, 현재 manifest를 각각 hash와 함께 둔다.
   5. 닫기 marker를 기록하고 새 release를 시작하므로, 새 release는 admission이 닫힌 채 시작한다. launchd가 그 release 자신의 `devguardd`를 실행하는지, 소비자 handshake가 성공하는지, 서비스가 admission이 닫혀 있고 과금된 것이 없다고 보고하는지 검증한다.
   6. 새 release를 current로 기록하고 교체된 release를 last known good으로 남긴 뒤 admission을 다시 연다.
 
-  Drain이 끝난 뒤 어떤 단계가 실패하면 이전 release가 같은 journal로 다시 제공하며 admission을 다시 연다. 멈추기가 실패해 아직 제공 중인 release는 admission만 다시 연다. 그렇지 않으면 새 release가 시작되었을 경우 이를 bootout하고, endpoint와 lock이 비면 이전 release를 다시 시작한다. Upgrade가 직접 bootstrap한 job만 bootout한다. Release가 admission했을 수 있는 journal 위에 백업을 복원하지 않는다.
+  Drain이 끝난 뒤 어떤 단계가 실패하면 이전 release가 같은 journal로 다시 제공하며 admission을 다시 연다. 멈추기가 실패해 아직 제공 중인 release는 admission만 다시 연다. 그렇지 않으면 새 release가 시작되었을 경우 아직 실행 중이든 검증 중에 죽었든 이를 bootout하고, endpoint와 lock이 비면 이전 release를 다시 시작한다. Release가 admission했을 수 있는 journal 위에 백업을 복원하지 않는다.
 
-  새 release가 시작된 뒤 중단된 upgrade는 같은 upgrade를 다시 실행하면 완료된다. 선택이 그 release를 아직 가리키지 않으면 기록하고, admission이 아직 닫혀 있으면 다시 연다. `devguard admission --open`은 제공 중인 선택된 release의 admission을 다시 연다. C11 이전 release에는 그 release가 읽지 않는 marker만 지운다.
+  새 release가 시작된 뒤 중단된 upgrade는 같은 upgrade를 다시 실행하면 완료된다. 선택이 그 release를 아직 가리키지 않으면, upgrade가 시작한 대로 닫힌 유휴 상태로 제공 중일 때에만 기록하고, admission이 아직 닫혀 있으면 다시 연다. 제공 중인 last known good release는 repair에 맡긴다. `devguard admission --open`은 제공 중인 선택된 release의 admission을 다시 연다. C11 이전 release에는 그 release가 읽지 않는 marker만 지운다.
 - **Repair.** `devguard repair --use last-known-good`는 서비스를 last known good release로 되돌린다. 이는 마지막 upgrade가 교체한 release이며, upgrade가 없었다면 설치된 release이다. 어느 `devguard`로 repair를 실행하든 서비스는 그 release 자신의 바이너리만 실행한다.
-  - 어떤 authority든 제공 중이면 거절한다. 두 번째 authority를 시작하지 않으며, 제공 중인 release는 upgrade로 교체한다.
+  - 어떤 authority든 제공 중이면 거절한다. 두 번째 authority를 시작하지 않으며, 제공 중인 release는 upgrade로 교체한다. 유일한 예외는 중단된 repair의 완료다. Last known good release가 이미 검증된 상태로 제공 중이지만 아직 선택되지 않았으면, repair는 이를 기록하고 admission을 다시 연다.
   - Journal은 authority lock 아래에서 열려야 한다. 열 수 없으면 admission은 닫힌 채로 남고, repair는 journal을 만들거나 초기화하거나 복원하지 않는다.
   - 그 release는 journal의 schema를 읽고 같은 소비자를 제공해야 한다. Journal에 해제되지 않은 lease가 있으면 부모 lease가 없는 release는 거절한다.
   - 설치된 release가 손상되었으면 복구 사본을 대신 실행하며, status와 이후 upgrade도 이를 받아들인다.
-  - 남아 있는 job이 endpoint와 lock을 놓으면 교체하고 실행 중인 바이너리를 검증한다. Release가 제공하는 즉시 repair를 선택 기록에 남기고, 그다음 중단된 upgrade가 닫아 둔 admission을 다시 연다.
+  - 남아 있는 job이 endpoint와 lock을 놓으면 교체하고 실행 중인 바이너리를 검증한다. Load되지 않은 서비스의 bootout은 `launchctl`이 3으로 끝나더라도 성공으로 처리한다. Release가 제공하는 즉시 repair를 선택 기록에 남기고, 그다음 중단된 upgrade가 닫아 둔 admission을 다시 연다.
 - **범위.** Upgrade에는 유휴 서비스가 필요하다. 실행 중인 작업은 끝날 때까지 기다리며 중단하지 않는다. C11 이전 release에는 `upgrade` 명령이 없다. 그 release로 돌아갈 때는 서비스를 멈춘 뒤 그 release 자신의 installer를 쓰며, 그 release는 닫기 marker를 무시한다.
 
 ## 내구성 admission과 launch

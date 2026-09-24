@@ -122,7 +122,9 @@ pub fn run(
             }
         },
         args::Command::Repair => match locate() {
+            // A repair is short and bounded; a signal must not leave it half done.
             Ok((paths, _)) => operate(|| {
+                cancellable();
                 devguard_daemon::upgrade::repair(
                     &paths,
                     &Launchctl::new(paths.uid()),
@@ -136,6 +138,7 @@ pub fn run(
         },
         args::Command::Admission => match locate() {
             Ok((paths, _)) => operate(|| {
+                cancellable();
                 devguard_daemon::upgrade::reopen_admission(
                     &paths,
                     &Launchctl::new(paths.uid()),
@@ -164,7 +167,8 @@ extern "C" fn cancel_upgrade(_: libc::c_int) {
 }
 
 /// SIGINT and SIGTERM cancel an upgrade's drain instead of ending the CLI,
-/// which could leave admission closed.
+/// which could leave admission closed; a repair or a reopening, which reads
+/// no flag, runs to its end.
 fn cancellable() -> &'static AtomicBool {
     // SAFETY: the handler only stores to a lock-free atomic.
     unsafe {

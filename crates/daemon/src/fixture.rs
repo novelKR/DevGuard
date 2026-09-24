@@ -253,21 +253,39 @@ impl TestAuthority {
 /// SIGINT, as `devguardd serve` serves the canonical one. Tests run it as the
 /// program of a service, under launchd or a fake manager.
 pub fn serve_until_terminated(base: &Path) -> Result<()> {
-    serve_fixture(base, false)
+    serve_fixture(base, ServiceFixture::default())
+}
+
+/// How a fixture service departs from the current release.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ServiceFixture {
+    /// State no upgrade drain, as a release before C11 does.
+    pub without_upgrade_drain: bool,
+    /// End the process when asked what is charged, as a release that dies
+    /// while an upgrade verifies it.
+    pub exit_on_quiescence: bool,
 }
 
 /// As [`serve_until_terminated`], stating no upgrade drain, as a release
 /// before C11 does.
 pub fn serve_without_upgrade_drain_until_terminated(base: &Path) -> Result<()> {
-    serve_fixture(base, true)
+    serve_fixture(
+        base,
+        ServiceFixture {
+            without_upgrade_drain: true,
+            ..ServiceFixture::default()
+        },
+    )
 }
 
-fn serve_fixture(base: &Path, without_upgrade_drain: bool) -> Result<()> {
+/// Serve the fixture authority under `base` with the given departures.
+pub fn serve_fixture(base: &Path, fixture: ServiceFixture) -> Result<()> {
     let server = Server::open_with(
         &AuthorityPaths::fixture(base),
         Options {
             probe: Some(Box::new(HealthyProbe)),
-            without_upgrade_drain,
+            without_upgrade_drain: fixture.without_upgrade_drain,
+            exit_on_quiescence: fixture.exit_on_quiescence,
             ..Options::default()
         },
     )?;

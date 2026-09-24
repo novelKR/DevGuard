@@ -18,7 +18,7 @@ use devguard_contract::{
 };
 use devguard_core::AuthorityStorage;
 use devguard_daemon::config::HostConfig;
-use devguard_daemon::install::{self, InstallOptions, Manifest, ServiceManager};
+use devguard_daemon::install::{self, InstallOptions, Manifest, ServiceManager, ServiceSpec};
 use devguard_daemon::paths::{read_private, AuthorityPaths};
 use devguard_daemon::upgrade::{self, DrainMode, UpgradeOptions, UpgradeOutcome, UpgradeReport};
 use serde_json::json;
@@ -187,6 +187,15 @@ fn consumer(paths: &AuthorityPaths) -> CallerCredential {
     }
 }
 
+/// Wait until a service just started answers on the endpoint.
+fn serving(paths: &AuthorityPaths) {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while connect(paths, &[]).is_err() {
+        assert!(Instant::now() < deadline, "the service never answered");
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
 /// A new registered workload session; every frame has a short deadline.
 fn workload(paths: &AuthorityPaths) -> Client {
     let mut client = connect(
@@ -329,9 +338,21 @@ fn an_upgrade_drains_backs_up_starts_the_release_closed_and_then_reopens_admissi
     assert!(connect(paths, &[Capability::UpgradeDrain, Capability::ParentLease]).is_ok());
     let status = install::status(paths, &installed.manager, &installed.options).unwrap();
     assert!(status.healthy, "{status:?}");
+    // A closure on the serving, selected release alone makes it unhealthy.
+    administrator(paths)
+        .close_admission("held by an operator".into())
+        .unwrap();
+    let closed = install::status(paths, &installed.manager, &installed.options).unwrap();
+    assert!(closed.plist_matches_selection && closed.running.is_some());
+    assert!(!closed.healthy);
+    assert_eq!(
+        closed.admission_closed.as_ref().unwrap().reason,
+        "held by an operator"
+    );
+    administrator(paths).open_admission().unwrap();
     record(
         "upgrade-normal",
-        json!({"report": report, "status": status}),
+        json!({"report": report, "status": status, "closed_status": closed}),
     );
 }
 
@@ -463,6 +484,17 @@ fn a_release_that_cannot_drain_is_replaced_only_when_stopped_and_nothing_is_char
             .code,
         ErrorCode::ResourceControlUnavailable
     );
+    // A marker left on a release that never reads it is simply removed.
+    fs::write(
+        paths.admission_marker(),
+        br#"{"reason":"left behind","since_unix_ms":1}"#,
+    )
+    .unwrap();
+    fs::set_permissions(paths.admission_marker(), fs::Permissions::from_mode(0o600)).unwrap();
+    let reopened =
+        upgrade::reopen_admission(paths, &installed.manager, &installed.options).unwrap();
+    assert!(!reopened.through_service);
+    assert!(!paths.admission_marker().exists());
     let running = committed(paths, "running");
     installed.stage("b", "0.1.0-test-b");
     let before = installed.pid();
@@ -800,4 +832,63 @@ fn a_signal_during_the_drain_cancels_the_upgrade_and_reopens_admission() {
     admitted(paths, "after");
     settle(paths, &running);
     record("upgrade-cancelled", json!({"error": error}));
+}
+
+#[test]
+fn a_release_that_dies_while_it_is_verified_gives_way_to_the_previous_one() {
+    let installed = Installed::new("0.1.0-test-a");
+    let paths = &installed.paths;
+    installed.stage("c", "0.1.0-test-c-crashing");
+    let error = installed
+        .upgrade("0.1.0-test-c-crashing", Duration::from_secs(20), false)
+        .unwrap_err();
+    assert!(error.message.contains("serves again"), "{error:?}");
+    assert_eq!(installed.executable(), installed.release("0.1.0-test-a"));
+    assert_eq!(installed.current(), "0.1.0-test-a");
+    assert!(!paths.admission_marker().exists());
+    admitted(paths, "after");
+    record("upgrade-died-verifying", json!({"error": error}));
+}
+
+#[test]
+fn repair_completes_an_interrupted_repair_and_upgrade_leaves_it_to_repair() {
+    let installed = Installed::new("0.1.0-test-a");
+    let paths = &installed.paths;
+    installed.stage("b", "0.1.0-test-b");
+    installed.replaced("0.1.0-test-b", Duration::from_secs(20), false);
+    // A repair started the last known good release and was interrupted
+    // before it recorded the selection.
+    installed.manager.bootout(LABEL).unwrap();
+    let spec = ServiceSpec {
+        label: installed.options.label.clone(),
+        plist: installed.options.plist.clone(),
+        program: paths.releases().join("0.1.0-test-a/bin/devguardd"),
+        args: installed.options.program_args.clone(),
+        environment: installed.options.environment.clone(),
+    };
+    installed.manager.bootstrap(&spec).unwrap();
+    serving(paths);
+    admitted(paths, "serving");
+    assert_eq!(installed.current(), "0.1.0-test-b");
+    // Adopting it as an upgrade would make the release it replaced the last
+    // known good one; the upgrade leaves it to repair.
+    let error = installed
+        .upgrade("0.1.0-test-a", Duration::from_secs(20), false)
+        .unwrap_err();
+    assert_eq!(error.code, ErrorCode::ReconciliationRequired, "{error:?}");
+    assert!(error.message.contains("interrupted repair"), "{error:?}");
+    let report = upgrade::repair(paths, &installed.manager, &installed.options).unwrap();
+    assert!(report.completed);
+    assert_eq!(report.selection.current, "0.1.0-test-a");
+    assert_eq!(
+        report.selection.last_known_good.as_deref(),
+        Some("0.1.0-test-a")
+    );
+    // Once selected and serving, a second repair refuses.
+    let serving = upgrade::repair(paths, &installed.manager, &installed.options).unwrap_err();
+    assert_eq!(serving.code, ErrorCode::ResourceUnavailable);
+    record(
+        "repair-completed",
+        json!({"upgrade_refused": error, "report": report, "second": serving}),
+    );
 }

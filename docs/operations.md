@@ -262,6 +262,7 @@ A session without a launchd gui domain records the launchd case as `not_run`, an
 - an upgrade from a release repaired onto its recovery copy
 - a failed stop that leaves the drained release serving, whose admission only reopens, and a drain cancelled by a signal
 - an interrupted upgrade completed by running it again, admission reopened by the administrator's command, repair reopening admission that an interrupted upgrade left closed, and one operation at a time
+- a release that dies while it is verified, which gives way to the previous release, and an interrupted repair completed by repair, never adopted by an upgrade
 - admission closed by the administrator only, kept across a restart and reopened, and strict drain wire fixtures and compatibility rules
 
 The full validator retains the 44 original tests and validates all eight workspace crates and their explicit dependency graph. The daemon depends on itself only to enable its fixtures in its own tests. The launch crate depends on the daemon only for its tests' isolated authorities. The CLI depends on the daemon's paths and configuration and on the Cargo adapter, and on the daemon's fixtures only in tests. The Cargo adapter depends only on the contract. Core/contract remain independent of daemon configuration and native adapters, and client does not depend on core.

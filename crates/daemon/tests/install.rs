@@ -347,6 +347,9 @@ fn launchd_runs_the_release_restarts_it_after_a_crash_and_leaves_a_failed_start_
     }
     let label = format!("{LABEL}.{}", std::process::id());
     let manager = Launchctl::new(paths.uid());
+    // Booting out a service that was never loaded succeeds, although
+    // launchctl itself exits 3 for it.
+    manager.bootout(&format!("{label}.absent")).unwrap();
     let _bootout = Bootout {
         manager: Launchctl::new(paths.uid()),
         label: label.clone(),
@@ -428,4 +431,31 @@ fn launchd_runs_the_release_restarts_it_after_a_crash_and_leaves_a_failed_start_
         "launchd-lifecycle",
         json!({"label": label, "installed": report, "after_crash": restarted, "failed_start": failed}),
     );
+}
+
+#[test]
+fn a_service_that_cannot_be_recorded_is_unloaded_again() {
+    let base = Base::new();
+    let paths = initialized(base.path());
+    let packages = base.path().join("packages");
+    let pkg = package(&packages, "a", "0.1.0-test-a", "2026-09-24T00:00:00Z");
+    // A different release already holds the recovery copy's name, so the
+    // verified service cannot be recorded.
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(paths.recovery().join("0.1.0-test-a/bin"))
+            .unwrap();
+    }
+    fs::write(paths.recovery().join("0.1.0-test-a/MANIFEST.json"), b"{}").unwrap();
+    let manager = FakeLaunchd::default();
+    let options = options(&paths, base.path(), LABEL);
+    let error = install::install(&paths, &pkg, &manager, &options).unwrap_err();
+    assert_eq!(*manager.bootstraps.lock().unwrap(), 1, "{error:?}");
+    assert!(manager.state(LABEL).unwrap().is_none());
+    assert!(!options.plist.exists());
+    assert!(install::read_selection(&paths).unwrap().is_none());
+    record("install-unrecorded", json!({"error": error.message}));
 }

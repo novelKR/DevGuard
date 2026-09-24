@@ -52,6 +52,9 @@ pub(crate) struct Options {
     pub candidate: Option<CandidateMode>,
     /// Fixtures only: state no upgrade drain, as a release before C11 does.
     pub without_upgrade_drain: bool,
+    /// Fixtures only: end the process when asked what is charged, as a
+    /// release that dies while an upgrade verifies it.
+    pub exit_on_quiescence: bool,
 }
 
 /// A candidate's leased capacity and its status reason. A candidate states
@@ -88,6 +91,7 @@ pub struct Server {
     candidate: bool,
     /// Whether the upgrade drain is stated to clients that require it.
     upgrade_drain: bool,
+    exit_on_quiescence: bool,
 }
 
 /// Service receipts are JSON lines on stderr; they never include credentials.
@@ -1016,6 +1020,7 @@ impl Server {
             launcher,
             candidate,
             upgrade_drain: !options.without_upgrade_drain,
+            exit_on_quiescence: options.exit_on_quiescence,
         })
     }
 
@@ -1096,6 +1101,7 @@ impl Server {
                     let flags = Flags {
                         candidate: self.candidate,
                         upgrade_drain: self.upgrade_drain,
+                        exit_on_quiescence: self.exit_on_quiescence,
                     };
                     if let Ok(worker) = std::thread::Builder::new()
                         .name("devguard-session".into())
@@ -1220,6 +1226,7 @@ struct Session {
 struct Flags {
     candidate: bool,
     upgrade_drain: bool,
+    exit_on_quiescence: bool,
 }
 
 struct Context<'a> {
@@ -1283,6 +1290,9 @@ fn session(
         // added, so, like that release, it closes the connection unanswered.
         if !context.upgrade_drain && unknown_before_c11(&frame.body) {
             return Ok(());
+        }
+        if flags.exit_on_quiescence && matches!(frame.body, Request::Quiescence) {
+            std::process::exit(70);
         }
         let body = handle(&mut state, frame.body, &context)
             .unwrap_or_else(|error| Response::Error(error.into()));
@@ -2334,6 +2344,32 @@ mod tests {
                 .unwrap()
                 .closure
                 .is_none());
+        }
+
+        #[test]
+        fn a_quiescence_report_counts_everything_and_names_at_most_sixteen() {
+            let directory = base();
+            let authority = started(directory.path(), false);
+            for index in 0..20 {
+                let mut request = request(&authority, &format!("held-{index}"));
+                request.intent.requested = Budget {
+                    cpu_milli: 10,
+                    memory_bytes: 1024 * 1024,
+                    tasks: 1,
+                };
+                let record = workload(&authority).admit(request).unwrap();
+                assert_eq!(record.phase, AttemptPhase::Prepared, "{index}");
+                workload(&authority).begin_launch(record.key).unwrap();
+            }
+            let report = administrator(&authority).quiescence().unwrap();
+            assert_eq!(report.charged_attempts, 20);
+            assert_eq!(report.attempts.len(), MAX_QUIESCENCE_KEYS);
+            // Closing admission keeps committed launches, which a drain waits for.
+            let closed = administrator(&authority)
+                .close_admission("counting".into())
+                .unwrap();
+            assert_eq!(closed.charged_attempts, 20);
+            assert_eq!(closed.attempts.len(), MAX_QUIESCENCE_KEYS);
         }
 
         #[test]

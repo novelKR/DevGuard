@@ -191,6 +191,7 @@ pub struct StageReport {
 /// run from the package, as installation does.
 pub fn stage(paths: &AuthorityPaths, package: &Path) -> Result<StageReport> {
     macos_only()?;
+    paths.validate_existing()?;
     let package = validate_package(package)?;
     running_from(&package, "devguardd")?;
     let _operation = operation(paths)?;
@@ -449,7 +450,7 @@ fn write_plist(spec: &ServiceSpec, options: &InstallOptions) -> Result<()> {
 
 /// Wait until no authority serves and the authority lock is free; the
 /// returned storage holds the lock.
-fn released(paths: &AuthorityPaths) -> Result<AuthorityStorage> {
+pub(crate) fn released(paths: &AuthorityPaths) -> Result<AuthorityStorage> {
     let deadline = Instant::now() + STOP_LIMIT;
     loop {
         let last = if handshake(paths).is_ok() {
@@ -504,25 +505,62 @@ fn write_marker(paths: &AuthorityPaths, reason: &str) -> Result<()> {
     replace_private(&paths.admission_marker(), &bytes)
 }
 
-/// Remove the marker durably, so a crash cannot bring it back.
+/// Remove the marker. Its removal is synced where it can be: a marker that a
+/// crash brings back only keeps admission closed until it is reopened.
 fn remove_marker(paths: &AuthorityPaths) -> Result<()> {
     match fs::remove_file(paths.admission_marker()) {
         Ok(()) => {}
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
         Err(_) => return Err(unavailable("cannot remove the admission marker")),
     }
-    File::open(paths.state())
-        .and_then(|directory| directory.sync_all())
-        .map_err(|_| unavailable("cannot sync the admission marker's removal"))
+    let _ = File::open(paths.state()).and_then(|directory| directory.sync_all());
+    Ok(())
 }
 
 /// Reopen admission on `release`, which now serves: through the service when
-/// it can close admission, otherwise by removing a marker it never reads.
+/// it can close admission. A release before C11 reads no marker, and one
+/// serving without native evidence states no capability and admits nothing;
+/// for either, the marker is removed so no later start finds it.
 fn reopen(paths: &AuthorityPaths, secret: &Secret, release: &Package) -> Result<()> {
     if drains(release) {
-        admin_call(paths, secret, |client| client.open_admission()).map(drop)
-    } else {
-        remove_marker(paths)
+        match admin_call(paths, secret, |client| client.open_admission()) {
+            Ok(_) => return Ok(()),
+            Err(error) if error.code == ErrorCode::ResourcePolicyUnsupported => {}
+            Err(error) => return Err(error),
+        }
+    }
+    remove_marker(paths)
+}
+
+fn cancelled(upgrade: &UpgradeOptions) -> bool {
+    upgrade
+        .cancel
+        .is_some_and(|cancel| cancel.load(Ordering::Relaxed))
+}
+
+/// Reopen admission after a failed or abandoned step, and say whether it
+/// reopened.
+fn reopened_after(
+    paths: &AuthorityPaths,
+    secret: &Secret,
+    current: &Package,
+    error: Error,
+) -> Error {
+    match reopen(paths, secret, current) {
+        Ok(()) => Error::new(
+            error.code,
+            format!(
+                "{}; admission reopened on the current release, which keeps every charge",
+                error.message
+            ),
+        ),
+        Err(reopening) => Error::new(
+            error.code,
+            format!(
+                "{}; reopening admission also failed ({}): run `devguard admission --open`",
+                error.message, reopening.message
+            ),
+        ),
     }
 }
 
@@ -592,18 +630,14 @@ fn drain(
     reason: &str,
     upgrade: &UpgradeOptions,
 ) -> Result<(Quiescence, Duration)> {
+    if cancelled(upgrade) {
+        return Err(busy(
+            "the upgrade was cancelled before the drain; nothing changed",
+        ));
+    }
     let started = Instant::now();
     // Whatever interrupts the drain, admission does not stay closed.
-    let reopened = |error: Error| match reopen(paths, secret, current) {
-        Ok(()) => error,
-        Err(reopening) => Error::new(
-            error.code,
-            format!(
-                "{}; reopening admission also failed ({}): run `devguard admission --open`",
-                error.message, reopening.message
-            ),
-        ),
-    };
+    let reopened = |error: Error| reopened_after(paths, secret, current, error);
     let at_close = admin_call(paths, secret, |client| {
         client.close_admission(reason.into())
     })
@@ -614,11 +648,9 @@ fn drain(
         if now.quiet() {
             return Ok((at_close, started.elapsed()));
         }
-        let cancelled = upgrade
-            .cancel
-            .is_some_and(|cancel| cancel.load(Ordering::Relaxed));
-        if cancelled || Instant::now() >= deadline {
-            let why = if cancelled {
+        let cancel = cancelled(upgrade);
+        if cancel || Instant::now() >= deadline {
+            let why = if cancel {
                 "the upgrade was cancelled while draining".to_string()
             } else {
                 format!(
@@ -627,7 +659,7 @@ fn drain(
                 )
             };
             return Err(reopened(busy(format!(
-                "{why}: {} attempts and {} leases are still charged; admission reopened on the current release, which keeps them",
+                "{why}: {} attempts and {} leases are still charged, and nothing was replaced",
                 now.charged_attempts, now.charged_leases
             ))));
         }
@@ -693,8 +725,30 @@ fn complete(
         return Ok(None);
     };
     consumer_handshake(paths)?;
+    let state = admin_call(paths, secret, |client| client.quiescence())?;
     let recorded = selection.current != to;
     if recorded {
+        // The last known good release serving unselected is an interrupted
+        // repair, which repair completes.
+        if selection.last_known_good.as_deref() == Some(to.as_str()) {
+            return Err(Error::new(
+                ErrorCode::ReconciliationRequired,
+                format!(
+                    "release {to} is the last known good release and serves unselected, as after an interrupted repair; run `devguard repair --use last-known-good` to complete it"
+                ),
+            ));
+        }
+        // An upgrade starts its release closed and idle; a release serving
+        // otherwise was not started by one.
+        if state.closure.is_none() || !state.quiet() {
+            return Err(Error::new(
+                ErrorCode::ReconciliationRequired,
+                format!(
+                    "release {to} serves unselected, but not closed and idle as an upgrade starts it; {} and run `devguard repair --use last-known-good`",
+                    stop_hint(paths, options)
+                ),
+            ));
+        }
         let from = selection.current.clone();
         selection.current = to.clone();
         selection.last_known_good = Some(from.clone());
@@ -707,7 +761,6 @@ fn complete(
         });
         write_selection(paths, selection)?;
     }
-    let state = admin_call(paths, secret, |client| client.quiescence())?;
     let reopened = state.closure.is_some();
     if reopened {
         admin_call(paths, secret, |client| client.open_admission())?;
@@ -769,9 +822,13 @@ pub fn upgrade(
         &target.manifest.compatibility,
     )?;
     // Whichever copy runs is the one that serves again if the upgrade fails.
-    let current = copies
+    let (current, evidence) = copies
         .into_iter()
-        .find(|copy| observe_running(paths, manager, &options.label, copy).is_ok())
+        .find_map(|copy| {
+            observe_running(paths, manager, &options.label, &copy)
+                .ok()
+                .map(|evidence| (copy, evidence))
+        })
         .ok_or_else(|| {
             busy(format!(
                 "the current release {from} is not running verified; {} and run `devguard repair --use last-known-good`",
@@ -784,16 +841,30 @@ pub fn upgrade(
     let recovery = paths.recovery().join(to);
     freeze_copy(&target, &recovery)?;
     let reason = format!("upgrade from {from} to {to}");
-    let (mode, at_close, waited) = if drains(&current) {
+    // A release serving without native evidence states no capability and
+    // admits nothing, so it is replaced like one that cannot drain.
+    let can_drain = drains(&current) && !evidence.capabilities.is_empty();
+    let (mode, at_close, waited) = if can_drain {
         let (at_close, waited) = drain(paths, &secret, &current, &reason, upgrade)?;
         (DrainMode::ClosedAdmission, Some(at_close), waited)
     } else if upgrade.stopped {
         (DrainMode::Stopped, None, Duration::ZERO)
     } else {
         return Err(unsupported(format!(
-            "release {from} cannot close admission; rerun with --stopped to stop it first, which proceeds only if nothing is then charged"
+            "release {from} cannot close admission, as a release before C11 or one serving without native evidence; rerun with --stopped to stop it first, which proceeds only if nothing is then charged"
         )));
     };
+    // A signal after the drain still stops the upgrade before the service
+    // does; from the stop on, the replacement completes or rolls back.
+    if cancelled(upgrade) {
+        let error =
+            busy("the upgrade was cancelled before the service stopped; nothing was replaced");
+        return Err(if can_drain {
+            reopened_after(paths, &secret, &current, error)
+        } else {
+            error
+        });
+    }
     let fallback = selection.last_known_good.clone();
     let restore = |cause: Error| {
         restore(
@@ -835,25 +906,25 @@ pub fn upgrade(
     drop(storage);
     marked.map_err(restore)?;
     let verified = start(paths, manager, options, &target).and_then(|running| {
-        consumer_handshake(paths)?;
-        let before = admin_call(paths, &secret, |client| client.quiescence())?;
-        if before.closure.is_none() || !before.quiet() {
-            return Err(unavailable(
-                "the new release did not start closed and idle on the journal",
-            ));
+        let checked = consumer_handshake(paths).and_then(|()| {
+            let before = admin_call(paths, &secret, |client| client.quiescence())?;
+            if before.closure.is_none() || !before.quiet() {
+                return Err(unavailable(
+                    "the new release did not start closed and idle on the journal",
+                ));
+            }
+            Ok(before)
+        });
+        if checked.is_err() {
+            // The service was stopped, so the label holds only the job this
+            // upgrade bootstrapped, whether it still runs or already died.
+            let _ = manager.bootout(&options.label);
         }
-        Ok((running, before))
+        checked.map(|before| (running, before))
     });
     let (running, before_reopening) = match verified {
         Ok(verified) => verified,
-        Err(error) => {
-            // Only the new release is booted out, never a release that the
-            // manager reports under another program.
-            if observe_running(paths, manager, &options.label, &target).is_ok() {
-                let _ = manager.bootout(&options.label);
-            }
-            return Err(restore(error));
-        }
+        Err(error) => return Err(restore(error)),
     };
     // Verified: select it, keep the release it replaced as the one repair
     // returns to, then reopen admission. An upgrade interrupted from here on
@@ -913,6 +984,9 @@ pub struct RepairReport {
     pub running: RunningEvidence,
     /// An admission closure left by an interrupted upgrade, now reopened.
     pub reopened_closure: bool,
+    /// The release already served, started by an interrupted repair; this
+    /// run only recorded it and reopened admission.
+    pub completed: bool,
     pub selection: Selection,
 }
 
@@ -951,9 +1025,47 @@ pub fn repair(
         .clone()
         .ok_or_else(|| invalid("no release has been verified running yet"))?;
     if handshake(paths).is_ok() {
-        return Err(busy(
-            "an authority is serving; repair never starts a second one, and a serving release is replaced by an upgrade",
-        ));
+        // An interrupted repair left the last known good release serving
+        // unselected: completing it only records it and reopens admission.
+        let serving = if selection.current == id {
+            None
+        } else {
+            copies(paths, &id)?.into_iter().find_map(|copy| {
+                observe_running(paths, manager, &options.label, &copy)
+                    .ok()
+                    .map(|evidence| (copy, evidence))
+            })
+        };
+        let Some((release, running)) = serving else {
+            return Err(busy(
+                "an authority is serving; repair never starts a second one, and a serving release is replaced by an upgrade",
+            ));
+        };
+        let compatibility = check_compatibility(&compiled(), &release.manifest.compatibility)
+            .map_err(|error| context(error, format!("release {id} cannot serve this journal")))?;
+        let replaced = selection.current.clone();
+        selection.current = id.clone();
+        selection.history.push(SelectionEvent {
+            release_id: id.clone(),
+            event: format!("repair from {replaced} to the last known good release completed"),
+            unix_ms: unix_ms(),
+        });
+        write_selection(paths, &selection)?;
+        let closure = fs::symlink_metadata(paths.admission_marker()).is_ok();
+        if closure {
+            reopen(paths, &admin_secret(paths)?, &release)?;
+        }
+        return Ok(RepairReport {
+            release_id: id,
+            from_recovery: release.dir.starts_with(paths.recovery()),
+            artifact: release.dir.clone(),
+            damaged: None,
+            compatibility,
+            running,
+            reopened_closure: closure,
+            completed: true,
+            selection,
+        });
     }
     // The journal must open: repair never creates, resets or restores it.
     let closed = |error: Error| {
@@ -1024,6 +1136,7 @@ pub fn repair(
         compatibility,
         running,
         reopened_closure: closure,
+        completed: false,
         selection,
     })
 }
@@ -1038,8 +1151,10 @@ pub struct AdmissionReport {
     pub quiescence: Option<Quiescence>,
 }
 
-/// Reopen admission on the selected release, which must serve verified, as
-/// after an upgrade or a repair interrupted once the release started.
+/// Reopen admission on the selected release, which must serve verified: after
+/// an upgrade interrupted once it recorded the new release, or a closure an
+/// administrator made. A release before C11, or one serving without native
+/// evidence, only has the marker removed.
 pub fn reopen_admission(
     paths: &AuthorityPaths,
     manager: &dyn ServiceManager,
@@ -1060,9 +1175,16 @@ pub fn reopen_admission(
             ))
         })?;
     let quiescence = if drains(&running) {
-        Some(admin_call(paths, &admin_secret(paths)?, |client| {
+        match admin_call(paths, &admin_secret(paths)?, |client| {
             client.open_admission()
-        })?)
+        }) {
+            Ok(quiescence) => Some(quiescence),
+            Err(error) if error.code == ErrorCode::ResourcePolicyUnsupported => {
+                remove_marker(paths)?;
+                None
+            }
+            Err(error) => return Err(error),
+        }
     } else {
         remove_marker(paths)?;
         None

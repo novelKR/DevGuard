@@ -302,15 +302,21 @@ impl Launchctl {
     }
 
     fn run(&self, args: &[&str]) -> Result<std::process::Output> {
+        use std::os::unix::process::CommandExt;
+        // Its own process group: a terminal's interrupt meant for the
+        // operator's command must not fail a bootout or bootstrap midway.
         std::process::Command::new(LAUNCHCTL)
             .args(args)
+            .process_group(0)
             .output()
             .map_err(|_| unavailable("cannot run launchctl"))
     }
 }
 
-/// launchctl's exit status for a service it cannot find.
+/// launchctl's exit status when `print` cannot find a service.
 const LAUNCHCTL_NO_SUCH_SERVICE: i32 = 113;
+/// launchctl's exit status (ESRCH) when `bootout` finds no such service.
+const LAUNCHCTL_NO_SUCH_PROCESS: i32 = 3;
 
 impl ServiceManager for Launchctl {
     fn bootstrap(&self, spec: &ServiceSpec) -> Result<()> {
@@ -328,9 +334,17 @@ impl ServiceManager for Launchctl {
         Ok(())
     }
 
+    /// Booting out a service that is not loaded succeeds: it is already out.
     fn bootout(&self, label: &str) -> Result<()> {
+        if self.state(label)?.is_none() {
+            return Ok(());
+        }
         let output = self.run(&["bootout", &format!("{}/{label}", self.domain)])?;
-        if !output.status.success() && output.status.code() != Some(LAUNCHCTL_NO_SUCH_SERVICE) {
+        let gone = matches!(
+            output.status.code(),
+            Some(LAUNCHCTL_NO_SUCH_SERVICE | LAUNCHCTL_NO_SUCH_PROCESS)
+        );
+        if !output.status.success() && !gone {
             return Err(unavailable(format!(
                 "launchctl bootout failed: {}",
                 String::from_utf8_lossy(&output.stderr).trim()
@@ -824,6 +838,8 @@ pub fn install(
         Err(error) => {
             let _ = manager.bootout(&options.label);
             let _ = fs::remove_file(&options.plist);
+            // Let the unselected service go before anyone tries again.
+            let _ = crate::upgrade::released(paths);
             return Err(error);
         }
     };
