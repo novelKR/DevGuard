@@ -5,7 +5,7 @@
 //! process as one of them, against isolated fixture parents.
 
 mod support;
-use devguard_cli::candidate::{self, DaemonWorkload, Environment, Plan, Workload};
+use devguard_cli::candidate::{self, DaemonWorkload, Environment, Limits, Plan, Workload};
 use devguard_cli::Exit;
 use devguard_client::credential::CredentialHandoff;
 use devguard_client::Client;
@@ -99,6 +99,7 @@ fn plan(work: &Path, children: Vec<Workload>, daemon: DaemonWorkload) -> Plan {
         daemon,
         report: work.join("report"),
         tree: None,
+        limits: Limits::default(),
     }
 }
 
@@ -359,4 +360,42 @@ fn a_candidate_that_dies_fails_the_run_and_its_lease_is_still_released() {
     assert_eq!(report["lease"]["released"]["lease"]["phase"], "released");
     assert_eq!(fixture.authority.committed().unwrap(), Budget::ZERO);
     record("test-candidate-crash", report, &fixture.secret());
+}
+
+#[test]
+fn a_candidate_that_never_serves_nor_closes_is_stopped_and_its_lease_still_released() {
+    let fixture = Fixture::start();
+    let work = fixture.work("work");
+    // It waits for a release file that never comes: no endpoint, and no
+    // reaction to its lease ending.
+    let hanging: DaemonWorkload = {
+        let work = work.clone();
+        let never = work.join("never-released");
+        Box::new(move |_, _| Workload {
+            name: "candidate".into(),
+            ..payload_workload("candidate", &work, json!({"release": never}))
+        })
+    };
+    let mut plan = plan(&work, Vec::new(), hanging);
+    plan.limits = Limits {
+        endpoint: Duration::from_secs(2),
+        admission: Duration::from_secs(2),
+        close: Duration::from_secs(2),
+        release: Duration::from_secs(30),
+    };
+    let (exit, report) = run_plan(&fixture, &plan);
+    assert_eq!(exit, Exit::Code(1));
+    let failures = report["failures"].to_string();
+    assert!(failures.contains("never served its endpoint"), "{failures}");
+    assert!(failures.contains("did not close"), "{failures}");
+    // Asked to stop, the CLI forwarded SIGTERM to the candidate's group.
+    let candidate = &report["children"][0];
+    assert_eq!(
+        candidate["result"]["exit"],
+        json!({"signal": libc::SIGTERM})
+    );
+    assert_eq!(candidate["attempt"]["phase"], "released");
+    assert_eq!(report["lease"]["released"]["lease"]["phase"], "released");
+    assert_eq!(fixture.authority.committed().unwrap(), Budget::ZERO);
+    record("test-candidate-stopped", report, &fixture.secret());
 }

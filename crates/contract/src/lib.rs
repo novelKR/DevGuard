@@ -218,6 +218,20 @@ pub fn digest_bytes(value: &[u8]) -> String {
     format!("{:x}", Sha256::digest(value))
 }
 
+/// The SHA-256 of everything `reader` yields, read in bounded chunks, for
+/// files too large to hold in memory.
+pub fn digest_reader(mut reader: impl std::io::Read) -> std::io::Result<String> {
+    let mut hasher = Sha256::new();
+    let mut buffer = vec![0u8; 64 * 1024];
+    loop {
+        let read = reader.read(&mut buffer)?;
+        if read == 0 {
+            return Ok(format!("{:x}", hasher.finalize()));
+        }
+        hasher.update(&buffer[..read]);
+    }
+}
+
 /// The runner computes this digest locally. The authority only persists the digest.
 /// The struct field order and BTreeMap order define semantic encoding version 1.
 #[derive(Debug, Clone, Serialize)]

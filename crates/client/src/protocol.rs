@@ -156,19 +156,26 @@ pub struct AdmissionClosure {
     pub since_unix_ms: u64,
 }
 
-/// Whether admission is open, and every attempt and lease still charged.
+/// The most charged attempts and leases a quiescence report names, so a
+/// report always fits one frame.
+pub const MAX_QUIESCENCE_KEYS: usize = 16;
+
+/// Whether admission is open, and how much is still charged.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Quiescence {
     pub closure: Option<AdmissionClosure>,
-    pub attempts: Vec<AttemptRecord>,
-    pub leases: Vec<LeaseRecord>,
+    pub charged_attempts: u64,
+    pub charged_leases: u64,
+    /// The first charged attempts and leases, at most [`MAX_QUIESCENCE_KEYS`] each.
+    pub attempts: Vec<AttemptKey>,
+    pub leases: Vec<AttemptKey>,
 }
 
 impl Quiescence {
     /// Nothing is charged, so the service can be stopped without disturbing work.
     pub fn quiet(&self) -> bool {
-        self.attempts.is_empty() && self.leases.is_empty()
+        self.charged_attempts == 0 && self.charged_leases == 0
     }
 }
 

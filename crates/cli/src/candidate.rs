@@ -64,15 +64,30 @@ pub const APPLICABLE_TESTS: [&str; 4] = [
     "devguard-client",
     "devguard-cargo",
 ];
-/// How long the candidate may take to serve its endpoint.
-const ENDPOINT_LIMIT: Duration = Duration::from_secs(60);
-/// How long the candidate's admission may stay closed by its pressure.
-const ADMISSION_LIMIT: Duration = Duration::from_secs(90);
-/// How long the candidate may take to close once its lease has ended, and
-/// again after it is asked to stop.
-const CLOSE_LIMIT: Duration = Duration::from_secs(30);
-/// How long the lease may take to be released once its children end.
-const RELEASE_LIMIT: Duration = Duration::from_secs(60);
+/// How long a run waits for each step of the candidate and its lease.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Limits {
+    /// For the candidate to serve its endpoint.
+    pub endpoint: Duration,
+    /// For the candidate's admission, which its pressure may keep closed.
+    pub admission: Duration,
+    /// For the candidate to close once its lease has ended, and again after
+    /// it is asked to stop.
+    pub close: Duration,
+    /// For the lease to be released once its children end.
+    pub release: Duration,
+}
+
+impl Default for Limits {
+    fn default() -> Self {
+        Self {
+            endpoint: Duration::from_secs(60),
+            admission: Duration::from_secs(90),
+            close: Duration::from_secs(30),
+            release: Duration::from_secs(60),
+        }
+    }
+}
 const FIRST_BACKOFF: Duration = Duration::from_millis(250);
 const MAX_BACKOFF: Duration = Duration::from_secs(10);
 
@@ -107,6 +122,7 @@ pub struct Plan {
     pub report: PathBuf,
     /// The candidate tree, when the plan was made from one.
     pub tree: Option<PathBuf>,
+    pub limits: Limits,
 }
 
 /// The authority and the CLI a plan runs with.
@@ -140,6 +156,8 @@ struct ChildReport {
     /// The admitted attempt as last observed, with its reservation.
     attempt: Option<AttemptRecord>,
     reserved: Option<Budget>,
+    /// The reservation fits the lease. The parent enforces this; the report
+    /// records it rather than checking it.
     within_lease: bool,
     passed: bool,
 }
@@ -483,7 +501,7 @@ impl Orchestrator<'_> {
     /// and credential.
     fn smoke(&mut self, spec: &CandidateSpec) -> Result<()> {
         let paths = self.env.paths.candidate(&spec.id)?;
-        let deadline = Instant::now() + ENDPOINT_LIMIT;
+        let deadline = Instant::now() + self.plan.limits.endpoint;
         let hello = loop {
             match Client::connect(&paths.socket(), paths.uid(), requiring(&[])) {
                 Ok(client) => break client.hello,
@@ -542,7 +560,7 @@ impl Orchestrator<'_> {
             tasks: work.tasks.min(4),
         };
         // A new authority admits nothing until its pressure is normal.
-        let deadline = Instant::now() + ADMISSION_LIMIT;
+        let deadline = Instant::now() + self.plan.limits.admission;
         let mut attempts = 0;
         let admitted = loop {
             attempts += 1;
@@ -611,7 +629,7 @@ impl Orchestrator<'_> {
             }
         }
         if let Some((mut child, workload)) = self.candidate.take() {
-            let mut status = wait_with_limit(&mut child, CLOSE_LIMIT);
+            let mut status = wait_with_limit(&mut child, self.plan.limits.close);
             if status.is_none() {
                 self.fail("the candidate did not close when its lease ended; it was asked to stop");
                 // SAFETY: the pid is this process's unreaped child; the CLI
@@ -619,7 +637,7 @@ impl Orchestrator<'_> {
                 unsafe {
                     libc::kill(child.id() as libc::pid_t, libc::SIGTERM);
                 }
-                status = wait_with_limit(&mut child, CLOSE_LIMIT);
+                status = wait_with_limit(&mut child, self.plan.limits.close);
             }
             let receipt = self
                 .plan
@@ -639,7 +657,7 @@ impl Orchestrator<'_> {
             }
         }
         if let Some(token) = self.token.clone() {
-            let deadline = Instant::now() + RELEASE_LIMIT;
+            let deadline = Instant::now() + self.plan.limits.release;
             loop {
                 match endpoint.lease_status(key, &token) {
                     Ok(view) if view.lease.phase == LeasePhase::Released => {
@@ -875,6 +893,7 @@ pub fn plan(args: &CandidateArgs, environment: &BTreeMap<OsString, OsString>) ->
         }),
         report,
         tree: Some(tree),
+        limits: Limits::default(),
     })
 }
 

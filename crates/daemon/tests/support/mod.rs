@@ -208,6 +208,9 @@ pub fn options(paths: &AuthorityPaths, base: &Path, label: &str) -> InstallOptio
 pub struct FakeLaunchd {
     pub job: Mutex<Option<(String, Child)>>,
     pub bootstraps: Mutex<u32>,
+    /// While set, bootout fails and leaves the job running, as launchctl
+    /// can.
+    pub failing_bootout: std::sync::atomic::AtomicBool,
 }
 
 impl ServiceManager for FakeLaunchd {
@@ -234,6 +237,15 @@ impl ServiceManager for FakeLaunchd {
     }
 
     fn bootout(&self, label: &str) -> devguard_contract::Result<()> {
+        if self
+            .failing_bootout
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            return Err(devguard_contract::Error::new(
+                ErrorCode::ResourceControlUnavailable,
+                "launchctl bootout failed",
+            ));
+        }
         let mut job = self.job.lock().unwrap();
         if job.as_ref().is_some_and(|(loaded, _)| loaded == label) {
             let (_, mut child) = job.take().unwrap();
@@ -268,6 +280,8 @@ impl ServiceManager for FakeLaunchd {
 
 impl Drop for FakeLaunchd {
     fn drop(&mut self) {
+        self.failing_bootout
+            .store(false, std::sync::atomic::Ordering::Relaxed);
         // Release the lock before booting out, which takes it again.
         let label = self
             .job

@@ -8,40 +8,50 @@
 //! quiescent backup of the journal, the selection and the current manifest,
 //! starts the new release with admission still closed, verifies the running
 //! binary, the handshake and the state, and only then reopens admission. A
-//! drain that does not finish in time is abandoned: admission reopens on the
-//! current release and every charge is kept. If the new release cannot be
-//! verified, the previous one is started again on the same journal; a backup
-//! is never restored over state a release may have admitted from.
+//! drain that does not finish in time, or that is cancelled, is abandoned:
+//! admission reopens on the current release and every charge is kept. If the
+//! new release cannot be verified, the previous one serves again on the same
+//! journal; a backup is never restored over state a release may have
+//! admitted from. An upgrade interrupted after the new release started is
+//! completed by running it again.
 //!
 //! The release an upgrade replaces stays selected as the last known good
 //! one. Repair returns the service to it while no authority serves: it never
 //! starts a second authority, keeps a journal that cannot be opened closed,
 //! refuses a release that cannot serve the journal, and uses the recovery
 //! copy when the installed release is damaged.
+//!
+//! Whether a release can close admission is read from what its manifest
+//! states it was built with: a release before C11 cannot even decode the
+//! request, and closes the connection instead of refusing it.
 
 use crate::install::{
-    self, compiled, digest_file, freeze_copy, handshake, observe_running, read_release,
-    read_selection, render_plist, unix_ms, validate_package, wait_running, write_selection,
-    BuildCompatibility, InstallOptions, Package, RunningEvidence, Selection, SelectionEvent,
-    ServiceManager, ServiceSpec,
+    self, compiled, freeze_copy, handshake, observe_running, read_release, read_selection,
+    render_plist, unix_ms, validate_package, wait_running, write_selection, BuildCompatibility,
+    InstallOptions, Package, RunningEvidence, Selection, SelectionEvent, ServiceManager,
+    ServiceSpec,
 };
 use crate::paths::{read_private, replace_private, secure_directory, AuthorityPaths};
 use devguard_client::protocol::{AdmissionClosure, CallerCredential, Quiescence};
 use devguard_client::Client;
-use devguard_contract::{Capability, Compatibility, Error, ErrorCode, Result, Secret};
+use devguard_contract::{
+    digest_reader, Capability, Compatibility, Error, ErrorCode, Result, Secret,
+};
 use devguard_core::AuthorityStorage;
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
-use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+use std::os::fd::AsRawFd;
+use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 /// The default time a drain may take before the upgrade is abandoned.
 pub const DEFAULT_DRAIN_TIMEOUT: Duration = Duration::from_secs(60);
 /// How long a stopped service may take to release the endpoint and the lock.
-const STOP_LIMIT: Duration = Duration::from_secs(15);
+const STOP_LIMIT: Duration = Duration::from_secs(30);
 const POLL: Duration = Duration::from_millis(200);
 /// What every consumer of the service requires; a release without it cannot
 /// replace the current one.
@@ -64,6 +74,10 @@ fn unsupported(message: impl Into<String>) -> Error {
     Error::new(ErrorCode::ResourcePolicyUnsupported, message)
 }
 
+fn context(error: Error, message: impl std::fmt::Display) -> Error {
+    Error::new(error.code, format!("{message}: {}", error.message))
+}
+
 fn macos_only() -> Result<()> {
     if cfg!(target_os = "macos") {
         Ok(())
@@ -72,14 +86,52 @@ fn macos_only() -> Result<()> {
     }
 }
 
+/// Held for the whole of an installation, a staging, an upgrade, a repair or
+/// a reopening, so no two interleave. The authority lock alone cannot see the
+/// gaps between stopping one service and starting the next.
+pub struct Operation {
+    _file: File,
+}
+
+/// Take the operations lock, or refuse while another operation holds it.
+pub fn operation(paths: &AuthorityPaths) -> Result<Operation> {
+    let path = paths.operations_lock();
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK)
+        .open(&path)
+        .map_err(|_| unavailable("cannot open the operations lock"))?;
+    let meta = file
+        .metadata()
+        .map_err(|_| unavailable("cannot observe the operations lock"))?;
+    if !meta.is_file() || meta.uid() != paths.uid() || meta.mode() & 0o077 != 0 || meta.nlink() != 1
+    {
+        return Err(Error::new(
+            ErrorCode::Unauthorized,
+            "the operations lock must be a private regular file",
+        ));
+    }
+    // SAFETY: flock operates on the valid descriptor that `file` owns.
+    if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+        return Err(busy(
+            "another installation, upgrade, repair or reopening is running",
+        ));
+    }
+    Ok(Operation { _file: file })
+}
+
 /// The running program must be `artifact` of `release`, so a release's
 /// binaries are never mixed with another build's.
 fn running_from(release: &Package, artifact: &str) -> Result<()> {
     let running =
         std::env::current_exe().map_err(|_| unavailable("cannot locate the running program"))?;
-    if digest_file(&running)? != release.manifest.artifacts[artifact].sha256 {
+    if install::digest_file(&running)? != release.manifest.artifacts[artifact].sha256 {
         return Err(invalid(format!(
-            "run this from the release it selects: its {artifact} must be this program"
+            "run this from the release it installs: its {artifact} must be this program"
         )));
     }
     Ok(())
@@ -98,6 +150,34 @@ fn release_dir(paths: &AuthorityPaths, id: &str) -> Result<PathBuf> {
     Ok(paths.releases().join(id))
 }
 
+/// The intact copies of release `id`: its installed directory, then its
+/// recovery copy. Both hold the same manifest.
+fn copies(paths: &AuthorityPaths, id: &str) -> Result<Vec<Package>> {
+    Ok([release_dir(paths, id)?, paths.recovery().join(id)]
+        .iter()
+        .filter_map(|dir| read_release(dir).ok())
+        .collect())
+}
+
+/// Whether a release can close admission for an upgrade, by what its
+/// manifest states it was built with.
+fn drains(release: &Package) -> bool {
+    release
+        .manifest
+        .compatibility
+        .capabilities
+        .contains(&Capability::UpgradeDrain)
+}
+
+/// How to stop the service by hand, for messages.
+fn stop_hint(paths: &AuthorityPaths, options: &InstallOptions) -> String {
+    format!(
+        "stop the service with `launchctl bootout gui/{}/{}`",
+        paths.uid(),
+        options.label
+    )
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct StageReport {
     pub release_id: String,
@@ -113,6 +193,7 @@ pub fn stage(paths: &AuthorityPaths, package: &Path) -> Result<StageReport> {
     macos_only()?;
     let package = validate_package(package)?;
     running_from(&package, "devguardd")?;
+    let _operation = operation(paths)?;
     secure_directory(&paths.releases(), paths.uid(), true)?;
     install::sweep_incoming(&paths.releases());
     let id = package.manifest.release_id.clone();
@@ -191,6 +272,10 @@ pub struct UpgradeOptions {
     /// Replace a running release that cannot close admission by stopping it
     /// first; the replacement proceeds only if nothing is then charged.
     pub stopped: bool,
+    /// Set by a signal: a drain in progress is abandoned and admission
+    /// reopens. Once the drain has finished, the replacement completes or
+    /// rolls back instead.
+    pub cancel: Option<&'static AtomicBool>,
 }
 
 impl Default for UpgradeOptions {
@@ -198,6 +283,7 @@ impl Default for UpgradeOptions {
         Self {
             drain_timeout: DEFAULT_DRAIN_TIMEOUT,
             stopped: false,
+            cancel: None,
         }
     }
 }
@@ -241,6 +327,30 @@ pub struct UpgradeReport {
     pub selection: Selection,
 }
 
+/// An interrupted upgrade completed: the new release served verified, but
+/// its selection was not yet recorded or its admission not yet reopened.
+#[derive(Debug, Clone, Serialize)]
+pub struct CompletionReport {
+    pub to: String,
+    pub running: RunningEvidence,
+    /// The selection was recorded now.
+    pub recorded: bool,
+    /// Admission was reopened now.
+    pub reopened: bool,
+    pub selection: Selection,
+}
+
+/// What an upgrade did.
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "outcome", rename_all = "snake_case")]
+pub enum UpgradeOutcome {
+    /// The current release was drained and replaced.
+    Replaced(Box<UpgradeReport>),
+    /// An interrupted upgrade to the release was completed, or had nothing
+    /// left to do.
+    Completed(CompletionReport),
+}
+
 fn admin_secret(paths: &AuthorityPaths) -> Result<Secret> {
     let bytes = read_private(&paths.admin_credential(), paths.uid(), 1024)?;
     Secret::new(
@@ -249,7 +359,8 @@ fn admin_secret(paths: &AuthorityPaths) -> Result<Secret> {
     )
 }
 
-/// A new administrator session that requires the drain capability.
+/// A new administrator session that requires the drain capability. Only a
+/// release that states it may be asked: an earlier one closes the connection.
 fn administrator(paths: &AuthorityPaths, secret: &Secret) -> Result<Client> {
     let mut client = Client::connect(
         &paths.socket(),
@@ -336,18 +447,13 @@ fn write_plist(spec: &ServiceSpec, options: &InstallOptions) -> Result<()> {
     Ok(())
 }
 
-/// Stop the service and wait until it has released the endpoint and the
-/// authority lock; the returned storage holds the lock.
-fn stop(
-    paths: &AuthorityPaths,
-    manager: &dyn ServiceManager,
-    options: &InstallOptions,
-) -> Result<AuthorityStorage> {
-    manager.bootout(&options.label)?;
+/// Wait until no authority serves and the authority lock is free; the
+/// returned storage holds the lock.
+fn released(paths: &AuthorityPaths) -> Result<AuthorityStorage> {
     let deadline = Instant::now() + STOP_LIMIT;
     loop {
         let last = if handshake(paths).is_ok() {
-            busy("an authority still serves after the service was stopped")
+            busy("an authority still serves")
         } else {
             match AuthorityStorage::open(&paths.journal()) {
                 Ok(storage) => return Ok(storage),
@@ -361,7 +467,19 @@ fn stop(
     }
 }
 
-/// Start `release` as the service and verify that launchd runs it.
+/// Stop the service and wait until it has let go of the endpoint and the
+/// lock; the returned storage holds the lock.
+fn stop(
+    paths: &AuthorityPaths,
+    manager: &dyn ServiceManager,
+    options: &InstallOptions,
+) -> Result<AuthorityStorage> {
+    manager.bootout(&options.label)?;
+    released(paths)
+}
+
+/// Start `release` as the service and verify that launchd runs it. Only a
+/// job this call bootstrapped is booted out again.
 fn start(
     paths: &AuthorityPaths,
     manager: &dyn ServiceManager,
@@ -370,13 +488,10 @@ fn start(
 ) -> Result<RunningEvidence> {
     let spec = spec_for(release, options);
     write_plist(&spec, options)?;
-    let started = manager
-        .bootstrap(&spec)
-        .and_then(|()| wait_running(paths, manager, options, release));
-    if started.is_err() {
+    manager.bootstrap(&spec)?;
+    wait_running(paths, manager, options, release).inspect_err(|_| {
         let _ = manager.bootout(&options.label);
-    }
-    started
+    })
 }
 
 fn write_marker(paths: &AuthorityPaths, reason: &str) -> Result<()> {
@@ -389,21 +504,25 @@ fn write_marker(paths: &AuthorityPaths, reason: &str) -> Result<()> {
     replace_private(&paths.admission_marker(), &bytes)
 }
 
+/// Remove the marker durably, so a crash cannot bring it back.
 fn remove_marker(paths: &AuthorityPaths) -> Result<()> {
     match fs::remove_file(paths.admission_marker()) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(_) => Err(unavailable("cannot remove the admission marker")),
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(_) => return Err(unavailable("cannot remove the admission marker")),
     }
+    File::open(paths.state())
+        .and_then(|directory| directory.sync_all())
+        .map_err(|_| unavailable("cannot sync the admission marker's removal"))
 }
 
-/// Reopen admission on whatever release now serves: through the service when
-/// it can, or by removing the marker when it cannot read one.
-fn reopen(paths: &AuthorityPaths, secret: &Secret) -> Result<()> {
-    match admin_call(paths, secret, |client| client.open_admission()) {
-        Ok(_) => Ok(()),
-        Err(error) if error.code == ErrorCode::ResourcePolicyUnsupported => remove_marker(paths),
-        Err(error) => Err(error),
+/// Reopen admission on `release`, which now serves: through the service when
+/// it can close admission, otherwise by removing a marker it never reads.
+fn reopen(paths: &AuthorityPaths, secret: &Secret, release: &Package) -> Result<()> {
+    if drains(release) {
+        admin_call(paths, secret, |client| client.open_admission()).map(drop)
+    } else {
+        remove_marker(paths)
     }
 }
 
@@ -446,13 +565,17 @@ fn backup(
         let bytes = fs::read(&from).map_err(|_| unavailable("cannot read a backed-up file"))?;
         crate::paths::write_new_private(&directory.join(&name), &bytes)?;
     }
+    // A journal may be large: every file is hashed as it is read.
     let mut files = BTreeMap::new();
     for entry in fs::read_dir(&directory)
         .map_err(|_| unavailable("cannot list the backup"))?
         .flatten()
     {
         let name = entry.file_name().to_string_lossy().into_owned();
-        files.insert(name, digest_file(&entry.path())?);
+        let digest = File::open(entry.path())
+            .and_then(digest_reader)
+            .map_err(|_| unavailable("cannot hash the backup"))?;
+        files.insert(name, digest);
     }
     File::open(&directory)
         .and_then(|dir| dir.sync_all())
@@ -461,21 +584,22 @@ fn backup(
 }
 
 /// Close admission at the running service and wait until nothing is charged.
-/// On a timeout admission reopens and the charges are kept.
+/// On a timeout or a cancellation admission reopens and the charges are kept.
 fn drain(
     paths: &AuthorityPaths,
     secret: &Secret,
+    current: &Package,
     reason: &str,
-    timeout: Duration,
+    upgrade: &UpgradeOptions,
 ) -> Result<(Quiescence, Duration)> {
     let started = Instant::now();
     // Whatever interrupts the drain, admission does not stay closed.
-    let reopened = |error: Error| match reopen(paths, secret) {
+    let reopened = |error: Error| match reopen(paths, secret, current) {
         Ok(()) => error,
         Err(reopening) => Error::new(
             error.code,
             format!(
-                "{}; reopening admission also failed ({})",
+                "{}; reopening admission also failed ({}): run `devguard admission --open`",
                 error.message, reopening.message
             ),
         ),
@@ -484,114 +608,184 @@ fn drain(
         client.close_admission(reason.into())
     })
     .map_err(reopened)?;
-    let deadline = started + timeout;
+    let deadline = started + upgrade.drain_timeout;
     loop {
         let now = admin_call(paths, secret, |client| client.quiescence()).map_err(reopened)?;
         if now.quiet() {
             return Ok((at_close, started.elapsed()));
         }
-        if Instant::now() >= deadline {
-            reopen(paths, secret)?;
-            return Err(busy(format!(
-                "the drain did not finish in {} s: {} attempts and {} leases are still charged; admission reopened on the current release, which keeps them",
-                timeout.as_secs(),
-                now.attempts.len(),
-                now.leases.len()
-            )));
+        let cancelled = upgrade
+            .cancel
+            .is_some_and(|cancel| cancel.load(Ordering::Relaxed));
+        if cancelled || Instant::now() >= deadline {
+            let why = if cancelled {
+                "the upgrade was cancelled while draining".to_string()
+            } else {
+                format!(
+                    "the drain did not finish in {} s",
+                    upgrade.drain_timeout.as_secs()
+                )
+            };
+            return Err(reopened(busy(format!(
+                "{why}: {} attempts and {} leases are still charged; admission reopened on the current release, which keeps them",
+                now.charged_attempts, now.charged_leases
+            ))));
         }
         std::thread::sleep(POLL);
     }
 }
 
-/// Start the current release again after a failed replacement, on the same
-/// journal, and reopen admission.
+/// Let the current release serve again after a failed replacement, on the
+/// same journal, and reopen admission. A release that still serves, for
+/// example because stopping it failed, only needs admission reopened;
+/// otherwise it starts again once the endpoint and the lock are free.
 fn restore(
     paths: &AuthorityPaths,
     manager: &dyn ServiceManager,
     options: &InstallOptions,
     current: &Package,
     secret: &Secret,
+    fallback: Option<&str>,
     cause: Error,
 ) -> Error {
-    let restored = start(paths, manager, options, current).and_then(|_| reopen(paths, secret));
+    let restored = if observe_running(paths, manager, &options.label, current).is_ok() {
+        reopen(paths, secret, current)
+    } else {
+        released(paths)
+            .map(drop)
+            .and_then(|()| start(paths, manager, options, current))
+            .and_then(|_| reopen(paths, secret, current))
+    };
+    let id = &current.manifest.release_id;
     match restored {
         Ok(()) => Error::new(
             cause.code,
             format!(
-                "{}; release {} serves again with admission open",
-                cause.message, current.manifest.release_id
+                "{}; release {id} serves again with admission open",
+                cause.message
             ),
         ),
         Err(error) => Error::new(
             ErrorCode::ReconciliationRequired,
             format!(
-                "{}; restarting release {} also failed ({}): run `devguard repair --use last-known-good`",
-                cause.message, current.manifest.release_id, error.message
+                "{}; letting release {id} serve again also failed ({}): once nothing serves, `devguard repair --use last-known-good` starts {}",
+                cause.message,
+                error.message,
+                fallback.unwrap_or("the last known good release")
             ),
         ),
     }
 }
 
+/// Complete an interrupted upgrade to `target` if it already serves verified:
+/// record it if the selection does not name it yet, and reopen admission if
+/// it is still closed.
+fn complete(
+    paths: &AuthorityPaths,
+    manager: &dyn ServiceManager,
+    options: &InstallOptions,
+    selection: &mut Selection,
+    target: &Package,
+    secret: &Secret,
+) -> Result<Option<CompletionReport>> {
+    let to = target.manifest.release_id.clone();
+    let Ok(running) = observe_running(paths, manager, &options.label, target) else {
+        return Ok(None);
+    };
+    consumer_handshake(paths)?;
+    let recorded = selection.current != to;
+    if recorded {
+        let from = selection.current.clone();
+        selection.current = to.clone();
+        selection.last_known_good = Some(from.clone());
+        selection.history.push(SelectionEvent {
+            release_id: to.clone(),
+            event: format!(
+                "upgrade from {from} completed; {from} stays the last known good release"
+            ),
+            unix_ms: unix_ms(),
+        });
+        write_selection(paths, selection)?;
+    }
+    let state = admin_call(paths, secret, |client| client.quiescence())?;
+    let reopened = state.closure.is_some();
+    if reopened {
+        admin_call(paths, secret, |client| client.open_admission())?;
+    }
+    Ok(Some(CompletionReport {
+        to,
+        running,
+        recorded,
+        reopened,
+        selection: selection.clone(),
+    }))
+}
+
 /// Replace the current release with the staged release `to`, run from that
-/// release's own `devguard`.
+/// release's own `devguard`, or complete an interrupted upgrade to it.
 pub fn upgrade(
     paths: &AuthorityPaths,
     to: &str,
     manager: &dyn ServiceManager,
     options: &InstallOptions,
     upgrade: &UpgradeOptions,
-) -> Result<UpgradeReport> {
+) -> Result<UpgradeOutcome> {
     macos_only()?;
     paths.validate_existing()?;
+    let target = validate_package(&release_dir(paths, to)?)
+        .map_err(|error| context(error, format!("release {to}")))?;
+    running_from(&target, "devguard")?;
+    let _operation = operation(paths)?;
     let mut selection =
         read_selection(paths)?.ok_or_else(|| invalid("no release is installed; install one"))?;
+    let secret = admin_secret(paths)?;
+    if let Some(report) = complete(paths, manager, options, &mut selection, &target, &secret)? {
+        return Ok(UpgradeOutcome::Completed(report));
+    }
     let from = selection.current.clone();
     if from == to {
-        return Err(invalid(format!("release {to} is already current")));
+        return Err(Error::new(
+            ErrorCode::ReconciliationRequired,
+            format!(
+                "release {to} is selected but not running verified; {} and run `devguard repair --use last-known-good`",
+                stop_hint(paths, options)
+            ),
+        ));
     }
-    let target = validate_package(&release_dir(paths, to)?)
-        .map_err(|error| Error::new(error.code, format!("release {to}: {}", error.message)))?;
-    running_from(&target, "devguard")?;
     // The current release runs from its installed directory or, after a
-    // repair, from its recovery copy; both hold the same manifest.
-    let copies: Vec<Package> = [release_dir(paths, &from)?, paths.recovery().join(&from)]
-        .iter()
-        .filter_map(|dir| read_release(dir).ok())
-        .collect();
+    // repair, from its recovery copy.
+    let copies = copies(paths, &from)?;
     let manifest = copies.first().ok_or_else(|| {
         Error::new(
             ErrorCode::ReconciliationRequired,
-            format!("the current release {from} is not intact; use repair"),
+            format!(
+                "the current release {from} is not intact; {} and run `devguard repair --use last-known-good`",
+                stop_hint(paths, options)
+            ),
         )
     })?;
     let compatibility = check_compatibility(
         &manifest.manifest.compatibility,
         &target.manifest.compatibility,
     )?;
-    // Whichever copy runs is the one started again if the upgrade fails.
+    // Whichever copy runs is the one that serves again if the upgrade fails.
     let current = copies
         .into_iter()
         .find(|copy| observe_running(paths, manager, &options.label, copy).is_ok())
         .ok_or_else(|| {
             busy(format!(
-                "the current release {from} is not running verified; use repair"
+                "the current release {from} is not running verified; {} and run `devguard repair --use last-known-good`",
+                stop_hint(paths, options)
             ))
         })?;
     // The recovery copy is made before anything changes; repair uses it only
-    // once the release has been verified running.
+    // once the release has been selected.
     secure_directory(&paths.recovery(), paths.uid(), true)?;
     let recovery = paths.recovery().join(to);
     freeze_copy(&target, &recovery)?;
-    let secret = admin_secret(paths)?;
     let reason = format!("upgrade from {from} to {to}");
-    // A release that cannot close admission refuses the capability itself.
-    let drainable = match administrator(paths, &secret) {
-        Ok(_) => true,
-        Err(error) if error.code == ErrorCode::ResourcePolicyUnsupported => false,
-        Err(error) => return Err(error),
-    };
-    let (mode, at_close, waited) = if drainable {
-        let (at_close, waited) = drain(paths, &secret, &reason, upgrade.drain_timeout)?;
+    let (mode, at_close, waited) = if drains(&current) {
+        let (at_close, waited) = drain(paths, &secret, &current, &reason, upgrade)?;
         (DrainMode::ClosedAdmission, Some(at_close), waited)
     } else if upgrade.stopped {
         (DrainMode::Stopped, None, Duration::ZERO)
@@ -600,42 +794,46 @@ pub fn upgrade(
             "release {from} cannot close admission; rerun with --stopped to stop it first, which proceeds only if nothing is then charged"
         )));
     };
-    let mut storage = match stop(paths, manager, options) {
-        Ok(storage) => storage,
-        Err(error) => {
-            return Err(restore(paths, manager, options, &current, &secret, error));
-        }
+    let fallback = selection.last_known_good.clone();
+    let restore = |cause: Error| {
+        restore(
+            paths,
+            manager,
+            options,
+            &current,
+            &secret,
+            fallback.as_deref(),
+            cause,
+        )
     };
+    let mut storage = stop(paths, manager, options).map_err(restore)?;
     let (attempts, leases) = match storage.charged() {
         Ok(charged) => charged,
         Err(error) => {
             drop(storage);
-            return Err(restore(paths, manager, options, &current, &secret, error));
+            return Err(restore(error));
         }
     };
     if !attempts.is_empty() || !leases.is_empty() {
         drop(storage);
-        let cause = busy(format!(
+        return Err(restore(busy(format!(
             "{} attempts and {} leases are still charged; nothing was replaced",
             attempts.len(),
             leases.len()
-        ));
-        return Err(restore(paths, manager, options, &current, &secret, cause));
+        ))));
     }
     let backup = match backup(paths, &mut storage, &current, to) {
         Ok(backup) => backup,
         Err(error) => {
             drop(storage);
-            return Err(restore(paths, manager, options, &current, &secret, error));
+            return Err(restore(error));
         }
     };
     // The new release starts with admission closed and opens it only once
     // it has been verified.
     let marked = write_marker(paths, &reason);
     drop(storage);
-    if let Err(error) = marked {
-        return Err(restore(paths, manager, options, &current, &secret, error));
-    }
+    marked.map_err(restore)?;
     let verified = start(paths, manager, options, &target).and_then(|running| {
         consumer_handshake(paths)?;
         let before = admin_call(paths, &secret, |client| client.quiescence())?;
@@ -649,12 +847,17 @@ pub fn upgrade(
     let (running, before_reopening) = match verified {
         Ok(verified) => verified,
         Err(error) => {
-            let _ = manager.bootout(&options.label);
-            return Err(restore(paths, manager, options, &current, &secret, error));
+            // Only the new release is booted out, never a release that the
+            // manager reports under another program.
+            if observe_running(paths, manager, &options.label, &target).is_ok() {
+                let _ = manager.bootout(&options.label);
+            }
+            return Err(restore(error));
         }
     };
     // Verified: select it, keep the release it replaced as the one repair
-    // returns to, then reopen admission.
+    // returns to, then reopen admission. An upgrade interrupted from here on
+    // is completed by running it again.
     selection.current = to.into();
     selection.last_known_good = Some(from.clone());
     selection.history.push(SelectionEvent {
@@ -665,24 +868,22 @@ pub fn upgrade(
         unix_ms: unix_ms(),
     });
     write_selection(paths, &selection).map_err(|error| {
-        Error::new(
-            error.code,
+        context(
+            error,
             format!(
-                "release {to} serves with admission closed, but the selection could not be recorded ({}); run the upgrade again",
-                error.message
+                "release {to} serves with admission closed, but the selection could not be recorded; run the upgrade again to complete it"
             ),
         )
     })?;
     admin_call(paths, &secret, |client| client.open_admission()).map_err(|error| {
-        Error::new(
-            error.code,
+        context(
+            error,
             format!(
-                "release {to} serves and is selected, but admission could not be reopened: {}",
-                error.message
+                "release {to} serves and is selected, but admission could not be reopened; run the upgrade again or `devguard admission --open`"
             ),
         )
     })?;
-    Ok(UpgradeReport {
+    Ok(UpgradeOutcome::Replaced(Box::new(UpgradeReport {
         from,
         to: to.into(),
         compatibility,
@@ -696,7 +897,7 @@ pub fn upgrade(
         before_reopening,
         recovery,
         selection,
-    })
+    })))
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -742,6 +943,7 @@ pub fn repair(
 ) -> Result<RepairReport> {
     macos_only()?;
     paths.validate_existing()?;
+    let _operation = operation(paths)?;
     let mut selection =
         read_selection(paths)?.ok_or_else(|| invalid("no release is installed; install one"))?;
     let id = selection
@@ -755,12 +957,9 @@ pub fn repair(
     }
     // The journal must open: repair never creates, resets or restores it.
     let closed = |error: Error| {
-        Error::new(
-            error.code,
-            format!(
-                "the journal cannot be opened ({}); admission stays closed and repair never reinitializes it",
-                error.message
-            ),
+        context(
+            error,
+            "the journal cannot be opened, so admission stays closed and repair never reinitializes it",
         )
     };
     let mut storage = AuthorityStorage::open(&paths.journal()).map_err(closed)?;
@@ -782,21 +981,15 @@ pub fn repair(
         }
     };
     let compatibility =
-        repair_compatibility(&compiled(), &release.manifest.compatibility, leases.len()).map_err(
-            |error| {
-                Error::new(
-                    error.code,
-                    format!("release {id} cannot serve this journal: {}", error.message),
-                )
-            },
-        )?;
+        repair_compatibility(&compiled(), &release.manifest.compatibility, leases.len())
+            .map_err(|error| context(error, format!("release {id} cannot serve this journal")))?;
     let closure = fs::symlink_metadata(paths.admission_marker()).is_ok();
-    // A job left loaded, for example one that keeps failing, is replaced.
+    // A job left loaded, for example one that keeps failing, is replaced once
+    // it has let go of the endpoint and the lock.
     manager.bootout(&options.label)?;
+    drop(released(paths)?);
     let running = start(paths, manager, options, &release)?;
-    if closure {
-        reopen(paths, &admin_secret(paths)?)?;
-    }
+    // Record what now serves before anything else can fail.
     let from_recovery = damaged.is_some();
     let replaced = selection.current.clone();
     selection.current = id.clone();
@@ -813,6 +1006,16 @@ pub fn repair(
         unix_ms: unix_ms(),
     });
     write_selection(paths, &selection)?;
+    if closure {
+        reopen(paths, &admin_secret(paths)?, &release).map_err(|error| {
+            context(
+                error,
+                format!(
+                    "release {id} serves and is selected, but the admission an interrupted upgrade closed could not be reopened; run `devguard admission --open`"
+                ),
+            )
+        })?;
+    }
     Ok(RepairReport {
         release_id: id,
         artifact: release.dir.clone(),
@@ -825,9 +1028,50 @@ pub fn repair(
     })
 }
 
-/// This build's compatibility, for checks that compare releases.
-pub fn this_build() -> BuildCompatibility {
-    compiled()
+/// What reopening admission did.
+#[derive(Debug, Clone, Serialize)]
+pub struct AdmissionReport {
+    pub release_id: String,
+    /// The serving release reopened admission itself; a release before C11
+    /// reads no marker, so only the marker was removed.
+    pub through_service: bool,
+    pub quiescence: Option<Quiescence>,
+}
+
+/// Reopen admission on the selected release, which must serve verified, as
+/// after an upgrade or a repair interrupted once the release started.
+pub fn reopen_admission(
+    paths: &AuthorityPaths,
+    manager: &dyn ServiceManager,
+    options: &InstallOptions,
+) -> Result<AdmissionReport> {
+    macos_only()?;
+    paths.validate_existing()?;
+    let _operation = operation(paths)?;
+    let selection =
+        read_selection(paths)?.ok_or_else(|| invalid("no release is installed; install one"))?;
+    let running = copies(paths, &selection.current)?
+        .into_iter()
+        .find(|copy| observe_running(paths, manager, &options.label, copy).is_ok())
+        .ok_or_else(|| {
+            busy(format!(
+                "the selected release {} is not running verified; complete the upgrade or repair first",
+                selection.current
+            ))
+        })?;
+    let quiescence = if drains(&running) {
+        Some(admin_call(paths, &admin_secret(paths)?, |client| {
+            client.open_admission()
+        })?)
+    } else {
+        remove_marker(paths)?;
+        None
+    };
+    Ok(AdmissionReport {
+        release_id: selection.current,
+        through_service: quiescence.is_some(),
+        quiescence,
+    })
 }
 
 #[cfg(test)]

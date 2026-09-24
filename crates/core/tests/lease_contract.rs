@@ -109,7 +109,7 @@ fn a_child_needs_the_lease_token_its_generation_and_a_consistent_replay() {
         a.admit_child(&p, &lease_key("unknown"), &token, request("child-1"))
             .unwrap_err()
             .code,
-        ErrorCode::NotFound
+        ErrorCode::Unauthorized
     );
     let first = a
         .admit_child(&p, &lease, &token, request("child-1"))
@@ -334,4 +334,68 @@ fn a_journal_written_before_leases_gains_their_tables_on_activation() {
         a.lease_status(&lease, &token).unwrap().lease.phase,
         LeasePhase::Active
     );
+}
+
+#[test]
+fn a_child_link_that_would_undercount_the_host_fails_closed() {
+    // A link to a lease the journal does not hold.
+    let h = Harness::new();
+    let (mut a, p) = h.ready();
+    let (lease, token) = granted(&mut a, &p, "lease-1", 3_000);
+    let child = a
+        .admit_child(&p, &lease, &token, request("child-1"))
+        .unwrap();
+    assert_eq!(child.phase, AttemptPhase::Prepared);
+    drop(a);
+    let journal = Connection::open(&h.path).unwrap();
+    journal
+        .execute("UPDATE lease_children SET lease='missing'", [])
+        .unwrap();
+    drop(journal);
+    let error = AuthorityStorage::open(&h.path)
+        .and_then(|storage| {
+            TestAuthority::from_storage(
+                storage,
+                h.policy.clone(),
+                h.backend.clone(),
+                h.clock.clone(),
+            )
+        })
+        .map(|_| ())
+        .unwrap_err();
+    assert_eq!(error.code, ErrorCode::JournalInvalid);
+
+    // A charged child of a released lease.
+    let h = Harness::new();
+    let (mut a, p) = h.ready();
+    let (lease, token) = granted(&mut a, &p, "lease-1", 3_000);
+    a.admit_child(&p, &lease, &token, request("child-1"))
+        .unwrap();
+    drop(a);
+    let journal = Connection::open(&h.path).unwrap();
+    let record: String = journal
+        .query_row("SELECT record FROM leases", [], |row| row.get(0))
+        .unwrap();
+    let mut released: LeaseRecord = serde_json::from_str(&record).unwrap();
+    released.phase = LeasePhase::Released;
+    released.end_reason = Some(LeaseEndReason::Ended);
+    journal
+        .execute(
+            "UPDATE leases SET record=?1, charged=0",
+            [serde_json::to_string(&released).unwrap()],
+        )
+        .unwrap();
+    drop(journal);
+    let error = AuthorityStorage::open(&h.path)
+        .and_then(|storage| {
+            TestAuthority::from_storage(
+                storage,
+                h.policy.clone(),
+                h.backend.clone(),
+                h.clock.clone(),
+            )
+        })
+        .map(|_| ())
+        .unwrap_err();
+    assert_eq!(error.code, ErrorCode::JournalInvalid);
 }

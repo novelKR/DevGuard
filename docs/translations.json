@@ -98,22 +98,22 @@
       "id": "planning-verification",
       "source": "docs/planning/verification.md",
       "translation": "docs/ko/planning/verification.md",
-      "reviewed_source_sha256": "b57a14e55c2dd77c5edbaad9dc5aa76f80e6cc7cc1634b6ebee13adffad2929d",
-      "reviewed_translation_sha256": "e6548f12412e4b01302f31c1a5b4b0c08059ff9eb5f69c5534dbcf39afa57af6"
+      "reviewed_source_sha256": "4dfe26448c22dad28ec4a9bb21dd9fda10e0482750dc57faa8776375870d87c0",
+      "reviewed_translation_sha256": "ef7f260cef96fe7dd680398bd46541e5258cad0cf40f192d216beabc5f077787"
     },
     {
       "id": "operations",
       "source": "docs/operations.md",
       "translation": "docs/ko/operations.md",
-      "reviewed_source_sha256": "1b27e1a1111d914579ac2bf3d6171617678ddf283316f3a984a4f4ffbe777f98",
-      "reviewed_translation_sha256": "14d42890a3253e7a2b834b6e7e4b2b1d1c4c9392a94b5083586d73c3aad133df"
+      "reviewed_source_sha256": "5cbee2af75a57040afc03af38996b04325baf8cda187c9005b8186e6c3404f70",
+      "reviewed_translation_sha256": "1838eb527058b230f79db8629ea1b3850b5a0a5bb63864a94a128b2a0c2e1df6"
     },
     {
       "id": "contracts",
       "source": "docs/contracts.md",
       "translation": "docs/ko/contracts.md",
-      "reviewed_source_sha256": "d29c3d8a0c87c6a8a95022f142ff1c4c639c1eeac97c4245d810f7e53dd49112",
-      "reviewed_translation_sha256": "94d69553f8863b92e38dda71b448fe4f60bc6665b5b6cad64f6174c94721ec95"
+      "reviewed_source_sha256": "c28e2136c0c37d0371c88dea96f77fb55b9af651cbd04649d08c83f68845fef2",
+      "reviewed_translation_sha256": "702432a78e541c72d84b18721b4bfe261c4c45cbbc1070d39bc4b1f3d03dff2b"
     }
   ]
 }

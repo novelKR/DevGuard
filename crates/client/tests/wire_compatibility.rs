@@ -384,13 +384,19 @@ fn drain_requests_decode_strictly_and_report_what_is_charged() {
     assert!(serde_json::from_value::<Frame<Request>>(extended).is_err());
     let report = json!({"version": 1, "request_id": 15, "body": {"result": "quiescence", "value": {
         "closure": {"reason": "upgrade", "since_unix_ms": 1},
-        "attempts": [serde_json::to_value(attempt()).unwrap()],
-        "leases": [serde_json::to_value(lease()).unwrap()]}}});
+        "charged_attempts": 40, "charged_leases": 1,
+        "attempts": [key()], "leases": [key()]}}});
     let decoded = serde_json::from_value::<Frame<Response>>(report.clone()).unwrap();
     let Response::Quiescence(quiescence) = decoded.body else {
         panic!("expected a quiescence report")
     };
+    // Counts are exact; the named keys are only the first ones.
     assert!(!quiescence.quiet());
+    assert_eq!(quiescence.charged_attempts, 40);
+    assert_eq!(quiescence.attempts.len(), 1);
+    let mut records = report.clone();
+    records["body"]["value"]["attempts"] = json!([serde_json::to_value(attempt()).unwrap()]);
+    assert!(serde_json::from_value::<Frame<Response>>(records).is_err());
     let mut future = report;
     future["body"]["value"]["closure"]["future_field"] = json!(true);
     assert!(serde_json::from_value::<Frame<Response>>(future).is_err());

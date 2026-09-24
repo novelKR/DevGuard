@@ -25,6 +25,7 @@ use devguard_daemon::upgrade::UpgradeOptions;
 pub use receipt::Exit;
 use std::ffi::OsString;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 pub const USAGE: &str = "\
 devguard exec [--project ID] [--adapter auto|generic|cargo|cargo-pipeline] [--wait DURATION]
@@ -35,6 +36,7 @@ devguard test-candidate --candidate DIR --report DIR [--cpu MILLICPU] [--memory 
               [--ttl DURATION] [--wait DURATION]
 devguard upgrade --release ID [--drain-timeout DURATION] [--stopped]
 devguard repair --use last-known-good
+devguard admission --open
 devguard --help | --version
 
 exec admits the command at the central authority, starts it through devguard-launch under
@@ -56,7 +58,10 @@ release closed, verifies it and reopens admission; otherwise the current release
 serving. --stopped replaces a release that cannot close admission by stopping it first,
 only if nothing is then charged. repair returns the service to the last known good
 release, the one the last upgrade replaced, or to its recovery copy, while no authority
-serves; it never reinitializes the journal.";
+serves; it never reinitializes the journal. A signal during the drain cancels the upgrade
+and reopens admission; once the drain has finished, the replacement completes or rolls
+back. An upgrade interrupted after the new release started is completed by running it
+again. admission --open reopens admission on the serving release.";
 
 /// Run the command line `args` (without the program name). `locate` supplies
 /// the authority paths and the launch helper, and is consulted only by
@@ -107,6 +112,7 @@ pub fn run(
                             .drain_timeout
                             .unwrap_or(devguard_daemon::upgrade::DEFAULT_DRAIN_TIMEOUT),
                         stopped: upgrade.stopped,
+                        cancel: Some(cancellable()),
                     },
                 )
             }),
@@ -128,6 +134,19 @@ pub fn run(
                 Exit::Code(1)
             }
         },
+        args::Command::Admission => match locate() {
+            Ok((paths, _)) => operate(|| {
+                devguard_daemon::upgrade::reopen_admission(
+                    &paths,
+                    &Launchctl::new(paths.uid()),
+                    &InstallOptions::canonical(&paths),
+                )
+            }),
+            Err(error) => {
+                eprintln!("devguard: {}", error.message);
+                Exit::Code(1)
+            }
+        },
         args::Command::TestCandidate(candidate) => match locate() {
             Ok((paths, _)) => candidate::run_args(&candidate, &paths),
             Err(error) => {
@@ -136,6 +155,29 @@ pub fn run(
             }
         },
     }
+}
+
+static CANCEL: AtomicBool = AtomicBool::new(false);
+
+extern "C" fn cancel_upgrade(_: libc::c_int) {
+    CANCEL.store(true, Ordering::Relaxed);
+}
+
+/// SIGINT and SIGTERM cancel an upgrade's drain instead of ending the CLI,
+/// which could leave admission closed.
+fn cancellable() -> &'static AtomicBool {
+    // SAFETY: the handler only stores to a lock-free atomic.
+    unsafe {
+        libc::signal(
+            libc::SIGINT,
+            cancel_upgrade as *const () as libc::sighandler_t,
+        );
+        libc::signal(
+            libc::SIGTERM,
+            cancel_upgrade as *const () as libc::sighandler_t,
+        );
+    }
+    &CANCEL
 }
 
 /// Run an operation on the installed service and print its JSON report.

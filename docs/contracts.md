@@ -177,14 +177,14 @@ DG1-C09 installs a packaged release as the current user's LaunchAgent. The servi
   - the service launchd reports, with the same PID as the endpoint's handshake;
   - that PID's executable image (`proc_pidpath`) being the release's `devguardd`, with the manifest's hash.
 
-  Only then does it record `releases/selection.json` (0600: current and last known good, with a history) and keep an immutable recovery copy under `recovery/<id>`. If verification fails, the job is booted out and the plist removed; nothing is selected.
+  Only then does it record `releases/selection.json` (0600: current and last known good, with a history) and keep an immutable recovery copy under `recovery/<id>`. If verification fails, or the recovery copy or the selection cannot be written, the job is booted out and the plist removed; nothing is selected.
 - **Status.** `devguardd status` changes nothing. It reports:
   - the selection and the launchd state;
   - whether the plist is exactly the one this build renders for the current release;
   - the running PID, executable and hash against the manifest;
   - the releases and recovery copies.
 
-  It exits 0 only when the service runs the verified current release.
+  It exits 0 only when the service runs the verified current release, or its recovery copy, with admission open. It reports an admission closure on a release that honours it.
 - **Restart.** A restarted service reopens and reconciles the existing journal, as any start does. A missing or corrupt journal fails closed and stays down.
 - **Limits.** Replacing the installed release is an upgrade (C11, below); installation refuses it. There is no uninstall command. `launchctl bootout gui/<uid>/io.github.novelkr.devguard` and removing the plist stop the service and keep every release, recovery copy, the selection and the journal.
 
@@ -204,7 +204,7 @@ DG1-C10 lets the stable authority lend one bounded budget, a parent lease, to th
   - It becomes Ending when its owner ends it (`EndLease`), when its owner's process ends or belongs to an earlier boot, or when its deadline passes. An Ending lease admits no child.
   - It is Released once none of its children is charged, and its budget returns to the host. A Suspect child keeps the lease charged. The reconciler settles leases on every pass.
 - **Holders.** `LeaseStatus {key, token}` is a session of its own: it presents only the token, is never authenticated as a caller and can make no other request. It reports the lease's phase, budget, remainder, deadline and children.
-- **Journal.** The tables `leases` and `lease_children` are added when absent, and the journal schema stays 1. Committed capacity is the budget of every unreleased lease plus the reservations of charged attempts that are not lease children. A generation holding an unreleased lease cannot be retired. A C09 artifact that opens such a journal ignores the new tables: it counts the children as ordinary attempts and does not hold the unused remainder of a lease.
+- **Journal.** The tables `leases` and `lease_children` are added when absent, and the journal schema stays 1. Committed capacity is the budget of every unreleased lease plus the reservations of charged attempts that are not lease children. A generation holding an unreleased lease cannot be retired. Activation fails closed unless every child link names a lease the journal holds and no charged child belongs to a released lease. A C09 artifact that opens such a journal ignores the new tables: it counts the children as ordinary attempts and does not hold the unused remainder of a lease.
 - **Candidate authority.** `devguardd candidate --id ID --lease CONSUMER/GENERATION/ATTEMPT --capacity MILLICPU,BYTES,TASKS --token-fd N` serves an isolated authority whose whole capacity is a parent lease of the account's authority.
   - It reads the lease token from the inherited descriptor N and closes it. Without the token it contacts and creates nothing.
   - It asks the parent for the lease's status as a holder. The lease must be active and hold the capacity. A capacity that does not exceed the candidate daemon's own reservation (250 mCPU, 128 MiB and the bootstrap system tasks) is refused before anything is created.
@@ -231,22 +231,27 @@ DG1-C11 replaces and repairs the installed service without losing or duplicating
 - **Closing admission.** An administrator session can close admission (`CloseAdmission {reason}`), reopen it (`OpenAdmission`) and ask what is still charged (`Quiescence`). The service states `upgrade_drain` only to a client that requires it.
   - Closing writes a private marker, `state/admission.json`, before it takes effect, so a restarted service or the next release starts with admission still closed. Every Prepared attempt is cancelled and is known not to have started.
   - While admission is closed, admissions, launch commits, parent leases and lease children are refused with `ResourceUnavailable`, which a waiting CLI retries. Queries, cancellations, stops, owner reports and reconciliation continue. The status reports execution not ready, with the closure's reason.
-  - Closing again keeps the first closure; reopening removes the marker before it takes effect.
+  - Closing again keeps the first closure; reopening removes the marker durably before it takes effect.
+  - A report names how many attempts and leases are charged, and at most 16 of each, so it always fits one frame.
+  - A release before C11 cannot decode these requests and closes the connection unanswered. Whether a release can close admission is therefore read from what its manifest states.
+- **One operation at a time.** Installation, staging, upgrade, repair and reopening hold a private operations lock, `operations.lock` in the authority root, and refuse while another holds it.
 - **Upgrade.** `devguard upgrade --release ID [--drain-timeout DURATION] [--stopped]` must run from the staged release's own `devguard`.
   1. It refuses a release that speaks another wire version or protocol, reads another journal or configuration schema, or lacks durable admission or fenced launch, which consumers require. A release that states less than the current one is reported as a downgrade and allowed only within those limits. An incompatible downgrade is refused before anything changes.
   2. The current release must be running verified. The staged release's recovery copy is made before anything changes.
-  3. It closes admission at the running service and waits until no attempt or lease is charged. If the drain does not finish within the timeout (60 s by default), admission reopens on the current release, which keeps every charge, and nothing is replaced. A release before C11 cannot close admission: `--stopped` stops it first and proceeds only if its journal then charges nothing; otherwise that release starts again.
+  3. It closes admission at the running service and waits until no attempt or lease is charged. If the drain does not finish within the timeout (60 s by default), or SIGINT or SIGTERM cancels it, admission reopens on the current release, which keeps every charge, and nothing is replaced. After the drain a signal no longer interrupts: the replacement completes or rolls back. A release before C11 cannot close admission: `--stopped` stops it first and proceeds only if its journal then charges nothing; otherwise that release serves again.
   4. It stops the service. While holding the authority lock, it takes a quiescent backup under `backups/<time>-<from>-to-<to>/`: the journal as a complete SQLite copy, the selection and the current manifest, each hashed.
   5. It writes the closure marker and starts the new release, which therefore starts with admission closed. It verifies that launchd runs the release's own `devguardd`, that a consumer's handshake succeeds, and that the service reports admission closed with nothing charged.
   6. It records the new release as current and keeps the release it replaced as the last known good one, then reopens admission.
 
-  If the new release cannot be verified, it is booted out and the previous release starts again on the same journal, with admission reopened. The backup is never restored over a journal that a release may have admitted from.
+  If a step fails once the drain has finished, the previous release serves again on the same journal, with admission reopened. A release that still serves, because stopping it failed, only has its admission reopened; otherwise the new release, if it started, is booted out and the previous one starts again once the endpoint and the lock are free. Only a job the upgrade itself bootstrapped is booted out. The backup is never restored over a journal that a release may have admitted from.
+
+  An upgrade interrupted after the new release started is completed by running it again: it records the release if the selection does not name it yet, and reopens admission if it is still closed. `devguard admission --open` reopens admission on the serving, selected release; for a release before C11 it only removes the marker, which that release never reads.
 - **Repair.** `devguard repair --use last-known-good` returns the service to the last known good release: the one the last upgrade replaced, or the installed release when there has been no upgrade. The service runs only that release's own binaries, whichever `devguard` runs the repair.
   - It refuses while any authority serves: it never starts a second one, and a serving release is replaced by an upgrade.
   - The journal must open under the authority lock. One that cannot keeps admission closed; repair never creates, resets or restores it.
   - The release must read the journal's schema and serve the same consumers. One without parent leases is refused while the journal holds unreleased leases.
   - If the installed release is damaged, it runs the recovery copy instead, which status and a later upgrade then accept.
-  - It replaces any job left loaded and verifies the running binary. It reopens admission left closed by an interrupted upgrade, and records the repair in the selection.
+  - It replaces any job left loaded once it has let go of the endpoint and the lock, and verifies the running binary. It records the repair in the selection as soon as the release serves, and then reopens admission left closed by an interrupted upgrade.
 - **Limits.** An upgrade needs the service idle: running work is waited for, never interrupted. A release before C11 has no `upgrade` command. Returning to one uses its own installer after the service is stopped, and such a release ignores the closure marker.
 
 ## Durable admission and launch

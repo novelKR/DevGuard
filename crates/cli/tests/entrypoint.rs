@@ -21,6 +21,7 @@ fn help_and_version_describe_the_managed_contract() {
         "devguard test-candidate",
         "devguard upgrade",
         "devguard repair",
+        "devguard admission --open",
         "never run unmanaged",
         "no path or authority override",
     ] {
@@ -59,6 +60,8 @@ fn malformed_invocations_start_nothing_and_exit_125() {
         &["upgrade", "--release", "../escape"],
         &["repair"],
         &["repair", "--use", "current"],
+        &["admission"],
+        &["admission", "--close"],
         &[
             "test-candidate",
             "--candidate",

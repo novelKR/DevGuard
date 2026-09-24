@@ -894,7 +894,9 @@ impl<B: Backend, C: Clock> Authority<B, C> {
         self.journal.transaction(|tx| {
             validate_principal(tx, principal)?;
             journal::expire_prepared(tx, &now)?;
-            let (mut parent, token_hash) = journal::load_lease(tx, lease)?.ok_or_else(not_found)?;
+            // An unknown lease and a wrong token are refused alike.
+            let (mut parent, token_hash) =
+                journal::load_lease(tx, lease)?.ok_or_else(unauthorized)?;
             if !same_digest(&token_hash, &token.digest()) {
                 return Err(unauthorized());
             }

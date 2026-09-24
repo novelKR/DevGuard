@@ -440,6 +440,41 @@ pub(crate) fn validate_leases(tx: &Transaction<'_>) -> Result<()> {
         }
         validate_lease(&record)?;
     }
+    // Host accounting leaves every linked child to its lease, so a link must
+    // name a lease this journal holds, and a charged child's lease must still
+    // be charged; otherwise committed capacity would silently undercount.
+    let mut statement = tx
+        .prepare("SELECT consumer,generation,attempt,lease FROM lease_children")
+        .map_err(db_error)?;
+    let links = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+            ))
+        })
+        .map_err(db_error)?
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(db_error)?;
+    for (consumer, generation, attempt, lease) in links {
+        let lease = AttemptKey {
+            consumer_id: consumer.clone(),
+            consumer_generation: generation.clone(),
+            attempt_id: lease,
+        };
+        let child = AttemptKey {
+            consumer_id: consumer,
+            consumer_generation: generation,
+            attempt_id: attempt,
+        };
+        let (lease, _) = load_lease(tx, &lease)?.ok_or_else(lease_invalid)?;
+        // A retired generation's terminal children may be gone; the link stays.
+        if load(tx, &child)?.is_some_and(|child| child.phase.charged()) && !lease.charged() {
+            return Err(lease_invalid());
+        }
+    }
     Ok(())
 }
 

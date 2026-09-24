@@ -315,9 +315,12 @@ struct AdmissionGate {
 }
 
 impl AdmissionGate {
-    fn open(paths: &AuthorityPaths) -> Self {
+    /// `honours_marker` is false only for fixtures acting as a release before
+    /// C11, which knew no marker.
+    fn open(paths: &AuthorityPaths, honours_marker: bool) -> Self {
         let marker = paths.admission_marker();
-        let closure = fs::symlink_metadata(&marker).is_ok().then(|| {
+        let present = honours_marker && fs::symlink_metadata(&marker).is_ok();
+        let closure = present.then(|| {
             read_private(&marker, paths.uid(), 4096)
                 .ok()
                 .and_then(|bytes| serde_json::from_slice::<AdmissionClosure>(&bytes).ok())
@@ -433,14 +436,26 @@ impl Launcher {
         self.authority.lock().map_err(|_| poisoned())
     }
 
-    /// Whether admission is open, and every charged attempt and lease.
+    /// Whether admission is open, and how much is still charged.
     fn quiescence(&self) -> Result<Quiescence> {
         let closure = self.gate.lock()?.clone();
         let mut authority = self.authority()?;
+        let attempts = authority.attempts()?;
+        let leases = authority.leases()?;
         Ok(Quiescence {
             closure,
-            attempts: authority.attempts()?,
-            leases: authority.leases()?,
+            charged_attempts: attempts.len() as u64,
+            charged_leases: leases.len() as u64,
+            attempts: attempts
+                .into_iter()
+                .take(MAX_QUIESCENCE_KEYS)
+                .map(|record| record.key)
+                .collect(),
+            leases: leases
+                .into_iter()
+                .take(MAX_QUIESCENCE_KEYS)
+                .map(|lease| lease.key)
+                .collect(),
         })
     }
 
@@ -486,6 +501,12 @@ impl Launcher {
                 Ok(()) => {}
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
                 Err(_) => return Err(unavailable("cannot remove the admission marker")),
+            }
+            // A crash must not bring the removed marker back.
+            if let Some(directory) = self.gate.marker.parent() {
+                fs::File::open(directory)
+                    .and_then(|directory| directory.sync_all())
+                    .map_err(|_| unavailable("cannot sync the admission marker's removal"))?;
             }
             receipt(json!({"event": "admission_opened", "closure": *gate}));
             *gate = None;
@@ -928,7 +949,7 @@ impl Server {
                 principals: Arc::default(),
                 clock: clock.clone(),
                 paused: options.reconcile_paused.unwrap_or_default(),
-                gate: AdmissionGate::open(paths),
+                gate: AdmissionGate::open(paths, !options.without_upgrade_drain),
             }),
             Evidence::Closed { .. } => None,
         };
@@ -1258,6 +1279,11 @@ fn session(
             )?;
             return Ok(());
         }
+        // A fixture acting as a release before C11 cannot decode what C11
+        // added, so, like that release, it closes the connection unanswered.
+        if !context.upgrade_drain && unknown_before_c11(&frame.body) {
+            return Ok(());
+        }
         let body = handle(&mut state, frame.body, &context)
             .unwrap_or_else(|error| Response::Error(error.into()));
         framing::write_frame(
@@ -1271,6 +1297,17 @@ fn session(
         )?;
     }
     Ok(())
+}
+
+/// Requests that a release before C11 could not decode.
+fn unknown_before_c11(request: &Request) -> bool {
+    match request {
+        Request::Hello { compatibility } => {
+            compatibility.required.contains(&Capability::UpgradeDrain)
+        }
+        Request::CloseAdmission { .. } | Request::OpenAdmission | Request::Quiescence => true,
+        _ => false,
+    }
 }
 
 /// The launcher, for a session authenticated as the administrator.
@@ -2297,6 +2334,29 @@ mod tests {
                 .unwrap()
                 .closure
                 .is_none());
+        }
+
+        #[test]
+        fn an_unreadable_marker_keeps_admission_closed_until_an_administrator_reopens_it() {
+            let directory = base();
+            drop(started(directory.path(), false));
+            let paths = AuthorityPaths::fixture(directory.path());
+            crate::paths::write_new_private(&paths.admission_marker(), b"not a closure").unwrap();
+            let authority = started(directory.path(), true);
+            let error = workload(&authority)
+                .admit(request(&authority, "closed"))
+                .unwrap_err();
+            assert_eq!(error.code, ErrorCode::ResourceUnavailable);
+            assert!(error.message.contains("unreadable"), "{error:?}");
+            administrator(&authority).open_admission().unwrap();
+            assert!(!paths.admission_marker().exists());
+            assert_eq!(
+                workload(&authority)
+                    .admit(request(&authority, "open"))
+                    .unwrap()
+                    .phase,
+                AttemptPhase::Prepared
+            );
         }
     }
 

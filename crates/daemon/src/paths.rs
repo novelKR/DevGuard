@@ -158,6 +158,11 @@ impl AuthorityPaths {
     pub fn admission_marker(&self) -> PathBuf {
         self.state().join("admission.json")
     }
+    /// Held across an installation, a staging, an upgrade, a repair or a
+    /// reopening, so no two interleave.
+    pub fn operations_lock(&self) -> PathBuf {
+        self.root.join("operations.lock")
+    }
     /// Quiescent journal backups taken before a release is replaced.
     pub fn backups(&self) -> PathBuf {
         self.root.join("backups")

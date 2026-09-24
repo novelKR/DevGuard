@@ -177,14 +177,14 @@ DG1-C09는 패키지로 만든 release를 현재 사용자의 LaunchAgent로 설
   - launchd가 보고하는 서비스의 PID가 endpoint handshake의 PID와 같을 것;
   - 그 PID의 실행 image(`proc_pidpath`)가 release의 `devguardd`이고 manifest의 hash와 같을 것.
 
-  그다음에야 `releases/selection.json`(0600: current와 last known good, 이력)을 기록하고 `recovery/<id>`에 변경 불가능한 복구 사본을 보존한다. 검증에 실패하면 job을 bootout하고 plist를 제거하며, 아무것도 선택하지 않는다.
+  그다음에야 `releases/selection.json`(0600: current와 last known good, 이력)을 기록하고 `recovery/<id>`에 변경 불가능한 복구 사본을 보존한다. 검증에 실패하거나 복구 사본이나 선택을 기록할 수 없으면 job을 bootout하고 plist를 제거하며, 아무것도 선택하지 않는다.
 - **상태.** `devguardd status`는 아무것도 바꾸지 않고 다음을 보고한다.
   - 선택과 launchd 상태;
   - plist가 이 build가 현재 release에 대해 만드는 plist와 정확히 같은지;
   - 실행 중인 PID·실행 파일·hash와 manifest의 비교;
   - release와 복구 사본.
 
-  서비스가 검증된 current release를 실행할 때만 0으로 끝난다.
+  서비스가 검증된 current release나 그 복구 사본을 admission이 열린 채 실행할 때만 0으로 끝난다. 닫기를 따르는 release에서는 admission이 닫혀 있음을 보고한다.
 - **재시작.** 다시 시작한 서비스는 다른 시작과 마찬가지로 기존 journal을 다시 열어 대조한다. Journal이 없거나 손상되었으면 닫힌 채 멈춰 있다.
 - **범위.** 설치된 release를 교체하는 것은 upgrade(C11, 아래)이며 설치는 이를 거절한다. 제거 명령은 없다. `launchctl bootout gui/<uid>/io.github.novelkr.devguard`를 실행하고 plist를 지우면 서비스가 멈추며, 모든 release·복구 사본·선택·journal은 보존된다.
 
@@ -204,7 +204,7 @@ DG1-C10은 안정 authority가 호스트 예산을 두 번 발행하지 않고, 
   - Owner가 끝내거나(`EndLease`), owner 프로세스가 끝났거나 이전 boot의 것이거나, 기한이 지나면 Ending이 된다. Ending lease는 자식을 admission하지 않는다.
   - 과금 중인 자식이 하나도 없으면 Released가 되고 예산은 호스트로 돌아간다. Suspect 자식은 lease를 과금 상태로 유지한다. Reconciler는 매 pass마다 lease를 정리한다.
 - **보유자.** `LeaseStatus {key, token}`은 별도 session이다. Token만 제시하고 caller로 인증되지 않으며 다른 요청을 할 수 없다. Lease의 phase·예산·남은 예산·기한·자식을 보고한다.
-- **Journal.** `leases`와 `lease_children` table은 없을 때 추가하며 journal schema는 1로 유지한다. 과금 용량은 해제되지 않은 모든 lease의 예산과, lease 자식이 아닌 과금 attempt의 예약을 더한 값이다. 해제되지 않은 lease를 가진 generation은 폐기할 수 없다. 이런 journal을 여는 C09 artifact는 새 table을 무시한다. 자식은 일반 attempt로 계산하고, lease의 쓰지 않은 남은 예산은 보유하지 않는다.
+- **Journal.** `leases`와 `lease_children` table은 없을 때 추가하며 journal schema는 1로 유지한다. 과금 용량은 해제되지 않은 모든 lease의 예산과, lease 자식이 아닌 과금 attempt의 예약을 더한 값이다. 해제되지 않은 lease를 가진 generation은 폐기할 수 없다. 모든 자식 연결이 journal에 있는 lease를 가리키고, 과금 중인 자식이 해제된 lease에 속하지 않을 때만 활성화하며, 그렇지 않으면 닫힌 채 실패한다. 이런 journal을 여는 C09 artifact는 새 table을 무시한다. 자식은 일반 attempt로 계산하고, lease의 쓰지 않은 남은 예산은 보유하지 않는다.
 - **후보 authority.** `devguardd candidate --id ID --lease CONSUMER/GENERATION/ATTEMPT --capacity MILLICPU,BYTES,TASKS --token-fd N`은 전체 용량이 계정 authority의 부모 lease인 격리 authority를 제공한다.
   - 상속한 descriptor N에서 lease token을 읽고 닫는다. Token이 없으면 아무것에도 연결하지 않고 아무것도 만들지 않는다.
   - 보유자로서 부모에게 lease 상태를 묻는다. Lease는 active이고 용량을 담을 수 있어야 한다. 후보 daemon 자신의 예약(250 mCPU, 128 MiB와 bootstrap system task)을 넘지 않는 용량은 아무것도 만들기 전에 거절한다.
@@ -231,22 +231,27 @@ DG1-C11은 과금 중인 작업을 잃거나 중복하지 않고, 후보의 admi
 - **Admission 닫기.** 관리자 session은 admission을 닫고(`CloseAdmission {reason}`), 다시 열고(`OpenAdmission`), 아직 과금 중인 것을 물을 수 있다(`Quiescence`). 서비스는 `upgrade_drain`을 요구한 client에게만 이를 알린다.
   - 닫기는 효력이 생기기 전에 private marker `state/admission.json`을 기록한다. 따라서 다시 시작한 서비스나 다음 release도 admission이 닫힌 채로 시작한다. 모든 Prepared attempt는 취소되며 시작되지 않았음이 알려진다.
   - Admission이 닫힌 동안 admission, launch commit, 부모 lease, lease 자식은 `ResourceUnavailable`로 거절되며, 대기 중인 CLI는 이를 다시 시도한다. 조회·취소·정지·owner 보고·대조는 계속된다. Status는 실행 미준비와 닫은 이유를 보고한다.
-  - 다시 닫아도 처음의 닫기가 유지된다. 다시 열 때는 효력이 생기기 전에 marker를 지운다.
+  - 다시 닫아도 처음의 닫기가 유지된다. 다시 열 때는 효력이 생기기 전에 marker를 지우고 그 삭제를 영속화한다.
+  - 보고는 과금 중인 attempt와 lease의 수와 각각 최대 16개의 key를 담으므로 항상 frame 하나에 들어간다.
+  - C11 이전 release는 이 요청을 decode할 수 없어 응답 없이 연결을 닫는다. 따라서 release가 admission을 닫을 수 있는지는 그 manifest가 알리는 내용으로 판단한다.
+- **한 번에 하나의 작업.** 설치·staging·upgrade·repair·재개는 authority root의 private 작업 lock `operations.lock`을 보유하며, 다른 작업이 보유 중이면 거절한다.
 - **Upgrade.** `devguard upgrade --release ID [--drain-timeout DURATION] [--stopped]`는 staged release 자신의 `devguard`로 실행해야 한다.
   1. 다른 wire version이나 protocol을 쓰거나, 다른 journal·설정 schema를 읽거나, 소비자가 요구하는 내구성 admission이나 fenced launch가 없는 release는 거절한다. 현재 release보다 적게 알리는 release는 downgrade로 보고하며 이 범위 안에서만 허용한다. 호환되지 않는 downgrade는 아무것도 바꾸기 전에 거절한다.
   2. 현재 release가 검증된 상태로 실행 중이어야 한다. Staged release의 복구 사본은 아무것도 바꾸기 전에 만든다.
-  3. 실행 중인 서비스의 admission을 닫고 과금 중인 attempt나 lease가 없을 때까지 기다린다. Drain이 제한 시간(기본 60초) 안에 끝나지 않으면 현재 release에서 admission을 다시 열고, 그 release가 모든 과금을 유지하며, 아무것도 교체하지 않는다. C11 이전 release는 admission을 닫을 수 없다. `--stopped`는 그 release를 먼저 멈추고, journal에 과금된 것이 없을 때만 진행한다. 그렇지 않으면 그 release를 다시 시작한다.
+  3. 실행 중인 서비스의 admission을 닫고 과금 중인 attempt나 lease가 없을 때까지 기다린다. Drain이 제한 시간(기본 60초) 안에 끝나지 않거나 SIGINT·SIGTERM으로 취소되면 현재 release에서 admission을 다시 열고, 그 release가 모든 과금을 유지하며, 아무것도 교체하지 않는다. Drain이 끝난 뒤에는 signal로 중단되지 않으며, 교체는 끝까지 진행되거나 되돌려진다. C11 이전 release는 admission을 닫을 수 없다. `--stopped`는 그 release를 먼저 멈추고, journal에 과금된 것이 없을 때만 진행한다. 그렇지 않으면 그 release가 다시 제공한다.
   4. 서비스를 멈춘다. Authority lock을 보유한 채 `backups/<time>-<from>-to-<to>/` 아래에 quiescent 백업을 만든다. 완전한 SQLite 사본인 journal, 선택, 현재 manifest를 각각 hash와 함께 둔다.
   5. 닫기 marker를 기록하고 새 release를 시작하므로, 새 release는 admission이 닫힌 채 시작한다. launchd가 그 release 자신의 `devguardd`를 실행하는지, 소비자 handshake가 성공하는지, 서비스가 admission이 닫혀 있고 과금된 것이 없다고 보고하는지 검증한다.
   6. 새 release를 current로 기록하고 교체된 release를 last known good으로 남긴 뒤 admission을 다시 연다.
 
-  새 release를 검증할 수 없으면 bootout하고, 이전 release를 같은 journal로 다시 시작해 admission을 다시 연다. Release가 admission했을 수 있는 journal 위에 백업을 복원하지 않는다.
+  Drain이 끝난 뒤 어떤 단계가 실패하면 이전 release가 같은 journal로 다시 제공하며 admission을 다시 연다. 멈추기가 실패해 아직 제공 중인 release는 admission만 다시 연다. 그렇지 않으면 새 release가 시작되었을 경우 이를 bootout하고, endpoint와 lock이 비면 이전 release를 다시 시작한다. Upgrade가 직접 bootstrap한 job만 bootout한다. Release가 admission했을 수 있는 journal 위에 백업을 복원하지 않는다.
+
+  새 release가 시작된 뒤 중단된 upgrade는 같은 upgrade를 다시 실행하면 완료된다. 선택이 그 release를 아직 가리키지 않으면 기록하고, admission이 아직 닫혀 있으면 다시 연다. `devguard admission --open`은 제공 중인 선택된 release의 admission을 다시 연다. C11 이전 release에는 그 release가 읽지 않는 marker만 지운다.
 - **Repair.** `devguard repair --use last-known-good`는 서비스를 last known good release로 되돌린다. 이는 마지막 upgrade가 교체한 release이며, upgrade가 없었다면 설치된 release이다. 어느 `devguard`로 repair를 실행하든 서비스는 그 release 자신의 바이너리만 실행한다.
   - 어떤 authority든 제공 중이면 거절한다. 두 번째 authority를 시작하지 않으며, 제공 중인 release는 upgrade로 교체한다.
   - Journal은 authority lock 아래에서 열려야 한다. 열 수 없으면 admission은 닫힌 채로 남고, repair는 journal을 만들거나 초기화하거나 복원하지 않는다.
   - 그 release는 journal의 schema를 읽고 같은 소비자를 제공해야 한다. Journal에 해제되지 않은 lease가 있으면 부모 lease가 없는 release는 거절한다.
   - 설치된 release가 손상되었으면 복구 사본을 대신 실행하며, status와 이후 upgrade도 이를 받아들인다.
-  - 남아 있는 job은 교체하고 실행 중인 바이너리를 검증한다. 중단된 upgrade가 닫아 둔 admission을 다시 열고, repair를 선택 기록에 남긴다.
+  - 남아 있는 job이 endpoint와 lock을 놓으면 교체하고 실행 중인 바이너리를 검증한다. Release가 제공하는 즉시 repair를 선택 기록에 남기고, 그다음 중단된 upgrade가 닫아 둔 admission을 다시 연다.
 - **범위.** Upgrade에는 유휴 서비스가 필요하다. 실행 중인 작업은 끝날 때까지 기다리며 중단하지 않는다. C11 이전 release에는 `upgrade` 명령이 없다. 그 release로 돌아갈 때는 서비스를 멈춘 뒤 그 release 자신의 installer를 쓰며, 그 release는 닫기 marker를 무시한다.
 
 ## 내구성 admission과 launch

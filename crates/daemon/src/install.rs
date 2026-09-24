@@ -11,7 +11,7 @@
 //! restarts it only after a crash.
 
 use crate::paths::{replace_private, secure_directory, AuthorityPaths};
-use devguard_client::protocol::{Hello, WIRE_VERSION};
+use devguard_client::protocol::{AdmissionClosure, Hello, WIRE_VERSION};
 use devguard_client::Client;
 use devguard_contract::{
     digest_bytes, Capability, Compatibility, Error, ErrorCode, Result, PROTOCOL_VERSION,
@@ -724,6 +724,7 @@ pub fn install(
     }
     // The service needs the existing state; installation never creates or repairs it.
     paths.validate_existing()?;
+    let _operation = crate::upgrade::operation(paths)?;
     if handshake(paths).is_ok() {
         return Err(Error::new(
             ErrorCode::ResourceUnavailable,
@@ -798,22 +799,34 @@ pub fn install(
             return Err(error);
         }
     };
+    // A service that nothing selects must not keep running: if recording it
+    // fails, it is stopped and unloaded again.
     let recovery = paths.recovery().join(&id);
-    freeze_copy(&release, &recovery)?;
-    let mut selection = read_selection(paths)?.unwrap_or(Selection {
-        schema: SELECTION_SCHEMA.into(),
-        current: id.clone(),
-        last_known_good: None,
-        history: Vec::new(),
+    let recorded = freeze_copy(&release, &recovery).and_then(|_| {
+        let mut selection = read_selection(paths)?.unwrap_or(Selection {
+            schema: SELECTION_SCHEMA.into(),
+            current: id.clone(),
+            last_known_good: None,
+            history: Vec::new(),
+        });
+        selection.current = id.clone();
+        selection.last_known_good = Some(id.clone());
+        selection.history.push(SelectionEvent {
+            release_id: id.clone(),
+            event: "installed and verified running".into(),
+            unix_ms: unix_ms(),
+        });
+        write_selection(paths, &selection)?;
+        Ok(selection)
     });
-    selection.current = id.clone();
-    selection.last_known_good = Some(id.clone());
-    selection.history.push(SelectionEvent {
-        release_id: id.clone(),
-        event: "installed and verified running".into(),
-        unix_ms: unix_ms(),
-    });
-    write_selection(paths, &selection)?;
+    let selection = match recorded {
+        Ok(selection) => selection,
+        Err(error) => {
+            let _ = manager.bootout(&options.label);
+            let _ = fs::remove_file(&options.plist);
+            return Err(error);
+        }
+    };
     Ok(InstallReport {
         release_id: id,
         release: release_dir,
@@ -839,7 +852,10 @@ pub struct StatusReport {
     pub running_error: Option<String>,
     pub releases: Vec<String>,
     pub recovery: Vec<String>,
-    /// The service runs the verified current release.
+    /// Admission closed by an upgrade or an administrator, on a release that
+    /// honours the closure.
+    pub admission_closed: Option<AdmissionClosure>,
+    /// The service runs the verified current release with admission open.
     pub healthy: bool,
 }
 
@@ -875,6 +891,7 @@ pub fn status(
         running_error: None,
         releases: listing(&paths.releases()),
         recovery: listing(&paths.recovery()),
+        admission_closed: None,
         healthy: false,
     };
     let Some(selection) = selection else {
@@ -927,7 +944,27 @@ pub fn status(
         Ok(evidence) => report.running = Some(evidence),
         Err(error) => report.running_error = Some(error.message),
     }
-    report.healthy = report.plist_matches_selection && report.running.is_some();
+    // A release before C11 reads no marker, so one left behind closes nothing.
+    if release
+        .manifest
+        .compatibility
+        .capabilities
+        .contains(&Capability::UpgradeDrain)
+        && fs::symlink_metadata(paths.admission_marker()).is_ok()
+    {
+        report.admission_closed = Some(
+            crate::paths::read_private(&paths.admission_marker(), paths.uid(), 4096)
+                .ok()
+                .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+                .unwrap_or(AdmissionClosure {
+                    reason: "the admission marker is unreadable".into(),
+                    since_unix_ms: 0,
+                }),
+        );
+    }
+    report.healthy = report.plist_matches_selection
+        && report.running.is_some()
+        && report.admission_closed.is_none();
     Ok(report)
 }
 

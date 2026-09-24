@@ -20,12 +20,13 @@ use devguard_core::AuthorityStorage;
 use devguard_daemon::config::HostConfig;
 use devguard_daemon::install::{self, InstallOptions, Manifest, ServiceManager};
 use devguard_daemon::paths::{read_private, AuthorityPaths};
-use devguard_daemon::upgrade::{self, DrainMode, UpgradeOptions};
+use devguard_daemon::upgrade::{self, DrainMode, UpgradeOptions, UpgradeOutcome, UpgradeReport};
 use serde_json::json;
 use std::fs;
 use std::io::{Seek, SeekFrom, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
+use std::sync::atomic::AtomicBool;
 use std::time::{Duration, Instant};
 use support::*;
 
@@ -90,7 +91,7 @@ impl Installed {
         to: &str,
         drain: Duration,
         stopped: bool,
-    ) -> devguard_contract::Result<upgrade::UpgradeReport> {
+    ) -> devguard_contract::Result<UpgradeOutcome> {
         upgrade::upgrade(
             &self.paths,
             to,
@@ -99,8 +100,39 @@ impl Installed {
             &UpgradeOptions {
                 drain_timeout: drain,
                 stopped,
+                cancel: None,
             },
         )
+    }
+
+    /// An upgrade that must drain and replace the current release.
+    fn replaced(&self, to: &str, drain: Duration, stopped: bool) -> UpgradeReport {
+        match self.upgrade(to, drain, stopped).unwrap() {
+            UpgradeOutcome::Replaced(report) => *report,
+            other => panic!("expected a replacement: {other:?}"),
+        }
+    }
+
+    /// Make an installed release state what a release before C11 did: its
+    /// manifest names no upgrade drain. Its service, whose id ends in
+    /// `-nodrain`, also acts like one.
+    fn as_before_c11(&self, id: &str) {
+        for dir in [
+            self.paths.releases().join(id),
+            self.paths.recovery().join(id),
+        ] {
+            fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)).unwrap();
+            let file = dir.join("MANIFEST.json");
+            fs::set_permissions(&file, fs::Permissions::from_mode(0o600)).unwrap();
+            let mut manifest: Manifest = serde_json::from_slice(&fs::read(&file).unwrap()).unwrap();
+            manifest
+                .compatibility
+                .capabilities
+                .remove(&Capability::UpgradeDrain);
+            write_manifest(&dir, &manifest);
+            fs::set_permissions(&file, fs::Permissions::from_mode(0o400)).unwrap();
+            fs::set_permissions(&dir, fs::Permissions::from_mode(0o500)).unwrap();
+        }
     }
 
     fn pid(&self) -> u32 {
@@ -244,9 +276,7 @@ fn an_upgrade_drains_backs_up_starts_the_release_closed_and_then_reopens_admissi
     installed.stage("b", "0.1.0-test-b");
     let prepared = admitted(paths, "prepared");
     let before = installed.pid();
-    let report = installed
-        .upgrade("0.1.0-test-b", Duration::from_secs(20), false)
-        .unwrap();
+    let report = installed.replaced("0.1.0-test-b", Duration::from_secs(20), false);
     assert_eq!(
         (report.from.as_str(), report.to.as_str()),
         ("0.1.0-test-a", "0.1.0-test-b")
@@ -327,14 +357,12 @@ fn a_drain_that_does_not_finish_in_time_keeps_the_current_release_and_its_charge
     let quiescence = administrator(paths).quiescence().unwrap();
     assert!(quiescence.closure.is_none());
     assert_eq!(quiescence.attempts.len(), 1);
-    assert_eq!(quiescence.attempts[0].key, running.key);
+    assert_eq!(quiescence.attempts[0], running.key);
     let during = admitted(paths, "during");
     workload(paths).cancel(during.key).unwrap();
     // Once the work is settled, the same upgrade proceeds.
     settle(paths, &running);
-    let report = installed
-        .upgrade("0.1.0-test-b", Duration::from_secs(20), false)
-        .unwrap();
+    let report = installed.replaced("0.1.0-test-b", Duration::from_secs(20), false);
     assert_eq!(report.selection.current, "0.1.0-test-b");
     record(
         "drain-timeout",
@@ -424,13 +452,16 @@ fn an_incompatible_downgrade_is_refused_before_anything_changes() {
 #[test]
 fn a_release_that_cannot_drain_is_replaced_only_when_stopped_and_nothing_is_charged() {
     let installed = Installed::new("0.1.0-test-a-nodrain");
+    installed.as_before_c11("0.1.0-test-a-nodrain");
     let paths = &installed.paths;
+    // Like a release that cannot decode the capability, it closes the
+    // connection unanswered.
     assert_eq!(
         connect(paths, &[Capability::UpgradeDrain])
             .err()
             .unwrap()
             .code,
-        ErrorCode::ResourcePolicyUnsupported
+        ErrorCode::ResourceControlUnavailable
     );
     let running = committed(paths, "running");
     installed.stage("b", "0.1.0-test-b");
@@ -456,18 +487,29 @@ fn a_release_that_cannot_drain_is_replaced_only_when_stopped_and_nothing_is_char
     assert!(installed.backups().is_empty());
     // The restarted service kept the charge; once settled, the upgrade proceeds.
     settle(paths, &running);
-    let report = installed
-        .upgrade("0.1.0-test-b", Duration::from_secs(20), true)
-        .unwrap();
+    let report = installed.replaced("0.1.0-test-b", Duration::from_secs(20), true);
     assert_eq!(report.drain.mode, DrainMode::Stopped);
     assert!(report.compatibility.dropped.is_empty());
     assert_eq!(installed.executable(), installed.release("0.1.0-test-b"));
     assert!(connect(paths, &[Capability::UpgradeDrain]).is_ok());
     assert!(!paths.admission_marker().exists());
     admitted(paths, "after");
+    // An interrupted upgrade left admission closed and the new release down:
+    // repair returns to the earlier release, which reads no marker, and
+    // removes the marker so no later release starts closed.
+    administrator(paths)
+        .close_admission("an interrupted upgrade".into())
+        .unwrap();
+    installed.manager.bootout(LABEL).unwrap();
+    let repaired = upgrade::repair(paths, &installed.manager, &installed.options).unwrap();
+    assert_eq!(repaired.release_id, "0.1.0-test-a-nodrain");
+    assert!(repaired.reopened_closure);
+    assert!(repaired.compatibility.downgrade);
+    assert!(!paths.admission_marker().exists());
+    admitted(paths, "repaired");
     record(
         "upgrade-stopped",
-        json!({"refused": refused, "charged": charged, "report": report}),
+        json!({"refused": refused, "charged": charged, "report": report, "repaired": repaired}),
     );
 }
 
@@ -542,9 +584,7 @@ fn repair_after_an_upgrade_returns_to_the_release_it_replaced() {
     let installed = Installed::new("0.1.0-test-a");
     let paths = &installed.paths;
     installed.stage("b", "0.1.0-test-b");
-    installed
-        .upgrade("0.1.0-test-b", Duration::from_secs(20), false)
-        .unwrap();
+    installed.replaced("0.1.0-test-b", Duration::from_secs(20), false);
     let finished = admitted(paths, "finished");
     workload(paths).cancel(finished.key.clone()).unwrap();
     // The new release stops serving, as one that keeps failing would.
@@ -595,9 +635,7 @@ fn an_upgrade_proceeds_from_a_release_repaired_onto_its_recovery_copy() {
     let repaired = upgrade::repair(paths, &installed.manager, &installed.options).unwrap();
     assert!(repaired.from_recovery);
     installed.stage("b", "0.1.0-test-b");
-    let report = installed
-        .upgrade("0.1.0-test-b", Duration::from_secs(20), false)
-        .unwrap();
+    let report = installed.replaced("0.1.0-test-b", Duration::from_secs(20), false);
     assert_eq!(installed.executable(), installed.release("0.1.0-test-b"));
     assert_eq!(report.selection.current, "0.1.0-test-b");
     admitted(paths, "after");
@@ -605,4 +643,161 @@ fn an_upgrade_proceeds_from_a_release_repaired_onto_its_recovery_copy() {
         "upgrade-after-recovery",
         json!({"repair": repaired, "upgrade": report}),
     );
+}
+
+#[test]
+fn a_release_that_still_serves_after_a_failed_stop_only_reopens_admission() {
+    let installed = Installed::new("0.1.0-test-a");
+    let paths = &installed.paths;
+    installed.stage("b", "0.1.0-test-b");
+    let before = installed.pid();
+    installed
+        .manager
+        .failing_bootout
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    let error = installed
+        .upgrade("0.1.0-test-b", Duration::from_secs(20), false)
+        .unwrap_err();
+    installed
+        .manager
+        .failing_bootout
+        .store(false, std::sync::atomic::Ordering::Relaxed);
+    assert!(error.message.contains("serves again"), "{error:?}");
+    // The drained release was never stopped, and it admits again.
+    assert_eq!(installed.pid(), before);
+    assert_eq!(installed.current(), "0.1.0-test-a");
+    assert!(installed.backups().is_empty());
+    assert!(!paths.admission_marker().exists());
+    admitted(paths, "after");
+    record("stop-failed", json!({"error": error}));
+}
+
+#[test]
+fn repair_reopens_admission_that_an_interrupted_upgrade_left_closed() {
+    let installed = Installed::new("0.1.0-test-a");
+    let paths = &installed.paths;
+    installed.stage("b", "0.1.0-test-b");
+    installed.replaced("0.1.0-test-b", Duration::from_secs(20), false);
+    // A further upgrade closed admission and was then killed; the service
+    // went down with it.
+    administrator(paths)
+        .close_admission("an interrupted upgrade".into())
+        .unwrap();
+    installed.manager.bootout(LABEL).unwrap();
+    // Only one operation at a time.
+    let held = upgrade::operation(paths).unwrap();
+    let busy = upgrade::repair(paths, &installed.manager, &installed.options).unwrap_err();
+    assert_eq!(busy.code, ErrorCode::ResourceUnavailable, "{busy:?}");
+    drop(held);
+    let report = upgrade::repair(paths, &installed.manager, &installed.options).unwrap();
+    assert_eq!(report.release_id, "0.1.0-test-a");
+    assert!(report.reopened_closure);
+    assert!(!paths.admission_marker().exists());
+    assert_eq!(installed.executable(), installed.release("0.1.0-test-a"));
+    admitted(paths, "after");
+    let status = install::status(paths, &installed.manager, &installed.options).unwrap();
+    assert!(
+        status.healthy && status.admission_closed.is_none(),
+        "{status:?}"
+    );
+    record(
+        "repair-closure",
+        json!({"busy": busy, "report": report, "status": status}),
+    );
+}
+
+#[test]
+fn an_interrupted_upgrade_is_completed_by_running_it_again() {
+    let installed = Installed::new("0.1.0-test-a");
+    let paths = &installed.paths;
+    installed.stage("b", "0.1.0-test-b");
+    installed.replaced("0.1.0-test-b", Duration::from_secs(20), false);
+    // Interrupted before the selection was recorded: the new release serves
+    // with admission closed while the selection still names the old one.
+    let mut selection = install::read_selection(paths).unwrap().unwrap();
+    let recorded = selection.clone();
+    selection.current = "0.1.0-test-a".into();
+    selection.last_known_good = Some("0.1.0-test-a".into());
+    fs::write(paths.selection(), serde_json::to_vec(&selection).unwrap()).unwrap();
+    administrator(paths)
+        .close_admission("upgrade from 0.1.0-test-a to 0.1.0-test-b".into())
+        .unwrap();
+    let status = install::status(paths, &installed.manager, &installed.options).unwrap();
+    assert!(!status.healthy);
+    let UpgradeOutcome::Completed(first) = installed
+        .upgrade("0.1.0-test-b", Duration::from_secs(20), false)
+        .unwrap()
+    else {
+        panic!("expected a completion")
+    };
+    assert!(first.recorded && first.reopened);
+    assert_eq!(first.selection.current, recorded.current);
+    assert_eq!(first.selection.last_known_good, recorded.last_known_good);
+    admitted(paths, "recorded");
+    // Interrupted after the selection was recorded: only admission reopens.
+    administrator(paths)
+        .close_admission("upgrade interrupted again".into())
+        .unwrap();
+    let UpgradeOutcome::Completed(second) = installed
+        .upgrade("0.1.0-test-b", Duration::from_secs(20), false)
+        .unwrap()
+    else {
+        panic!("expected a completion")
+    };
+    assert!(!second.recorded && second.reopened);
+    // The administrator's own reopening does the same.
+    administrator(paths)
+        .close_admission("held by an operator".into())
+        .unwrap();
+    let reopened =
+        upgrade::reopen_admission(paths, &installed.manager, &installed.options).unwrap();
+    assert!(reopened.through_service);
+    // Nothing is left to do.
+    let UpgradeOutcome::Completed(third) = installed
+        .upgrade("0.1.0-test-b", Duration::from_secs(20), false)
+        .unwrap()
+    else {
+        panic!("expected a completion")
+    };
+    assert!(!third.recorded && !third.reopened);
+    admitted(paths, "after");
+    let status = install::status(paths, &installed.manager, &installed.options).unwrap();
+    assert!(status.healthy, "{status:?}");
+    record(
+        "upgrade-completed",
+        json!({"recorded": first, "reopened": second, "operator": reopened, "idle": third}),
+    );
+}
+
+static CANCELLED: AtomicBool = AtomicBool::new(true);
+
+#[test]
+fn a_signal_during_the_drain_cancels_the_upgrade_and_reopens_admission() {
+    let installed = Installed::new("0.1.0-test-a");
+    let paths = &installed.paths;
+    let running = committed(paths, "running");
+    installed.stage("b", "0.1.0-test-b");
+    let before = installed.pid();
+    let error = upgrade::upgrade(
+        paths,
+        "0.1.0-test-b",
+        &installed.manager,
+        &installed.options,
+        &UpgradeOptions {
+            drain_timeout: Duration::from_secs(60),
+            stopped: false,
+            cancel: Some(&CANCELLED),
+        },
+    )
+    .unwrap_err();
+    assert!(error.message.contains("cancelled"), "{error:?}");
+    assert_eq!(installed.pid(), before);
+    assert_eq!(installed.current(), "0.1.0-test-a");
+    assert!(installed.backups().is_empty());
+    let quiescence = administrator(paths).quiescence().unwrap();
+    assert!(quiescence.closure.is_none());
+    assert_eq!(quiescence.attempts, std::slice::from_ref(&running.key));
+    admitted(paths, "after");
+    settle(paths, &running);
+    record("upgrade-cancelled", json!({"error": error}));
 }

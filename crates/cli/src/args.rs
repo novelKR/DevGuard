@@ -21,6 +21,8 @@ pub enum Command {
     Upgrade(UpgradeArgs),
     /// `repair --use last-known-good`, the only repair.
     Repair,
+    /// `admission --open`: reopen admission on the serving release.
+    Admission,
     Help,
     Version,
 }
@@ -207,10 +209,11 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Command> {
         Some("test-candidate") => parse_candidate(raw).map(Command::TestCandidate),
         Some("upgrade") => parse_upgrade(raw).map(Command::Upgrade),
         Some("repair") => parse_repair(raw).map(|()| Command::Repair),
+        Some("admission") => parse_admission(raw).map(|()| Command::Admission),
         Some("--help" | "-h" | "help") if raw.next().is_none() => Ok(Command::Help),
         Some("--version" | "-V") if raw.next().is_none() => Ok(Command::Version),
         _ => Err(usage(
-            "expected exec, doctor, test-candidate, upgrade, repair, --help or --version",
+            "expected exec, doctor, test-candidate, upgrade, repair, admission, --help or --version",
         )),
     }
 }
@@ -310,6 +313,16 @@ fn parse_repair(mut raw: impl Iterator<Item = OsString>) -> Result<()> {
     ) {
         (Some("--use"), Some("last-known-good"), None) => Ok(()),
         _ => Err(usage("repair takes exactly --use last-known-good")),
+    }
+}
+
+fn parse_admission(mut raw: impl Iterator<Item = OsString>) -> Result<()> {
+    match (
+        raw.next().as_deref().and_then(|option| option.to_str()),
+        raw.next(),
+    ) {
+        (Some("--open"), None) => Ok(()),
+        _ => Err(usage("admission takes exactly --open")),
     }
 }
 
@@ -500,6 +513,10 @@ mod tests {
             parse(args(&["repair", "--use", "last-known-good"])).unwrap(),
             Command::Repair
         );
+        assert_eq!(
+            parse(args(&["admission", "--open"])).unwrap(),
+            Command::Admission
+        );
         for invalid in [
             &["upgrade"][..],
             &["upgrade", "--release", "../x"],
@@ -509,6 +526,9 @@ mod tests {
             &["repair"],
             &["repair", "--use", "current"],
             &["repair", "--use", "last-known-good", "--force"],
+            &["admission"],
+            &["admission", "--close"],
+            &["admission", "--open", "now"],
         ] {
             assert!(parse(args(invalid)).is_err(), "{invalid:?}");
         }
