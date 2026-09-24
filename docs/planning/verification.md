@@ -32,6 +32,7 @@ python3 scripts/qualify.py dg1-probes --offline
 python3 scripts/qualify.py dg1-scopes --offline
 python3 scripts/qualify.py dg1-launch --offline
 python3 scripts/qualify.py dg1-reconcile --offline
+python3 scripts/qualify.py dg1-cli --offline
 git diff --check
 ```
 
@@ -69,7 +70,7 @@ For the preparation PRs, preserve runtime/Cargo/journal state. Documentation che
 
 ## Planned suites and fault injection
 
-`scripts/qualify.py dg1-authority --offline` is available for C01 configuration/storage, `scripts/qualify.py dg1-auth --offline` for C02 authentication/transport, `scripts/qualify.py dg1-probes --offline` for C03 native evidence, `scripts/qualify.py dg1-scopes --offline` for C04 policy and scope evidence, `scripts/qualify.py dg1-launch --offline` for the C05 launch helper, and `scripts/qualify.py dg1-reconcile --offline` for C06 reconciliation. Other DevGuard suites and CodeSpace `scripts/qualify-devguard.py <suite>` remain planned interfaces until supplied by their work units. Each implementation PR supplies the actual interface, nonzero case inventory, timeouts, logs, isolation and cleanup, then updates its task command documentation. macOS/Ubuntu CI retains the full validator and both portable functional suites, preserving their separate reports and logs. Native suites run on macOS CI only and record `not_run` elsewhere; they never pass on a platform that cannot supply the evidence. Each native stage declares the raw receipts it must produce. A receipt that records a case as `not_run` makes the suite `incomplete`, not `passed`.
+`scripts/qualify.py dg1-authority --offline` is available for C01 configuration/storage, `scripts/qualify.py dg1-auth --offline` for C02 authentication/transport, `scripts/qualify.py dg1-probes --offline` for C03 native evidence, `scripts/qualify.py dg1-scopes --offline` for C04 policy and scope evidence, `scripts/qualify.py dg1-launch --offline` for the C05 launch helper, `scripts/qualify.py dg1-reconcile --offline` for C06 reconciliation, and `scripts/qualify.py dg1-cli --offline` for the C07 command-line owner. Other DevGuard suites and CodeSpace `scripts/qualify-devguard.py <suite>` remain planned interfaces until supplied by their work units. Each implementation PR supplies the actual interface, nonzero case inventory, timeouts, logs, isolation and cleanup, then updates its task command documentation. macOS/Ubuntu CI retains the full validator and both portable functional suites, preserving their separate reports and logs. Native suites run on macOS CI only and record `not_run` elsewhere; they never pass on a platform that cannot supply the evidence. Each native stage declares the raw receipts it must produce. A receipt that records a case as `not_run` makes the suite `incomplete`, not `passed`.
 
 C03 evidence is recorded in these files:
 - **Raw receipts** (in the report's `raw/` directory): boot ID and clock readings with units, host capacity, repeated process identities, including zombie, reaped and refused observations, native pressure readings with their derived rates, the measured time from the last sample to closed admission, and the service loop's time from an injected failure to Critical and its behavior with a stuck probe.
@@ -99,7 +100,12 @@ C06 evidence covers:
 - **Unit tests**: previous-boot release of a bound scope after lost tracking, reconciliation that writes nothing when nothing changes, attempt and instance listings, owner-bound launcher evidence with a bounded report set, and strict decoding of the new requests.
 - **Determinism**: observation tests pause the background reconciler, so an owner's observation, or its absence before a reap, decides what is tracked. Child-process authorities keep their receipts, which are checked to hold no permit or caller credential.
 
-The suite does not exercise the execution CLI, restart re-adoption of running scopes or Linux enforcement.
+The suite does not exercise restart re-adoption of running scopes or Linux enforcement.
+
+C07 evidence covers:
+- **Raw receipts**: a managed command's lifecycle with its preserved arguments, directory and environment and its receipt; a workload's signal death mirrored by the CLI; signals forwarded to every member of the workload's group; observation before reap keeping a survivor charged until it ends; a refused budget; explicit waits that are admitted, that reach their deadline and that a signal cancels; an unavailable authority; doctor diagnostics; project resolution; the eight-owner instance pool; and on a pseudo-terminal, an interrupt key reaching the workload and a stop mirrored to a job-control shell. Receipts are checked not to contain the caller credential.
+- **Real processes**: the test binary re-executed as the CLI owner against isolated authorities, starting the real `devguard-launch` and workloads, plus a pseudo-terminal session and a minimal job-control shell for the terminal cases. The shipped binary accepts no authority override, so its own entry point is tested only for usage and malformed invocations.
+- **Unit tests**: strict argument parsing, program resolution, budget precedence and the meaning digest; and, through a scripted authority, lost admission and launch-commit replies. A committed grant is released as never received and never recreated, and one that cannot be confirmed is neither released nor retried.
 
 C02 evidence covers actual OS socket UID/PID observations at both ends, distinct consumer/admin credentials, rejected helper-role authentication, strict current/future wire fixtures, 64 KiB frames, a 32-session limit, absolute 250 ms per-frame deadlines including idle waits, partial/slow/final responses and private credential-FD transport. Dedicated subprocess helpers verify FD closure before a subsequent exec and inspect argv/environment/debug/output for secret leakage. They are executed by parent tests and are not independent ignored qualification successes. Record process cleanup as well as the nonzero parent-case inventory.
 

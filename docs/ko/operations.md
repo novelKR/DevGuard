@@ -2,18 +2,20 @@
 
 [English](../operations.md) | [한국어](operations.md)
 
-C01은 명시 bootstrap·고정 저장소를, C02는 인증된 로컬 transport를, C03은 native macOS boot·프로세스·호스트 압력 증거를, C04는 협조적 정책 readback과 scope 증거를, C05는 fenced launch helper를, C06은 대조를 제공한다. PR과 병합 후 main 전달 증거는 구현과 별도로 추적한다. devguardd serve는 이 증거로 journal을 활성화하는 foreground 서비스를 실행하고 wire 등록·fenced launch·대조를 연다. 실행 CLI는 C07 전까지 없다. 정상 authority는 현재 macOS만 지원하며 Linux CI는 이식 가능한 계약과 제한된 fixture를 검사한다. DG-LINUX 제어 자격을 부여하지 않는다.
+C01은 명시 bootstrap·고정 저장소를, C02는 인증된 로컬 transport를, C03은 native macOS boot·프로세스·호스트 압력 증거를, C04는 협조적 정책 readback과 scope 증거를, C05는 fenced launch helper를, C06은 대조를, C07은 `devguard` 명령행 owner를 제공한다. PR과 병합 후 main 전달 증거는 구현과 별도로 추적한다. devguardd serve는 이 증거로 journal을 활성화하는 foreground 서비스를 실행하고 wire 등록·fenced launch·대조를 연다. `devguard exec`는 이 서비스를 통해 명령을 실행하고, `devguard doctor`는 이를 진단한다. 정상 authority는 현재 macOS만 지원하며 Linux CI는 이식 가능한 계약과 제한된 fixture를 검사한다. DG-LINUX 제어 자격을 부여하지 않는다.
 
 ## 제공 명령
 
 Bootstrap에서는 Rust 1.95.0과 단일 Cargo job을 사용한다.
 
 ```sh
-CARGO_BUILD_JOBS=1 cargo build --locked -p devguard-daemon -p devguard-launch
+CARGO_BUILD_JOBS=1 cargo build --locked -p devguard-daemon -p devguard-launch -p devguard-cli
 target/debug/devguardd paths
 target/debug/devguardd init
 target/debug/devguardd check
 target/debug/devguardd serve
+target/debug/devguard doctor --require admission,macos-cooperative
+target/debug/devguard exec --wait 30s -- /usr/bin/true
 ```
 
 `paths`는 운영 계정의 경로를 조회한다. `init`은 최초 bootstrap에만 쓰며 새 journal, 운영자 설정, 분리된 CLI·관리 자격을 생성한다. 기존 상태는 거절하고 덮어쓰지 않는다. `check`는 저장소 배타 소유권과 설정·journal을 검사하며 `runtime_ready: false`를 보고한다. Boot clock을 읽거나 복구·적용 완료를 주장하지 않는다. 다른 소유자가 잠금을 보유하면 두 번째 authority를 얻을 수 없다.
@@ -37,7 +39,9 @@ Native 증거를 사용할 수 있으면 `serve`는 관측한 호스트로 정�
 
 Native 증거가 없는 플랫폼이거나 macOS 관측이 실패하면 `serve`는 저장소만 보유한 닫힌 동작을 유지하고 어느 경우인지 보고한다.
 
-인증된 status는 storage_validated, registration_ready, execution_ready, 이유와 설정 fingerprint를 보고한다. Native 증거가 있으면 등록과 실행이 준비된 상태이며, admission은 여전히 호스트 압력과 용량을 따른다. 그렇지 않으면 둘 다 false이며 이유는 미지원 플랫폼과 native 관측 실패를 구분한다. Owner가 helper를 시작하려면 `devguard-launch`를 서비스와 함께 빌드해야 한다. 일반 실행·설치·LaunchAgent·repair는 후속 작업이다. 설정이나 handshake 성공만으로 명령이 관리되지는 않으며 bootstrap 빌드는 자기 적용 증거가 아니다. 영속 서비스는 제거 가능한 target 경로를 사용하지 않는다. 보호된 설치는 C09의 범위다.
+인증된 status는 storage_validated, registration_ready, execution_ready, 이유와 설정 fingerprint를 보고한다. Native 증거가 있으면 등록과 실행이 준비된 상태이며, admission은 여전히 호스트 압력과 용량을 따른다. 그렇지 않으면 둘 다 false이며 이유는 미지원 플랫폼과 native 관측 실패를 구분한다. `devguard`는 자기 옆의 `devguard-launch`를 찾으므로 둘을 함께 빌드한다. 설치·LaunchAgent·repair는 후속 작업이다. 설정이나 handshake 성공만으로 명령이 관리되지는 않으며 bootstrap 빌드는 자기 적용 증거가 아니다. 영속 서비스는 제거 가능한 target 경로를 사용하지 않는다. 보호된 설치는 C09의 범위다.
+
+`devguard exec [--project ID] [--wait DURATION] [--cpu MILLICPU] [--memory SIZE] [--tasks N] [--receipt PATH] -- PROGRAM [ARGS...]`는 명령을 admission하고 `devguard-launch`로 시작한 뒤 끝날 때까지 기다린다. 프로그램과 인자는 `--` 뒤에 두며 shell은 사용하지 않는다. 명령의 종료값으로 끝나거나 그 signal로 끝나며, 아무것도 시작하지 않았으면 125로 끝난다. `--wait`가 없으면 거절 즉시 끝나고, `--wait`가 있으면 용량·압력 거절을 기한까지 다시 시도한다. `--receipt`는 private JSON receipt를 기록한다. `devguard doctor`는 JSON 진단을 출력하며, `--require admission,registration,macos-cooperative`를 주면 요구 사항이 하나라도 충족되지 않을 때 실패한다. [계약 문서](contracts.md#명령행-owner)를 참조한다.
 
 ## 정상 소유권과 경로
 
@@ -80,7 +84,7 @@ memory_bytes = 2147483648
 tasks = 32
 ```
 
-이 예시는 실행이 이미 lease를 소비한다는 증거가 아니다. 후속 CLI 도입 전에 실제 절대 프로젝트 root를 운영자 설정에 등록한다. 프로젝트나 자격은 추가 호스트 예산을 만들지 않는다.
+이 예시는 실행이 이미 lease를 소비한다는 증거가 아니다. `devguard exec --project ID`를 쓰려면 프로젝트의 절대 root를 운영자 설정에 등록하고 그 안에서 실행해야 한다. 프로젝트나 자격은 추가 호스트 예산을 만들지 않는다.
 
 ## Client 인증과 transport 제한
 
@@ -90,7 +94,7 @@ Wire는 4-byte 길이, JSON payload 최대 64 KiB, 활성 세션 최대 32개와
 
 Private-FD API는 시작 metadata에 descriptor 식별자만 전달한다. Receiver는 이후 exec 전에 자격 FD를 소비하고 닫으며 실제 subprocess로 이 경계를 시험한다. Secret을 argv·환경·debug·payload 상속 descriptor에 두면 안 된다. 이 시험은 C05 helper 권한이나 사용자 프로그램 시작의 증거가 아니다. OS UID/PID 관측을 제공하며 C03은 authority 안에서 이를 native boot/start 정체성과 결합한다. Native 증거가 있으면 인증된 소비자는 관측된 자기 프로세스를 instance로 등록하고, 그다음 admission과 일회성 launch grant를 받을 수 있다. Grant는 호출자가 아니라 그 helper가 제시한다.
 
-SDK 조회 예제는 CARGO_BUILD_JOBS=1 cargo build --locked -p devguard-client --example inspect로 빌드한다. 인터페이스는 inspect SOCKET UID CONSUMER GENERATION CREDENTIAL_FD다. 부모가 전용 상속 FD로 secret byte를 제공해야 하며 인자는 FD 번호와 비밀이 아닌 연결 metadata만 전달한다. 관측 peer와 인증된 status를 출력하는 예제이며 후속 일반 실행 CLI는 아니다.
+SDK 조회 예제는 CARGO_BUILD_JOBS=1 cargo build --locked -p devguard-client --example inspect로 빌드한다. 인터페이스는 inspect SOCKET UID CONSUMER GENERATION CREDENTIAL_FD다. 부모가 전용 상속 FD로 secret byte를 제공해야 하며 인자는 FD 번호와 비밀이 아닌 연결 metadata만 전달한다. 관측 peer와 인증된 status를 출력하는 예제이며 `devguard` 실행 CLI가 아니다.
 
 ## 호환성·검사·복귀
 
@@ -103,6 +107,7 @@ python3 scripts/qualify.py dg1-probes --offline
 python3 scripts/qualify.py dg1-scopes --offline
 python3 scripts/qualify.py dg1-launch --offline
 python3 scripts/qualify.py dg1-reconcile --offline
+python3 scripts/qualify.py dg1-cli --offline
 python3 scripts/validate.py --offline
 ```
 
@@ -163,6 +168,20 @@ Core·scripted-table·transcript·wire·session 시험은 claim transition, Susp
 
 Core·launcher 증거·서비스·wire 시험은 이전 boot 회수, 옛 PID를 누가 쓰든 이루어지는 이전 boot instance 폐기, release reason record 불변 조건, 쓰기 없는 대조, attempt·instance 목록, owner에 묶인 보고, owner 생존 규칙, 오염된 authority에서 서비스를 멈추는 reconciler, 엄격한 요청 decoding을 다룬다.
 
-이 suite들은 실행 CLI, Linux 강제, 자기 적용, foreground SLO를 not_run으로 남긴다. 전체 검증은 기존 44개 시험과 workspace crate 6개의 명시적 전체 의존 그래프를 검사한다. Launch crate는 시험의 격리 authority를 위해서만 daemon에 의존한다. Core·contract는 daemon 설정과 native adapter에 독립적이며 client는 core에 의존하지 않는다.
+`dg1-cli`도 macOS에서만 실행한다. 먼저 `devguard-launch`를 빌드한 뒤, CLI를 별도의 owner 프로세스로 격리 authority에 연결해 실행한다. 검사 항목은 다음과 같다.
+- 명령의 인자·작업 디렉터리·환경·종료값이 보존되고, scope가 끝난 뒤 회수되는지
+- Signal로 끝난 workload가 CLI를 같은 signal로 끝내는지
+- CLI에 보낸 signal이 workload group의 모든 구성원에 도달하는지
+- Reap 전 관측으로 살아남은 구성원이 끝날 때까지 추적되고 과금되는지
+- 호스트가 수용할 수 없는 예산이 아무것도 시작하지 않는지
+- 명시적 대기가 용량이 회수된 뒤 admission되는지, 기한에 끝나는지, signal로 취소되는지
+- 사용할 수 없는 authority가 아무것도 시작하지 않는지, 요구 사항 유무에 따른 doctor 진단
+- 등록된 프로젝트의 상한과 작업 디렉터리 포함 조건
+- 동시 owner가 최대 8개인지
+- Pseudo-terminal에서 interrupt 키가 workload에 바로 도달하는지, 정지가 반영되어 job control shell이 terminal을 되찾는지
 
-복귀할 때 작업 소유 foreground 프로세스를 중지하고 보존한 설정과 schema 1 journal에 호환되는 source/artifact를 선택하며 영속 상태·자격을 유지한다. C03 활성화는 새 record 종류를 추가하지 않고 기존 복구만 수행하므로 C02 artifact로 같은 상태를 다시 열 수 있다. C06부터는 정상 서비스를 통해 workload가 시작될 수 있다. 대조가 없는 artifact로 복귀하기 전에 새 작업 시작을 멈추고 과금 중인 attempt가 종결 phase에 이를 때까지 기다린다. C05 artifact는 같은 journal을 읽지만 launch를 닫아 두고 대조하지 않으므로 남은 attempt는 과금된 Suspect로 남는다. Scope가 실행 중일 때 서비스가 멈추면 다시 시작한다. 그 attempt들은 owner가 claim되지 않은 grant를 보고하거나 reboot가 종료를 입증할 때까지 과금된 Suspect로 남는다. 복귀나 재시작을 성공시키려고 journal이나 tombstone을 삭제하지 않는다.
+인자·준비·진입점·scripted 응답 유실 시험은 엄격한 parsing, 프로그램 탐색, 예산 우선순위, 의미 digest, 유실된 admission·launch commit 응답, 실제 바이너리의 잘못된 호출을 다룬다.
+
+이 suite들은 Cargo adapter, Linux 강제, 자기 적용, foreground SLO를 not_run으로 남긴다. 전체 검증은 기존 44개 시험과 workspace crate 7개의 명시적 전체 의존 그래프를 검사한다. Launch crate는 시험의 격리 authority를 위해서만 daemon에 의존한다. CLI는 daemon의 경로와 설정에 의존하며, fixture에는 시험에서만 의존한다. Core·contract는 daemon 설정과 native adapter에 독립적이며 client는 core에 의존하지 않는다.
+
+복귀할 때 작업 소유 foreground 프로세스를 중지하고 보존한 설정과 schema 1 journal에 호환되는 source/artifact를 선택하며 영속 상태·자격을 유지한다. C03 활성화는 새 record 종류를 추가하지 않고 기존 복구만 수행하므로 C02 artifact로 같은 상태를 다시 열 수 있다. C06부터는 정상 서비스를 통해 workload가 시작될 수 있다. 대조가 없는 artifact로 복귀하기 전에 새 작업 시작을 멈추고 과금 중인 attempt가 종결 phase에 이를 때까지 기다린다. C05 artifact는 같은 journal을 읽지만 launch를 닫아 두고 대조하지 않으므로 남은 attempt는 과금된 Suspect로 남는다. Scope가 실행 중일 때 서비스가 멈추면 다시 시작한다. 그 attempt들은 owner가 claim되지 않은 grant를 보고하거나 reboot가 종료를 입증할 때까지 과금된 Suspect로 남는다. C07은 서비스 상태를 바꾸지 않는다. CLI를 되돌리려면 CLI로 명령을 시작하는 것을 멈춘다. 이미 시작한 명령은 scope가 끝날 때까지 과금되며, 관리되지 않는 실행으로 대체하지 않는다. 복귀나 재시작을 성공시키려고 journal이나 tombstone을 삭제하지 않는다.

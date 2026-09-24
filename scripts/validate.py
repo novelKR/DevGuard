@@ -72,6 +72,9 @@ def dependency_boundary(offline, environment, output):
         "devguard-client": {"devguard-contract"},
         # The daemon edge is a test-only dependency for isolated fixture authorities.
         "devguard-launch": {"devguard-contract", "devguard-client", "devguard-macos", "devguard-daemon"},
+        # The CLI shares the daemon's canonical paths and configuration; it never
+        # depends on the native backend or core directly.
+        "devguard-cli": {"devguard-contract", "devguard-client", "devguard-daemon"},
     }
     if roots != set(allowed):
         raise RuntimeError("unexpected workspace graph; update explicit boundaries with new crates")
@@ -84,6 +87,11 @@ def dependency_boundary(offline, environment, output):
     launch = next(p for p in packages if p["name"] == "devguard-launch")
     if any(d["name"] == "devguard-daemon" and d.get("kind") != "dev" for d in launch["dependencies"]):
         raise RuntimeError("devguard-launch may depend on devguard-daemon only for tests")
+    # The CLI's fixture authorities are compiled for its tests only.
+    cli = next(p for p in packages if p["name"] == "devguard-cli")
+    if any(d["name"] == "devguard-daemon" and "test-fixtures" in d.get("features", []) and d.get("kind") != "dev"
+           for d in cli["dependencies"]):
+        raise RuntimeError("devguard-cli may enable daemon test fixtures only for tests")
     contract = next(p for p in packages if p["name"] == "devguard-contract")
     if {d["name"] for d in contract["dependencies"]} != {"serde", "serde_json", "sha2"}:
         raise RuntimeError("contract must remain independent of persistence and host adapters")

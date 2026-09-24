@@ -2,7 +2,7 @@
 
 DevGuard centralizes resource admission for development workloads while preserving the resources needed to inspect and stop them.
 
-The repository implements **DG-0 contracts and a durable authority core**, with DG-1 now in progress. C01 supplies canonical paths/bootstrap/storage checks; C02 supplies authenticated, bounded local communication with a small client and private credential-FD transfer; C03 supplies the native macOS boot clock, process identity and host pressure evidence that activate the service's journal; C04 supplies cooperative QoS/nice application with readback and observed process-group scope evidence; C05 supplies registration over the wire and the fenced `devguard-launch` helper; C06 supplies reconciliation, and with native evidence the service opens all three. PR and post-merge main delivery evidence is tracked separately from implementation. There is no execution CLI yet (DG1-C07), and Linux cgroups are not yet available. Use the operating guide for actual command availability; the design also contains future interfaces.
+The repository implements **DG-0 contracts and a durable authority core**, with DG-1 now in progress. C01 supplies canonical paths/bootstrap/storage checks; C02 supplies authenticated, bounded local communication with a small client and private credential-FD transfer; C03 supplies the native macOS boot clock, process identity and host pressure evidence that activate the service's journal; C04 supplies cooperative QoS/nice application with readback and observed process-group scope evidence; C05 supplies registration over the wire and the fenced `devguard-launch` helper; C06 supplies reconciliation, and with native evidence the service opens all three; C07 supplies the `devguard` command-line owner with doctor diagnostics, receipts and explicit bounded waits. PR and post-merge main delivery evidence is tracked separately from implementation. Cargo adaptation is not yet available (DG1-C08), and Linux cgroups are not yet available. Use the operating guide for actual command availability; the design also contains future interfaces.
 
 - [Authoritative design reference](docs/design.md) · [Korean translation](docs/ko/design.md)
 - [Historical approved design (Korean, immutable)](docs/design.ko.md)
@@ -22,11 +22,14 @@ python3 scripts/qualify.py dg1-authority --offline
 python3 scripts/qualify.py dg1-auth --offline
 python3 scripts/qualify.py dg1-probes --offline   # macOS only
 python3 scripts/qualify.py dg1-scopes --offline   # macOS only
+python3 scripts/qualify.py dg1-launch --offline   # macOS only
+python3 scripts/qualify.py dg1-reconcile --offline   # macOS only
+python3 scripts/qualify.py dg1-cli --offline   # macOS only
 ```
 
 Omit `--offline` when the locked crates have not been downloaded. Builds and tests use one Cargo job and one test thread by default. Results, source fingerprints and logs are written under `target/qualification/`. A newer compiler can be used with `--allow-toolchain-mismatch` for a supplemental check, which never counts as qualification for 1.95.0.
 
-DG-0 tests use an explicitly fake OS backend. Their passing reports establish accounting, persistence and state-transition contracts. The additional C01–C06 suites check actual local storage, peer observations, credential transport, native macOS host evidence, cooperative scope evidence, the launch helper and reconciliation within bounded fixtures. They do not qualify an execution CLI, Linux enforcement, browser responsiveness or self-governed execution; these remain `not_run`.
+DG-0 tests use an explicitly fake OS backend. Their passing reports establish accounting, persistence and state-transition contracts. The additional C01–C07 suites check actual local storage, peer observations, credential transport, native macOS host evidence, cooperative scope evidence, the launch helper, reconciliation and the command-line owner within bounded fixtures. They do not qualify Cargo adaptation, Linux enforcement, browser responsiveness or self-governed execution; these remain `not_run`.
 
 ## Repository boundaries
 
@@ -34,7 +37,7 @@ DG-0 tests use an explicitly fake OS backend. Their passing reports establish ac
 
 The approved local checkout is `/Volumes/DevData/Projects/IdeaProjects/DevGuard`. Existing `.codex` settings are preserved locally and ignored by Git. Build output, journals, qualification evidence and local toolchains are also ignored. The approved design is preserved byte-for-byte; its checksum is recorded in `docs/design-source.json`.
 
-`devguard-macos` supplies native boot, process, host pressure and process-group scope observations to the core only through its `Clock` and `Backend` traits. `devguard-daemon` provides the canonical configuration/storage boundary and foreground `devguardd serve`. `devguard-client` supplies versioned UDS communication and private credential handoff without depending on the authority core. Successful authentication is not an instance registration or a workload lease, and does not isolate malicious processes sharing the operating UID.
+`devguard-macos` supplies native boot, process, host pressure and process-group scope observations to the core only through its `Clock` and `Backend` traits. `devguard-daemon` provides the canonical configuration/storage boundary and foreground `devguardd serve`. `devguard-client` supplies versioned UDS communication and private credential handoff without depending on the authority core. `devguard-launch` is the fenced helper between a launch grant and the user's executable. `devguard-cli` provides `devguard`, the command-line owner that runs commands only through the authority. Successful authentication is not an instance registration or a workload lease, and does not isolate malicious processes sharing the operating UID.
 
 The public source repository is [novelKR/DevGuard](https://github.com/novelKR/DevGuard). CodeSpace runtime consumption begins at CS-RG after DG-1 qualification. Crates are not published, and no installer or LaunchAgent is available yet.
 

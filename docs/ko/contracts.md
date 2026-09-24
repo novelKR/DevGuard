@@ -1,6 +1,6 @@
 # 구현된 authority 계약
 
-이 문서는 구현된 DG-0 authority, C01/C02 서비스·저장소·transport 동작, C03 native macOS 호스트 증거, C04 협조적 정책·scope 증거, C05 fenced launch helper와 C06 대조를 설명한다. PR과 병합 후 main 전달 증거는 구현과 별도로 추적한다. 실제 제공 명령은 [운영 문서](operations.md)에 있다. Native 호스트 증거가 있으면 서비스는 등록·launch·대조를 열며, CodeSpace 결합은 아직 구현하지 않았다. [영문 정본](../contracts.md).
+이 문서는 구현된 DG-0 authority, C01/C02 서비스·저장소·transport 동작, C03 native macOS 호스트 증거, C04 협조적 정책·scope 증거, C05 fenced launch helper, C06 대조, C07 명령행 owner를 설명한다. PR과 병합 후 main 전달 증거는 구현과 별도로 추적한다. 실제 제공 명령은 [운영 문서](operations.md)에 있다. Native 호스트 증거가 있으면 서비스는 등록·launch·대조를 열며, CodeSpace 결합은 아직 구현하지 않았다. [영문 정본](../contracts.md).
 
 ## Authority와 transport 경계
 
@@ -114,6 +114,24 @@ DG1-C06은 서비스의 reconciler와 attempt를 정리하는 owner 요청을 �
 - **재시작.** 재시작은 commit된 모든 attempt와 등록된 모든 instance를 Suspect로 만들며, owner는 새 session에서 다시 등록한다. 이전에 bind된 scope는 프로세스가 끝나도 reboot 전까지 추적 상실과 함께 Suspect로 남는다. Claim되지 않은 grant는 실행 중인 owner의 보고로만 회수한다. 재시작 전후의 회계 합계는 같다.
 - **Receipt.** 서비스는 자격 정보 없이 다음 JSON line을 stderr에 남긴다: `registered`, `admission`, `launch_committed`, `cancelled`, `helper_authorized`, `helper_refused`, `helper_replayed`, `launch_abandoned`, `scope_signalled`, `attempt_reconciled`, `instance_reconciled`, `reconcile_failed`, `reconcile_stopped`.
 
+## 명령행 owner
+
+DG1-C07은 관리 실행의 명령행 owner인 `devguard`를 추가한다. 명령은 authority와 fenced helper를 거쳐서만 실행한다. 명령을 admission하거나 시작할 수 없으면 아무것도 실행하지 않으며, 관리되지 않는 실행으로 대체하지 않는다.
+
+- **Authority.** 바이너리는 운영 계정에서 authority를 결정한다. 정상 socket, 운영자 설정, `dev-cli` 자격 파일을 사용하며 경로·socket·authority override는 받지 않는다. `dev-cli`로 인증하고 CLI 프로세스마다 새 instance를 등록하므로, 설정된 instance 상한 8개가 동시 owner 수의 상한도 된다. Instance pool이 가득 차면 용량 거절과 같이 처리한다. Frame마다 250 ms 기한이 있으므로 요청마다 새 session을 쓴다.
+- **준비.** Admission 전에 CLI는 shell을 실행하지 않고 shell과 같은 방식으로 프로그램을 찾는다. Slash가 있는 이름은 경로이고, 이름만 있으면 `PATH`에서 찾는다. 프로그램이 없으면 127, 실행할 수 없으면 126으로 끝난다. Executable은 절대 경로를 argv[0]로 삼아 실행되며, CLI의 작업 디렉터리·환경·표준 descriptor와 adapter의 변경을 상속한다. UTF-8이 아닌 인자는 거절한다.
+- **의미.** 실행 digest는 executable의 경로·device·inode·크기·수정 시각, 작업 디렉터리의 정체성, adapter 변환 뒤의 argv와 환경 변경, 표준 입력이 terminal인지 여부, 자원 의도를 포함한다. CLI는 자체 timeout을 두지 않으며 이를 최댓값으로 기록한다.
+- **프로젝트와 예산.** `--project ID`는 운영자가 등록한 프로젝트여야 하며, 그 root가 작업 디렉터리를 포함하고 `.devguard.toml`이 같은 프로젝트를 가리켜야 한다. 요청량은 필드마다 명시한 `--cpu`·`--memory`·`--tasks`가 우선하고, 다음은 프로젝트 상한, 그다음은 adapter 기본값이다. Generic 기본값은 1,000 mCPU·1 GiB·32 task이며 검증되지 않은 초기값이다. 프로젝트 상한을 넘는 요청은 거절한다. Admission을 강제하지 않는다.
+- **대기.** `--wait`가 없으면 거절로 실행을 끝낸다. `--wait DURATION`(최대 24시간)이 있으면 용량이나 압력 때문인 거절, 또는 가득 찬 instance pool을 새 attempt로 다시 시도한다. 재시도 간격은 250 ms에서 시작해 두 배씩 늘어 2초가 상한이며, 기한까지 계속한다. 거절된 attempt는 모두 시작하지 않았음이 알려진 종결 record다. Signal은 대기를 취소하고 CLI를 그 signal로 끝낸다. 그 밖의 거절은 다시 시도하지 않는다.
+- **유실된 응답.** 유실된 admission 응답은 같은 key로 한 번 다시 보낸다. 유실된 launch commit 응답은 조회한다. Commit된 grant는 받지 못했다고 보고하며(`AbandonLaunch`), `NoHelperCreated`로 회수되면 대기 시간 안에서 새 attempt를 만들 수 있다. 확인하거나 회수할 수 없는 grant는 보고만 하고 다시 시도하지 않는다. 새 attempt는 시작하지 않았음이 알려진 뒤에만 만든다.
+- **Launch.** CLI는 helper를 직접 자식으로 시작하며, helper는 처음부터 자기 process group을 이끈다. 표준 입력이 CLI의 제어 terminal이고 CLI가 foreground를 가지고 있으면, CLI는 terminal을 workload의 group에 넘겨 terminal 키가 workload에 바로 전달되게 한다. Workload가 멈추거나 끝나면 terminal을 되찾는다. READY 전에 거절된 helper는 reap하고, claim되지 않은 grant를 `NoHelperCreated`로 회수한다. 일시적인 거절은 대기 시간 안에서 다시 시도할 수 있다.
+- **Signal.** CLI가 받은 SIGINT·SIGTERM·SIGHUP·SIGQUIT는 workload의 process group에 전달한다. Root가 reap되지 않은 동안에만 전달하므로 group ID가 다른 group을 가리킬 수 없다. 멈춘 workload는 그대로 반영한다. CLI가 terminal을 되찾고 스스로 멈추므로 CLI를 시작한 shell이 제어를 되찾는다. 재개되면 terminal을 다시 넘기고 workload를 재개한다.
+- **Reap 전 관측.** CLI는 root의 종료를 reap하지 않고 기다렸다가, 종료한 root가 아직 PID를 보유한 동안 authority에 attempt의 `Observe`를 요청한다. 그다음 reap하고 다시 관측한다. 따라서 group에 남은 구성원도 추적되며, 끝날 때까지 attempt의 과금을 유지한다.
+- **종료값.** CLI는 workload의 종료값으로 끝나거나 같은 signal로 끝난다. 아무것도 시작하지 않았으면 `env`·`timeout`처럼 125로 끝나며, helper의 126·127은 그대로 전달한다.
+- **Receipt.** `--receipt PATH`는 admission 전에 새 private 파일을 만들고 `devguard-exec-receipt/v1`을 기록한다. 명령, adapter 보고, 예산과 그 출처, 프로젝트, authority, 예약과 lease ID를 포함한 모든 attempt, 대기, helper phase, 종료값, reap 전후의 관측, 받은 signal과 전달한 signal을 담는다. Permit·호출자 자격·상속된 환경은 담지 않는다.
+- **Doctor.** `devguard doctor`는 경로, 설정, helper, 서비스의 정체성·capability·상태를 보고하고, 선택적으로 등록과 프로젝트도 확인한다. 관리 실행을 사용할 수 있는지와 관리되지 않는 대체 실행이 없다는 점을 밝힌다. `--require admission,registration,macos-cooperative`를 주면 요구 사항이 하나라도 충족되지 않을 때 1로 끝난다.
+- **Adapter.** C07은 admission과 분리된 adapter 인터페이스를 정의한다. Adapter는 실행될 예약에 맞춰 인자와 환경을 바꿀 수 있으며 무엇을 했는지 보고한다. Generic adapter는 아무것도 바꾸지 않는다. C08에서 Cargo adapter가 제공되기 전까지 `auto`는 generic을 고른다.
+
 ## 내구성 admission과 launch
 
 Journal schema는 1이다. 초기화는 명시적으로 새 파일만 만든다. 누락·손상·미지원 schema·불일치 journal은 fail-closed다. SQLite는 WAL, FULL synchronous와 immediate transaction을 사용한다. 시작 시 모든 저장 record와 회계 index를 대조한다.
@@ -146,7 +164,7 @@ Journal은 instance의 등록 정책을 기록한다. Active/suspect instance가
 
 ## 후속 마일스톤의 책임
 
-- 남은 DG-1: 실행 CLI, Cargo, bounded 자기 적용, update·repair, 측정한 macOS SLO.
+- 남은 DG-1: Cargo, bounded 자기 적용, update·repair, 측정한 macOS SLO.
 - CS-RG: Runner 슬롯·전송 lane, 승인 migration, client pin, 상태 결합과 회귀 qualification.
 - DG-LINUX: 실제 cgroup 계층·controller·ancestor와 sandbox·proxy 포함.
 - DG-CACHE·DG-ADAPTERS: 등록 cache 회수와 추가 도구 제어.

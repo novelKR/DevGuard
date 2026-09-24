@@ -60,6 +60,18 @@ SUITES = {
           "cancelled-before-claim", "exec-failure", "lost-authorization-replay",
           "claimed-then-refused", "pseudo-terminal", "deadline-missed", "concurrent-launches"]),
     ],
+    "dg1-cli": [
+        ("cli-arguments", ["-p", "devguard-cli", "--lib", "args::tests"]),
+        ("cli-preflight", ["-p", "devguard-cli", "--lib", "preflight::tests"]),
+        ("cli-reply-races", ["-p", "devguard-cli", "--lib", "exec::tests"]),
+        ("cli-entrypoint", ["-p", "devguard-cli", "--test", "entrypoint"]),
+        ("native-exec", ["-p", "devguard-cli", "--test", "exec"],
+         ["exec-lifecycle", "signal-death", "signal-forwarding", "observe-before-reap",
+          "refused-budget", "wait-admitted", "wait-deadline", "wait-cancelled",
+          "unavailable-authority", "doctor", "project-resolution", "instance-pool"]),
+        ("native-terminal", ["-p", "devguard-cli", "--test", "terminal"],
+         ["terminal-interrupt", "terminal-stop"]),
+    ],
     "dg1-reconcile": [
         ("reconcile-contract", ["-p", "devguard-core", "--test", "authority_contract", "reconcile_"]),
         ("launcher-evidence", ["-p", "devguard-macos", "--lib", "backend::tests"]),
@@ -74,6 +86,10 @@ SUITES = {
           "daemon-crash-restart", "journal-failure"]),
     ],
 }
+# Binaries a suite's tests start but whose package the suite does not test.
+PREBUILD = {
+    "dg1-cli": [["-p", "devguard-launch", "--bin", "devguard-launch"]],
+}
 STAGE_TIMEOUT_SECONDS = 1800
 SCOPES = {
     "dg1-authority": "canonical configuration, ownership and storage",
@@ -81,12 +97,13 @@ SCOPES = {
     "dg1-probes": "native macOS boot clock, process identity and host pressure evidence with registration closed",
     "dg1-scopes": "native macOS cooperative CPU policy readback, observed process-group scopes and identity-checked termination without a launch helper",
     "dg1-launch": "native macOS launch helper through an isolated authority: one claimed helper per grant, and scope binding and authorization before READY and exec",
+    "dg1-cli": "the devguard command-line owner against isolated authorities with the real launch helper: preserved argv, directory, environment and exit status, signal forwarding and terminal job control, observation before reap, refusals, bounded waits, projects, the instance pool and doctor diagnostics",
     "dg1-reconcile": "native macOS reconciliation through isolated authorities: prepared cancellation and expiry, owner reports that no helper exists, releases only on scope termination, sticky escape and tracking loss, scope termination signals, dead owners, and a daemon crash with restart",
 }
 # Suites that start real workloads through the launch helper (in fixtures).
-LAUNCHING = {"dg1-launch", "dg1-reconcile"}
+LAUNCHING = {"dg1-launch", "dg1-reconcile", "dg1-cli"}
 # Native suites observe the actual host; elsewhere they are not run, never passed.
-NATIVE = {"dg1-probes", "dg1-scopes", "dg1-launch", "dg1-reconcile"}
+NATIVE = {"dg1-probes", "dg1-scopes", "dg1-launch", "dg1-reconcile", "dg1-cli"}
 
 
 def host_facts():
@@ -150,6 +167,15 @@ def main():
             report["reason"]="native macOS suite; this platform cannot supply the evidence"
             return 2
         skipped=[]
+        for index,selectors in enumerate(PREBUILD.get(args.suite,[])):
+            command=["cargo","build","--locked",*(["--offline"] if args.offline else []),*selectors]
+            entry={"name":f"prebuild-{index}","command":command,"status":"failed","log":f"prebuild-{index}.log"}
+            report.setdefault("prebuild",[]).append(entry)
+            with (output/entry["log"]).open("w") as stream:
+                result=subprocess.run(command,cwd=ROOT,env=environment,stdout=stream,stderr=subprocess.STDOUT,timeout=STAGE_TIMEOUT_SECONDS)
+            entry["log_sha256"]=hashlib.sha256((output/entry["log"]).read_bytes()).hexdigest()
+            if result.returncode: raise RuntimeError("prebuild failed: "+" ".join(selectors))
+            entry["status"]="passed"
         for name,selectors,*expected in SUITES[args.suite]:
             expected=expected[0] if expected else None
             command=["cargo","test","--locked",*(["--offline"] if args.offline else []),*selectors]
