@@ -779,6 +779,9 @@ pub fn plan(args: &CandidateArgs, environment: &BTreeMap<OsString, OsString>) ->
             "the candidate tree must be a Cargo workspace with a lock file",
         ));
     }
+    // Children run in the tree, so every path handed to them is absolute.
+    let report = std::path::absolute(&args.report)
+        .map_err(|_| invalid("the report directory cannot be resolved"))?;
     let lease = Budget {
         cpu_milli: args.cpu_milli.unwrap_or(DEFAULT_LEASE.cpu_milli),
         memory_bytes: args.memory_bytes.unwrap_or(DEFAULT_LEASE.memory_bytes),
@@ -870,7 +873,7 @@ pub fn plan(args: &CandidateArgs, environment: &BTreeMap<OsString, OsString>) ->
             ],
             env: Vec::new(),
         }),
-        report: args.report.clone(),
+        report,
         tree: Some(tree),
     })
 }
@@ -925,6 +928,18 @@ mod tests {
         std::fs::write(tree.path().join("Cargo.lock"), "").unwrap();
         let planned = plan(&args(tree.path()), &BTreeMap::new()).unwrap();
         assert_eq!(planned.lease, DEFAULT_LEASE);
+        // A relative report directory is resolved before any child runs in
+        // the tree, where it would name another place.
+        let relative = CandidateArgs {
+            report: "reports/run-1".into(),
+            ..args(tree.path())
+        };
+        let resolved = plan(&relative, &BTreeMap::new()).unwrap().report;
+        assert!(resolved.is_absolute());
+        assert_eq!(
+            resolved,
+            std::env::current_dir().unwrap().join("reports/run-1")
+        );
         assert_eq!(planned.capacity, DEFAULT_CAPACITY);
         assert!(planned.capacity.fits(planned.lease));
         let names: Vec<&str> = planned.children.iter().map(|w| w.name.as_str()).collect();
