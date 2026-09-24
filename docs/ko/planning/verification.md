@@ -32,6 +32,8 @@ python3 scripts/qualify.py dg1-probes --offline
 python3 scripts/qualify.py dg1-scopes --offline
 python3 scripts/qualify.py dg1-launch --offline
 python3 scripts/qualify.py dg1-reconcile --offline
+python3 scripts/qualify.py dg1-cli --offline
+python3 scripts/qualify.py dg1-cargo --offline
 git diff --check
 ```
 
@@ -73,7 +75,7 @@ V-DOC-DG는 scripts/check_docs.py와 수동 의미 검토로 영어/한국어 ha
 
 ## 향후 suite와 장애 주입 계약
 
-scripts/qualify.py dg1-authority --offline은 C01 설정·저장소, scripts/qualify.py dg1-auth --offline은 C02 인증·transport, scripts/qualify.py dg1-probes --offline은 C03 native 증거, scripts/qualify.py dg1-scopes --offline은 C04 정책·scope 증거, scripts/qualify.py dg1-launch --offline은 C05 launch helper, scripts/qualify.py dg1-reconcile --offline은 C06 대조 검증을 제공한다. 그 밖의 DevGuard suite와 CodeSpace scripts/qualify-devguard.py는 해당 작업에서 제공할 예정 인터페이스다. 각 구현 PR이 실제 CLI·case inventory·nonzero case assertion·timeout·log 수집·격리 cleanup을 구현하고 제공 명령을 갱신해야 한다. macOS/Ubuntu CI는 전체 validator와 이식 가능한 두 기능 suite를 실행하고 각각의 report·log를 보존한다. Native suite는 macOS CI에서만 실행하고 그 밖의 환경에서는 `not_run`으로 기록한다. 증거를 제공할 수 없는 플랫폼에서 통과로 처리하지 않는다. 각 native 단계는 만들어야 할 raw receipt를 선언한다. 어떤 경우를 `not_run`으로 기록한 receipt가 있으면 suite는 `passed`가 아니라 `incomplete`가 된다.
+scripts/qualify.py dg1-authority --offline은 C01 설정·저장소, scripts/qualify.py dg1-auth --offline은 C02 인증·transport, scripts/qualify.py dg1-probes --offline은 C03 native 증거, scripts/qualify.py dg1-scopes --offline은 C04 정책·scope 증거, scripts/qualify.py dg1-launch --offline은 C05 launch helper, scripts/qualify.py dg1-reconcile --offline은 C06 대조, scripts/qualify.py dg1-cli --offline은 C07 명령행 owner, scripts/qualify.py dg1-cargo --offline은 C08 Cargo adapter 검증을 제공한다. 그 밖의 DevGuard suite와 CodeSpace scripts/qualify-devguard.py는 해당 작업에서 제공할 예정 인터페이스다. 각 구현 PR이 실제 CLI·case inventory·nonzero case assertion·timeout·log 수집·격리 cleanup을 구현하고 제공 명령을 갱신해야 한다. macOS/Ubuntu CI는 전체 validator와 이식 가능한 두 기능 suite를 실행하고 각각의 report·log를 보존한다. Native suite는 macOS CI에서만 실행하고 그 밖의 환경에서는 `not_run`으로 기록한다. 증거를 제공할 수 없는 플랫폼에서 통과로 처리하지 않는다. 각 native 단계는 만들어야 할 raw receipt를 선언한다. 어떤 경우를 `not_run`으로 기록한 receipt가 있으면 suite는 `passed`가 아니라 `incomplete`가 된다.
 
 C03 증거는 다음 파일에 기록한다.
 - **Raw receipt** (보고서의 `raw/` 디렉터리): 단위를 포함한 boot ID·시계 읽기, 호스트 용량, zombie·reap·거부 관측을 포함한 반복 프로세스 정체성, 계산된 비율을 포함한 native 압력 읽기, 마지막 sample 이후 admission이 닫히기까지 측정한 시간, 주입한 실패부터 Critical까지 걸린 서비스 loop 시간과 멈춘 probe에 대한 서비스 loop의 동작.
@@ -103,7 +105,17 @@ C06 증거는 다음을 포함한다.
 - **단위 시험**: 추적 상실 뒤 bind된 scope의 이전 boot 회수, 바뀐 것이 없을 때 쓰지 않는 대조, attempt·instance 목록, 크기가 제한된 보고 집합과 owner에 묶인 launcher 증거, 새 요청의 엄격한 decoding.
 - **결정성**: 관측 시험은 배경 reconciler를 멈추므로, owner의 관측 또는 reap 전 관측의 부재가 무엇을 추적할지를 정한다. 자식 프로세스 authority의 receipt는 보관하며, permit이나 호출자 자격이 들어 있지 않은지 확인한다.
 
-이 suite는 실행 CLI, 실행 중인 scope의 재시작 후 재편입, Linux 강제를 시험하지 않는다.
+이 suite는 실행 중인 scope의 재시작 후 재편입과 Linux 강제를 시험하지 않는다.
+
+C07 증거는 다음을 포함한다.
+- **Raw receipt**: 인자·디렉터리·환경 변수 이름·descriptor가 보존된 관리 명령의 수명과 그 receipt, CLI가 그대로 반영한 workload의 signal 종료, workload group의 모든 구성원에 전달된 SIGTERM·SIGHUP, 호출자가 무시해 계속 무시되는 signal, 반영하지 않은 SIGSTOP, 살아남은 구성원이 끝날 때까지 과금을 유지하는 reap 전 관측, 거절된 예산과 호스트 작업 용량을 넘는 대기, admission된 대기·기한에 끝난 대기·signal로 취소된 대기, 사용할 수 없는 authority와 fenced launch가 없는 authority, doctor 진단, 프로젝트 해석, owner 8개의 instance pool과 이를 소진하지 않는 순차 owner, 시작할 수 없는 프로그램, pseudo-terminal에서 출력만 terminal에 있는 경우를 포함해 workload에 도달한 interrupt 키와 job control shell에 반영된 정지. Receipt에 호출자 자격이나 상속된 값이 없는지 확인한다.
+- **실제 프로세스**: 시험 바이너리를 CLI owner로 다시 실행해 격리 authority에 연결하며, 실제 `devguard-launch`와 workload를 시작한다. Terminal 경우에는 pseudo-terminal session과 최소한의 job control shell을 사용한다. 배포되는 바이너리는 authority override를 받지 않으므로 그 진입점은 사용법과 잘못된 호출만 시험한다.
+- **단위 시험**: 엄격한 인자 parsing, 프로그램 탐색, 예산 우선순위, 의미 digest, 끝까지 읽은 transcript, 그리고 scripted authority를 통한 유실된 admission·launch commit 응답, 대기의 재시도 간격·기한·취소, READY 전에 끝난 helper 뒤의 재시도 규칙. Commit된 grant는 받지 못한 것으로 회수되고 다시 만들어지지 않으며, 확인할 수 없는 grant는 회수하지도 다시 시도하지도 않는다.
+
+C08 증거는 다음을 포함한다.
+- **Raw receipt**: 예약된 job 수 안의 direct build, 조정되거나 유지된 명시적 job 수, admission 전 거절, 시험 프로그램의 thread 설정을 포함한 `cargo test`, 예약 옆에 최대 동시 수와 실행 뒤 token 수를 기록한 Python pipeline의 공유 jobserver, build script 안의 중첩 Cargo, 관측한 최소 여유 token 수를 포함한 상속 FIFO·descriptor 쌍 jobserver, 오래된 상속 descriptor, 최대 과금을 포함한 동시 소비자, 취소된 pipeline. 각 receipt는 관측한 최대 동시 compile 수와 각 Cargo가 받은 값을 기록한다.
+- **실제 프로세스**: CLI owner와 실제 helper를 통한 작은 offline workspace의 실제 Cargo build. Compiler wrapper가 각 compile의 시간을 재고, `cargo` shim이 각 실행이 상속한 descriptor를 기록한다. 호스트의 작업 용량이 Cargo job을 수용할 수 없는 경우는 `not_run`으로 기록한다.
+- **단위 시험**: job 추정, subcommand와 `--` 전후의 인자 parsing, Cargo가 읽는 방식대로 해석한 job 값, jobserver 아래를 포함한 우선순위·조정·거절, fallback 변수, 닫혔거나 close-on-exec인 참조·descriptor 쌍·FIFO 참조에 대한 상속 jobserver 검사, FIFO pool과 그 크기 상한·token 수, adapter 선택.
 
 C02 증거는 양쪽 실제 OS socket UID/PID 관측, 분리된 consumer·관리 자격, helper-role 인증 거절, 현재·미래 wire fixture의 엄격한 decoding, 64 KiB frame, 세션 32개 제한, idle 대기를 포함한 frame별 절대 250 ms 기한, 부분·느린·마지막 응답과 private 자격 FD 전달을 포함한다. 전용 subprocess helper는 후속 exec 전 FD 닫기를 관측하고 argv·환경·debug·출력의 secret 누출을 확인한다. Parent test가 helper를 실행하며 별도의 ignored test를 독립 qualification 성공으로 세지 않는다. 0개가 아닌 parent case 수와 프로세스 정리를 함께 기록한다.
 

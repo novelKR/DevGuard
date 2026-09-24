@@ -260,9 +260,43 @@ impl HelperReport {
                 Err(_) => return Err(io_failed("cannot read the helper report")),
             }
         }
-        let phases = parse(&bytes)?;
-        Ok((outcome(&phases, closed), phases))
+        finish(&bytes, closed)
     }
+
+    /// Read the transcript until the helper closes it, however long that
+    /// takes. The helper's end closes when its executable starts or when it
+    /// exits, so an owner that has seen the helper exit gets the whole
+    /// transcript at once. A read error, an excess, a malformed line or an
+    /// unterminated last line is an error: what the helper did is unknown.
+    pub fn read_until_closed(mut self) -> Result<(LaunchOutcome, Vec<HelperPhase>)> {
+        let mut bytes = Vec::new();
+        let mut buffer = [0u8; 1024];
+        loop {
+            match self.file.read(&mut buffer) {
+                Ok(0) => break,
+                Ok(n) => {
+                    bytes.extend_from_slice(&buffer[..n]);
+                    if bytes.len() > TRANSCRIPT_BYTES {
+                        return Err(invalid("helper transcript exceeds its bound"));
+                    }
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(_) => return Err(io_failed("cannot read the helper report")),
+            }
+        }
+        finish(&bytes, true)
+    }
+}
+
+/// The outcome of a transcript read so far. Every report is one atomic
+/// write ending in a newline, so a closed transcript that ends inside a line
+/// was not written by a well-formed helper.
+fn finish(bytes: &[u8], closed: bool) -> Result<(LaunchOutcome, Vec<HelperPhase>)> {
+    if closed && !bytes.is_empty() && !bytes.ends_with(b"\n") {
+        return Err(invalid("helper transcript ends inside a line"));
+    }
+    let phases = parse(bytes)?;
+    Ok((outcome(&phases, closed), phases))
 }
 
 fn parse(bytes: &[u8]) -> Result<Vec<HelperPhase>> {
@@ -329,5 +363,39 @@ mod tests {
         ] {
             assert!(parse(malformed).is_err());
         }
+    }
+
+    /// A transcript whose writer has closed after `bytes`.
+    fn closed_report(bytes: &[u8]) -> HelperReport {
+        let (reader, writer) = report_pipe().unwrap();
+        let mut writer = File::from(writer);
+        std::io::Write::write_all(&mut writer, bytes).unwrap();
+        drop(writer);
+        HelperReport::new(reader)
+    }
+
+    #[test]
+    fn a_transcript_read_to_its_end_is_complete_or_an_error() {
+        let ready = b"{\"phase\":\"ready\"}\n";
+        let (outcome, phases) = closed_report(ready).read_until_closed().unwrap();
+        assert_eq!(outcome, LaunchOutcome::Started);
+        assert_eq!(phases, [HelperPhase::Ready {}]);
+        assert_eq!(
+            closed_report(b"").read_until_closed().unwrap().0,
+            LaunchOutcome::Lost { ready: false },
+            "a helper that ended before any report never reached READY"
+        );
+        let oversized = [b' '; TRANSCRIPT_BYTES + 1];
+        for bytes in [
+            &b"{\"phase\":\"rea"[..],
+            b"{\"phase\":\"ready\"}",
+            &oversized,
+        ] {
+            assert!(closed_report(bytes).read_until_closed().is_err());
+        }
+        // The bounded wait refuses an unterminated line once the writer closed.
+        assert!(closed_report(b"{\"phase\":\"ready\"}")
+            .wait(Duration::from_secs(5))
+            .is_err());
     }
 }

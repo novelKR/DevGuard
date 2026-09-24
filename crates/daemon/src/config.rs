@@ -149,6 +149,12 @@ impl HostConfig {
         ))
     }
 
+    /// The work capacity this configuration gives the observed host at Normal
+    /// pressure. No request larger than this can ever be admitted.
+    pub fn observed_work_capacity(&self, uid: u32) -> Result<Budget> {
+        self.policy(HostCapacity::observe()?, uid)?.work_capacity()
+    }
+
     /// Core policy for the observed host. Host headroom follows the approved
     /// defaults, max(ceil(25% of logical CPUs), 2 CPUs) and max(25% of physical
     /// memory, 4 GiB), plus any operator headroom; consumers take the account UID.

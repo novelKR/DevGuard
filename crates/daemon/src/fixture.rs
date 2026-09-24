@@ -4,7 +4,7 @@
 //! reachable from the `devguardd` command.
 
 use crate::config::{self, HostConfig};
-use crate::paths::{read_private, AuthorityPaths};
+use crate::paths::{read_private, write_new_private, AuthorityPaths};
 use crate::server::{NativeAuthority, Options, Server};
 use devguard_client::protocol::CallerCredential;
 use devguard_contract::{AttemptKey, AttemptRecord, Budget, Error, ErrorCode, Result, Secret};
@@ -58,6 +58,21 @@ impl TestAuthority {
     pub fn start(base: &Path) -> Result<Self> {
         let paths = AuthorityPaths::fixture(base);
         let config = config::initialize(&paths)?;
+        Self::serve(paths, config)
+    }
+
+    /// Bootstrap under `base`, let `configure` change the operator
+    /// configuration, for example to register project roots, then serve.
+    pub fn start_with(base: &Path, configure: impl FnOnce(&mut HostConfig)) -> Result<Self> {
+        let paths = AuthorityPaths::fixture(base);
+        let mut config = config::initialize(&paths)?;
+        configure(&mut config);
+        config.validate()?;
+        let encoded = toml::to_string_pretty(&config)
+            .map_err(|_| unavailable("fixture configuration encoding failed"))?;
+        std::fs::remove_file(paths.config())
+            .map_err(|_| unavailable("cannot replace the fixture configuration"))?;
+        write_new_private(&paths.config(), encoded.as_bytes())?;
         Self::serve(paths, config)
     }
 
@@ -117,6 +132,12 @@ impl TestAuthority {
         Ok(())
     }
 
+    /// Whether admission is at Normal pressure now, so a refusal observed
+    /// by a test is about capacity rather than pressure.
+    pub fn pressure_normal(&self) -> Result<bool> {
+        Ok(self.authority()?.pressure() == PressureState::Normal)
+    }
+
     pub fn paths(&self) -> &AuthorityPaths {
         &self.paths
     }
@@ -156,6 +177,12 @@ impl TestAuthority {
             .get(CONSUMER)
             .map(|consumer| consumer.generation.clone())
             .unwrap_or_default()
+    }
+
+    /// Workload capacity of the policy the service derived from this host:
+    /// the admission target at Normal pressure.
+    pub fn work_capacity(&self) -> Result<Budget> {
+        self.config.observed_work_capacity(self.paths.uid())
     }
 
     /// Budget still charged to unreleased attempts.

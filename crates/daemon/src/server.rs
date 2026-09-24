@@ -334,18 +334,32 @@ impl Launcher {
             instance_id: instance_id.clone(),
             process,
         };
-        let principal = self.authority()?.register(
-            TrustedPeer {
-                uid: caller.uid,
-                pid: caller.pid,
-            },
-            Registration {
-                consumer_id: consumer.id.clone(),
-                generation: consumer.generation.clone(),
-                instance: instance.clone(),
-                credential: consumer.secret.clone(),
-            },
-        )?;
+        let registration = || {
+            self.authority()?.register(
+                TrustedPeer {
+                    uid: caller.uid,
+                    pid: caller.pid,
+                },
+                Registration {
+                    consumer_id: consumer.id.clone(),
+                    generation: consumer.generation.clone(),
+                    instance: instance.clone(),
+                    credential: consumer.secret.clone(),
+                },
+            )
+        };
+        let principal = match registration() {
+            // A full pool may hold owners that have ended since the last
+            // pass: reconcile them now, by the same rule, and try once more.
+            // A failed pass is reported and leaves the pool's own answer.
+            Err(error) if error.code == ErrorCode::ResourceUnavailable => {
+                if let Err(failure) = self.reconcile_instances() {
+                    receipt(json!({"event": "reconcile_failed", "error": failure}));
+                }
+                registration()?
+            }
+            result => result?,
+        };
         self.principals.lock().map_err(|_| poisoned())?.insert(
             (
                 consumer.id.clone(),
@@ -544,6 +558,12 @@ impl Launcher {
                 receipt(json!({"event": "reconcile_failed", "key": record.key, "error": error}));
             }
         }
+        self.reconcile_instances()
+    }
+
+    /// Settle every registered instance whose process is gone: retired when it
+    /// owns no charged work, otherwise Suspect until that work is settled.
+    fn reconcile_instances(&self) -> Result<()> {
         let instances = self.authority()?.instances()?;
         let charged = self.authority()?.attempts()?;
         for instance in instances {

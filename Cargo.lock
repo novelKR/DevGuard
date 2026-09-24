@@ -71,6 +71,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "devguard-cargo"
+version = "0.1.0"
+dependencies = [
+ "devguard-contract",
+ "libc",
+ "serde_json",
+]
+
+[[package]]
+name = "devguard-cli"
+version = "0.1.0"
+dependencies = [
+ "devguard-cargo",
+ "devguard-client",
+ "devguard-contract",
+ "devguard-daemon",
+ "libc",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "uuid",
+]
+
+[[package]]
 name = "devguard-client"
 version = "0.1.0"
 dependencies = [
