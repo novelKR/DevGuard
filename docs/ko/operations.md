@@ -67,7 +67,7 @@ target/package/<release-id>/bin/devguardd stage --package target/package/<releas
 "$HOME/Library/Application Support/DevGuard/releases/<last-known-good>/bin/devguard" repair --use last-known-good
 ```
 
-`upgrade`는 admission을 닫고, 과금 중인 작업이 끝날 때까지 `--drain-timeout`(기본 60초)만큼 기다린다. 그다음 `backups/` 아래에 journal을 백업하고, 새 release를 admission이 닫힌 채 시작해 검증한 뒤 admission을 다시 연다. Drain이 제한 시간을 넘기면 현재 release가 과금을 유지한 채 계속 제공하고, 새 release를 검증할 수 없으면 이전 release를 다시 시작한다. C11 이전 release는 admission을 닫을 수 없으므로 `--stopped`가 먼저 그 release를 멈추고, 과금된 것이 없을 때만 진행한다. `repair`는 authority가 제공 중이 아닐 때만 last known good release나 그 복구 사본을 시작하며, 열 수 없는 journal은 닫힌 채로 둔다. [계약 문서](contracts.md#upgrade와-repair)를 참조한다.
+`upgrade`는 admission을 닫고, 과금 중인 작업이 끝날 때까지 `--drain-timeout`(기본 60초)만큼 기다린다. 그다음 `backups/` 아래에 journal을 백업하고, 새 release를 admission이 닫힌 채 시작해 검증한 뒤 admission을 다시 연다. Drain이 제한 시간을 넘기면 현재 release가 과금을 유지한 채 계속 제공하고, 새 release를 검증할 수 없으면 이전 release를 다시 시작한다. C11 이전 release는 admission을 닫을 수 없으므로 `--stopped`가 먼저 그 release를 멈추고, 과금된 것이 없을 때만 진행한다. `repair`는 authority가 제공 중이 아닐 때만 서비스를 last known good release, 즉 마지막 upgrade가 교체한 release나 그 복구 사본으로 되돌리며, 열 수 없는 journal은 닫힌 채로 둔다. [계약 문서](contracts.md#upgrade와-repair)를 참조한다.
 
 `devguard exec [--project ID] [--adapter auto|generic|cargo|cargo-pipeline] [--wait DURATION] [--cpu MILLICPU] [--memory SIZE] [--tasks N] [--receipt PATH] [--lease CONSUMER/GENERATION/ATTEMPT --lease-token-fd N] -- PROGRAM [ARGS...]`는 명령을 admission하고 `devguard-launch`로 시작한 뒤 끝날 때까지 기다린다. 프로그램과 인자는 `--` 뒤에 두며 shell은 사용하지 않는다. 명령의 종료값으로 끝나거나 그 signal로 끝나며, 아무것도 시작하지 않았으면 125로 끝난다. `--wait`가 없으면 거절 즉시 끝나고, `--wait`가 있으면 용량·압력 거절을 기한까지 다시 시도하며, 호스트의 작업 용량보다 큰 요청은 즉시 거절한다. `--receipt`는 private JSON receipt를 기록한다. `--lease`는 명령을 그 부모 lease의 자식으로 만들며, descriptor N에서 읽은 token으로 lease의 남은 예산에 대해 admission한다. `devguard doctor`는 JSON 진단을 출력하며, `--require admission,registration,macos-cooperative`를 주면 요구 사항이 하나라도 충족되지 않을 때 실패한다. [계약 문서](contracts.md#명령행-owner)를 참조한다.
 
@@ -256,7 +256,8 @@ launchd gui domain이 없는 session에서는 launchd 경우를 `not_run`으로 
 - 시작할 수 없는 release 뒤에는 이전 release가 같은 journal로 admission을 연 채 제공한다
 - 호환되지 않는 downgrade는 아무것도 바꾸기 전에 거절한다
 - Drain할 수 없는 release: `--stopped` 없이는 거절하고, 멈춘 뒤 과금된 작업이 있으면 다시 시작하며, 과금된 것이 없으면 교체한다
-- Authority가 제공 중이면 repair를 거절하고, 손상된 release 대신 복구 사본을 쓰며, 열 수 없는 journal은 닫힌 채로 둔다
+- Authority가 제공 중이면 repair를 거절하고, upgrade가 교체한 release로 같은 journal에서 되돌아가며, 손상된 release 대신 복구 사본을 쓰고, 열 수 없는 journal은 닫힌 채로 둔다
+- 복구 사본으로 repair한 release에서의 upgrade
 - 관리자만 admission을 닫고, 닫힌 상태가 재시작 뒤에도 유지되며 다시 열 수 있고, drain wire fixture와 호환성 규칙이 엄격하다
 
 이 suite들은 Linux 강제, 자기 적용, foreground SLO를 not_run으로 남긴다. 전체 검증은 기존 44개 시험과 workspace crate 8개의 명시적 전체 의존 그래프를 검사한다. Daemon은 자기 시험에서 fixture를 켜기 위해서만 자신에게 의존한다. Launch crate는 시험의 격리 authority를 위해서만 daemon에 의존한다. CLI는 daemon의 경로·설정과 Cargo adapter에 의존하며, daemon fixture에는 시험에서만 의존한다. Cargo adapter는 contract에만 의존한다. Core·contract는 daemon 설정과 native adapter에 독립적이며 client는 core에 의존하지 않는다.

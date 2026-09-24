@@ -13,9 +13,11 @@
 //! verified, the previous one is started again on the same journal; a backup
 //! is never restored over state a release may have admitted from.
 //!
-//! Repair starts the last known good release while no authority serves. It
-//! never starts a second authority, keeps a journal that cannot be opened
-//! closed, and uses the recovery copy when the installed release is damaged.
+//! The release an upgrade replaces stays selected as the last known good
+//! one. Repair returns the service to it while no authority serves: it never
+//! starts a second authority, keeps a journal that cannot be opened closed,
+//! refuses a release that cannot serve the journal, and uses the recovery
+//! copy when the installed release is damaged.
 
 use crate::install::{
     self, compiled, digest_file, freeze_copy, handshake, observe_running, read_release,
@@ -550,25 +552,31 @@ pub fn upgrade(
     let target = validate_package(&release_dir(paths, to)?)
         .map_err(|error| Error::new(error.code, format!("release {to}: {}", error.message)))?;
     running_from(&target, "devguard")?;
-    let current = read_release(&release_dir(paths, &from)?).map_err(|error| {
+    // The current release runs from its installed directory or, after a
+    // repair, from its recovery copy; both hold the same manifest.
+    let copies: Vec<Package> = [release_dir(paths, &from)?, paths.recovery().join(&from)]
+        .iter()
+        .filter_map(|dir| read_release(dir).ok())
+        .collect();
+    let manifest = copies.first().ok_or_else(|| {
         Error::new(
-            error.code,
-            format!(
-                "the current release {from} is not intact ({}); use repair",
-                error.message
-            ),
+            ErrorCode::ReconciliationRequired,
+            format!("the current release {from} is not intact; use repair"),
         )
     })?;
     let compatibility = check_compatibility(
-        &current.manifest.compatibility,
+        &manifest.manifest.compatibility,
         &target.manifest.compatibility,
     )?;
-    observe_running(paths, manager, &options.label, &current).map_err(|error| {
-        busy(format!(
-            "the current release {from} is not running verified ({}); use repair",
-            error.message
-        ))
-    })?;
+    // Whichever copy runs is the one started again if the upgrade fails.
+    let current = copies
+        .into_iter()
+        .find(|copy| observe_running(paths, manager, &options.label, copy).is_ok())
+        .ok_or_else(|| {
+            busy(format!(
+                "the current release {from} is not running verified; use repair"
+            ))
+        })?;
     // The recovery copy is made before anything changes; repair uses it only
     // once the release has been verified running.
     secure_directory(&paths.recovery(), paths.uid(), true)?;
@@ -598,7 +606,13 @@ pub fn upgrade(
             return Err(restore(paths, manager, options, &current, &secret, error));
         }
     };
-    let (attempts, leases) = storage.charged()?;
+    let (attempts, leases) = match storage.charged() {
+        Ok(charged) => charged,
+        Err(error) => {
+            drop(storage);
+            return Err(restore(paths, manager, options, &current, &secret, error));
+        }
+    };
     if !attempts.is_empty() || !leases.is_empty() {
         drop(storage);
         let cause = busy(format!(
@@ -639,12 +653,15 @@ pub fn upgrade(
             return Err(restore(paths, manager, options, &current, &secret, error));
         }
     };
-    // Verified: select it, then reopen admission.
+    // Verified: select it, keep the release it replaced as the one repair
+    // returns to, then reopen admission.
     selection.current = to.into();
-    selection.last_known_good = Some(to.into());
+    selection.last_known_good = Some(from.clone());
     selection.history.push(SelectionEvent {
         release_id: to.into(),
-        event: format!("upgraded from {from} and verified running"),
+        event: format!(
+            "upgraded from {from} and verified running; {from} stays the last known good release"
+        ),
         unix_ms: unix_ms(),
     });
     write_selection(paths, &selection).map_err(|error| {
@@ -690,14 +707,34 @@ pub struct RepairReport {
     pub from_recovery: bool,
     /// Why the installed release was not used, when it was not.
     pub damaged: Option<String>,
+    /// The repaired release against this build, which read the journal.
+    pub compatibility: CompatibilityReport,
     pub running: RunningEvidence,
     /// An admission closure left by an interrupted upgrade, now reopened.
     pub reopened_closure: bool,
     pub selection: Selection,
 }
 
-/// Start the last known good release while no authority serves, run from
-/// that release's own `devguard` or its recovery copy's.
+/// Whether the last known good release can serve a journal that this build
+/// opened: the same schemas and consumers, and parent leases if the journal
+/// holds unreleased ones.
+pub fn repair_compatibility(
+    this: &BuildCompatibility,
+    release: &BuildCompatibility,
+    unreleased_leases: usize,
+) -> Result<CompatibilityReport> {
+    let report = check_compatibility(this, release)?;
+    if unreleased_leases > 0 && !release.capabilities.contains(&Capability::ParentLease) {
+        return Err(unsupported(format!(
+            "the release does not account parent leases, and the journal holds {unreleased_leases} unreleased"
+        )));
+    }
+    Ok(report)
+}
+
+/// Return the service to the last known good release, or its recovery copy,
+/// while no authority serves. The service runs only that release's own
+/// binaries, whichever `devguard` runs the repair.
 pub fn repair(
     paths: &AuthorityPaths,
     manager: &dyn ServiceManager,
@@ -717,7 +754,7 @@ pub fn repair(
         ));
     }
     // The journal must open: repair never creates, resets or restores it.
-    let storage = AuthorityStorage::open(&paths.journal()).map_err(|error| {
+    let closed = |error: Error| {
         Error::new(
             error.code,
             format!(
@@ -725,13 +762,14 @@ pub fn repair(
                 error.message
             ),
         )
-    })?;
+    };
+    let mut storage = AuthorityStorage::open(&paths.journal()).map_err(closed)?;
+    let (_, leases) = storage.charged().map_err(closed)?;
     drop(storage);
-    let installed = release_dir(paths, &id)?;
-    let (release, damaged) = match validate_package(&installed) {
+    let (release, damaged) = match read_release(&release_dir(paths, &id)?) {
         Ok(release) => (release, None),
         Err(error) => {
-            let copy = validate_package(&paths.recovery().join(&id)).map_err(|recovery| {
+            let copy = read_release(&paths.recovery().join(&id)).map_err(|recovery| {
                 Error::new(
                     ErrorCode::ReconciliationRequired,
                     format!(
@@ -743,24 +781,35 @@ pub fn repair(
             (copy, Some(error.message))
         }
     };
-    running_from(&release, "devguard")?;
+    let compatibility =
+        repair_compatibility(&compiled(), &release.manifest.compatibility, leases.len()).map_err(
+            |error| {
+                Error::new(
+                    error.code,
+                    format!("release {id} cannot serve this journal: {}", error.message),
+                )
+            },
+        )?;
     let closure = fs::symlink_metadata(paths.admission_marker()).is_ok();
     // A job left loaded, for example one that keeps failing, is replaced.
     manager.bootout(&options.label)?;
     let running = start(paths, manager, options, &release)?;
-    let secret = admin_secret(paths)?;
     if closure {
-        reopen(paths, &secret)?;
+        reopen(paths, &admin_secret(paths)?)?;
     }
     let from_recovery = damaged.is_some();
+    let replaced = selection.current.clone();
     selection.current = id.clone();
     selection.history.push(SelectionEvent {
         release_id: id.clone(),
-        event: if from_recovery {
-            "repaired to the last known good release from its recovery copy".into()
-        } else {
-            "repaired to the last known good release".into()
-        },
+        event: format!(
+            "repaired from {replaced} to the last known good release{}",
+            if from_recovery {
+                ", from its recovery copy"
+            } else {
+                ""
+            }
+        ),
         unix_ms: unix_ms(),
     });
     write_selection(paths, &selection)?;
@@ -769,6 +818,7 @@ pub fn repair(
         artifact: release.dir.clone(),
         from_recovery,
         damaged,
+        compatibility,
         running,
         reopened_closure: closure,
         selection,
@@ -848,6 +898,26 @@ mod tests {
             assert_eq!(error.code, ErrorCode::ResourcePolicyUnsupported);
             assert!(error.message.contains(needle), "{needle}: {error:?}");
         }
+    }
+
+    #[test]
+    fn repair_refuses_a_release_that_cannot_account_the_journals_leases() {
+        let without_leases = build(&[
+            Capability::DurableAdmission,
+            Capability::FencedLaunch,
+            Capability::MacosCooperative,
+        ]);
+        let report = repair_compatibility(&compiled(), &without_leases, 0).unwrap();
+        assert!(report.downgrade && report.dropped.contains(&Capability::ParentLease));
+        let error = repair_compatibility(&compiled(), &without_leases, 2).unwrap_err();
+        assert_eq!(error.code, ErrorCode::ResourcePolicyUnsupported);
+        assert!(error.message.contains("2 unreleased"), "{error:?}");
+        assert!(repair_compatibility(&compiled(), &compiled(), 2).is_ok());
+        let other_journal = BuildCompatibility {
+            journal_schema: "0".into(),
+            ..compiled()
+        };
+        assert!(repair_compatibility(&compiled(), &other_journal, 0).is_err());
     }
 
     #[test]

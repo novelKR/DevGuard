@@ -54,8 +54,9 @@ and must run from that release's own devguard: it closes admission, waits up to 
 timeout (60s by default) for charged work to end, backs up the journal, starts the new
 release closed, verifies it and reopens admission; otherwise the current release keeps
 serving. --stopped replaces a release that cannot close admission by stopping it first,
-only if nothing is then charged. repair starts the last known good release, or its
-recovery copy, while no authority serves; it never reinitializes the journal.";
+only if nothing is then charged. repair returns the service to the last known good
+release, the one the last upgrade replaced, or to its recovery copy, while no authority
+serves; it never reinitializes the journal.";
 
 /// Run the command line `args` (without the program name). `locate` supplies
 /// the authority paths and the launch helper, and is consulted only by

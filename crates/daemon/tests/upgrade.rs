@@ -3,9 +3,9 @@
 //! duplicating charged work.
 //!
 //! As in the installer tests, the test binary is copied into each package as
-//! its `devguardd` and `devguard`, so an upgrade or a repair really runs from
-//! the release it selects, and each service is that copy serving an isolated
-//! fixture authority, started by a fake manager as launchd would. A release
+//! its `devguardd` and `devguard`, so an upgrade really runs from the release
+//! it installs, and each service is that copy serving an isolated fixture
+//! authority, started by a fake manager as launchd would. A release
 //! whose id ends in `-nodrain` acts as one before C11; one that ends in
 //! `-broken` cannot start.
 
@@ -269,10 +269,11 @@ fn an_upgrade_drains_backs_up_starts_the_release_closed_and_then_reopens_admissi
     assert!(report.before_reopening.quiet());
     assert_ne!(installed.pid(), before);
     assert_eq!(installed.executable(), installed.release("0.1.0-test-b"));
+    // The release it replaced stays the one repair returns to.
     assert_eq!(report.selection.current, "0.1.0-test-b");
     assert_eq!(
         report.selection.last_known_good.as_deref(),
-        Some("0.1.0-test-b")
+        Some("0.1.0-test-a")
     );
     assert!(report.recovery.join("bin/devguardd").is_file());
     assert!(!paths.admission_marker().exists());
@@ -534,4 +535,74 @@ fn repair_keeps_a_journal_that_cannot_be_opened_closed() {
     assert!(installed.manager.state(LABEL).unwrap().is_none());
     assert_eq!(*installed.manager.bootstraps.lock().unwrap(), 1);
     record("repair-corrupt-journal", json!({"error": error}));
+}
+
+#[test]
+fn repair_after_an_upgrade_returns_to_the_release_it_replaced() {
+    let installed = Installed::new("0.1.0-test-a");
+    let paths = &installed.paths;
+    installed.stage("b", "0.1.0-test-b");
+    installed
+        .upgrade("0.1.0-test-b", Duration::from_secs(20), false)
+        .unwrap();
+    let finished = admitted(paths, "finished");
+    workload(paths).cancel(finished.key.clone()).unwrap();
+    // The new release stops serving, as one that keeps failing would.
+    installed.manager.bootout(LABEL).unwrap();
+    let report = upgrade::repair(paths, &installed.manager, &installed.options).unwrap();
+    assert_eq!(report.release_id, "0.1.0-test-a");
+    assert!(!report.from_recovery);
+    assert!(!report.compatibility.downgrade);
+    assert_eq!(installed.executable(), installed.release("0.1.0-test-a"));
+    assert_eq!(report.selection.current, "0.1.0-test-a");
+    assert_eq!(
+        report.selection.last_known_good.as_deref(),
+        Some("0.1.0-test-a")
+    );
+    assert!(report
+        .selection
+        .history
+        .last()
+        .unwrap()
+        .event
+        .contains("from 0.1.0-test-b"));
+    // The same journal is served: tombstones survive and admission is open.
+    assert_eq!(
+        workload(paths).lookup(finished.key.clone()).unwrap().phase,
+        AttemptPhase::Cancelled
+    );
+    admitted(paths, "after");
+    let status = install::status(paths, &installed.manager, &installed.options).unwrap();
+    assert!(status.healthy, "{status:?}");
+    record(
+        "repair-previous",
+        json!({"report": report, "status": status}),
+    );
+}
+
+#[test]
+fn an_upgrade_proceeds_from_a_release_repaired_onto_its_recovery_copy() {
+    let installed = Installed::new("0.1.0-test-a");
+    let paths = &installed.paths;
+    installed.manager.bootout(LABEL).unwrap();
+    let release = paths.releases().join("0.1.0-test-a");
+    for directory in [release.clone(), release.join("bin")] {
+        fs::set_permissions(&directory, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let launcher = release.join("bin/devguard-launch");
+    fs::set_permissions(&launcher, fs::Permissions::from_mode(0o700)).unwrap();
+    fs::write(&launcher, b"damaged").unwrap();
+    let repaired = upgrade::repair(paths, &installed.manager, &installed.options).unwrap();
+    assert!(repaired.from_recovery);
+    installed.stage("b", "0.1.0-test-b");
+    let report = installed
+        .upgrade("0.1.0-test-b", Duration::from_secs(20), false)
+        .unwrap();
+    assert_eq!(installed.executable(), installed.release("0.1.0-test-b"));
+    assert_eq!(report.selection.current, "0.1.0-test-b");
+    admitted(paths, "after");
+    record(
+        "upgrade-after-recovery",
+        json!({"repair": repaired, "upgrade": report}),
+    );
 }

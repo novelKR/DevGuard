@@ -238,13 +238,14 @@ DG1-C11 replaces and repairs the installed service without losing or duplicating
   3. It closes admission at the running service and waits until no attempt or lease is charged. If the drain does not finish within the timeout (60 s by default), admission reopens on the current release, which keeps every charge, and nothing is replaced. A release before C11 cannot close admission: `--stopped` stops it first and proceeds only if its journal then charges nothing; otherwise that release starts again.
   4. It stops the service. While holding the authority lock, it takes a quiescent backup under `backups/<time>-<from>-to-<to>/`: the journal as a complete SQLite copy, the selection and the current manifest, each hashed.
   5. It writes the closure marker and starts the new release, which therefore starts with admission closed. It verifies that launchd runs the release's own `devguardd`, that a consumer's handshake succeeds, and that the service reports admission closed with nothing charged.
-  6. It records the new release as current and last known good, then reopens admission.
+  6. It records the new release as current and keeps the release it replaced as the last known good one, then reopens admission.
 
   If the new release cannot be verified, it is booted out and the previous release starts again on the same journal, with admission reopened. The backup is never restored over a journal that a release may have admitted from.
-- **Repair.** `devguard repair --use last-known-good` must run from that release's own `devguard`, or from its recovery copy's.
+- **Repair.** `devguard repair --use last-known-good` returns the service to the last known good release: the one the last upgrade replaced, or the installed release when there has been no upgrade. The service runs only that release's own binaries, whichever `devguard` runs the repair.
   - It refuses while any authority serves: it never starts a second one, and a serving release is replaced by an upgrade.
   - The journal must open under the authority lock. One that cannot keeps admission closed; repair never creates, resets or restores it.
-  - If the installed release is damaged, it runs the recovery copy instead, which status then accepts.
+  - The release must read the journal's schema and serve the same consumers. One without parent leases is refused while the journal holds unreleased leases.
+  - If the installed release is damaged, it runs the recovery copy instead, which status and a later upgrade then accept.
   - It replaces any job left loaded and verifies the running binary. It reopens admission left closed by an interrupted upgrade, and records the repair in the selection.
 - **Limits.** An upgrade needs the service idle: running work is waited for, never interrupted. A release before C11 has no `upgrade` command. Returning to one uses its own installer after the service is stopped, and such a release ignores the closure marker.
 

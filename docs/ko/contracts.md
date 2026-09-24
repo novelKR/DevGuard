@@ -238,13 +238,14 @@ DG1-C11은 과금 중인 작업을 잃거나 중복하지 않고, 후보의 admi
   3. 실행 중인 서비스의 admission을 닫고 과금 중인 attempt나 lease가 없을 때까지 기다린다. Drain이 제한 시간(기본 60초) 안에 끝나지 않으면 현재 release에서 admission을 다시 열고, 그 release가 모든 과금을 유지하며, 아무것도 교체하지 않는다. C11 이전 release는 admission을 닫을 수 없다. `--stopped`는 그 release를 먼저 멈추고, journal에 과금된 것이 없을 때만 진행한다. 그렇지 않으면 그 release를 다시 시작한다.
   4. 서비스를 멈춘다. Authority lock을 보유한 채 `backups/<time>-<from>-to-<to>/` 아래에 quiescent 백업을 만든다. 완전한 SQLite 사본인 journal, 선택, 현재 manifest를 각각 hash와 함께 둔다.
   5. 닫기 marker를 기록하고 새 release를 시작하므로, 새 release는 admission이 닫힌 채 시작한다. launchd가 그 release 자신의 `devguardd`를 실행하는지, 소비자 handshake가 성공하는지, 서비스가 admission이 닫혀 있고 과금된 것이 없다고 보고하는지 검증한다.
-  6. 새 release를 current와 last known good으로 기록한 뒤 admission을 다시 연다.
+  6. 새 release를 current로 기록하고 교체된 release를 last known good으로 남긴 뒤 admission을 다시 연다.
 
   새 release를 검증할 수 없으면 bootout하고, 이전 release를 같은 journal로 다시 시작해 admission을 다시 연다. Release가 admission했을 수 있는 journal 위에 백업을 복원하지 않는다.
-- **Repair.** `devguard repair --use last-known-good`는 그 release 자신의 `devguard`나 그 복구 사본의 `devguard`로 실행해야 한다.
+- **Repair.** `devguard repair --use last-known-good`는 서비스를 last known good release로 되돌린다. 이는 마지막 upgrade가 교체한 release이며, upgrade가 없었다면 설치된 release이다. 어느 `devguard`로 repair를 실행하든 서비스는 그 release 자신의 바이너리만 실행한다.
   - 어떤 authority든 제공 중이면 거절한다. 두 번째 authority를 시작하지 않으며, 제공 중인 release는 upgrade로 교체한다.
   - Journal은 authority lock 아래에서 열려야 한다. 열 수 없으면 admission은 닫힌 채로 남고, repair는 journal을 만들거나 초기화하거나 복원하지 않는다.
-  - 설치된 release가 손상되었으면 복구 사본을 대신 실행하며, status도 이를 정상으로 받아들인다.
+  - 그 release는 journal의 schema를 읽고 같은 소비자를 제공해야 한다. Journal에 해제되지 않은 lease가 있으면 부모 lease가 없는 release는 거절한다.
+  - 설치된 release가 손상되었으면 복구 사본을 대신 실행하며, status와 이후 upgrade도 이를 받아들인다.
   - 남아 있는 job은 교체하고 실행 중인 바이너리를 검증한다. 중단된 upgrade가 닫아 둔 admission을 다시 열고, repair를 선택 기록에 남긴다.
 - **범위.** Upgrade에는 유휴 서비스가 필요하다. 실행 중인 작업은 끝날 때까지 기다리며 중단하지 않는다. C11 이전 release에는 `upgrade` 명령이 없다. 그 release로 돌아갈 때는 서비스를 멈춘 뒤 그 release 자신의 installer를 쓰며, 그 release는 닫기 marker를 무시한다.
 
