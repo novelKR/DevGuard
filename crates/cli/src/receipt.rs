@@ -25,6 +25,9 @@ pub enum ExecResult {
     ExecFailed,
     /// Nothing was started.
     NotStarted,
+    /// The helper's transcript or exit could not be observed completely, so
+    /// whether the executable started is unknown. The exit is the root's own.
+    Uncertain,
 }
 
 #[derive(Debug, Clone, Serialize, Default)]
@@ -70,6 +73,11 @@ pub struct WaitSummary {
     pub admissions: u32,
     pub cancelled_by_signal: Option<i32>,
     pub deadline_reached: bool,
+    /// The host's work capacity a wait was checked against: a request that
+    /// does not fit it can never be admitted.
+    pub work_capacity: Option<Budget>,
+    /// Why the capacity could not be checked; the authority still decides.
+    pub work_capacity_unknown: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -92,6 +100,9 @@ pub enum Exit {
 pub struct SignalSummary {
     pub received: Vec<i32>,
     pub forwarded: Vec<i32>,
+    /// Signals the CLI inherited as ignored. They stay ignored for the
+    /// workload too, as for any command started under `nohup`.
+    pub ignored: Vec<i32>,
 }
 
 #[derive(Debug, Clone, Serialize)]

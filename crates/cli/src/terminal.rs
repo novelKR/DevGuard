@@ -6,10 +6,10 @@
 
 use std::os::fd::RawFd;
 
-/// Standard input, when it is this process's controlling terminal.
-const TERMINAL: RawFd = 0;
-
 pub struct Terminal {
+    /// The first standard descriptor open on this process's controlling
+    /// terminal: input may be redirected while output still reaches it.
+    fd: RawFd,
     own_group: libc::pid_t,
     /// The workload group currently holding the terminal, if any.
     handed_to: Option<libc::pid_t>,
@@ -32,11 +32,13 @@ fn without_ttou<T>(f: impl FnOnce() -> T) -> T {
 }
 
 impl Terminal {
-    /// Present when standard input is this process's controlling terminal.
+    /// Present when a standard descriptor is this process's controlling
+    /// terminal. `tcgetpgrp` fails for a terminal that is not controlling.
     pub fn open() -> Option<Self> {
-        // SAFETY: isatty and tcgetpgrp only inspect descriptor 0.
-        let controlling = unsafe { libc::isatty(TERMINAL) == 1 && libc::tcgetpgrp(TERMINAL) > 0 };
-        controlling.then(|| Self {
+        // SAFETY: isatty and tcgetpgrp only inspect the standard descriptors.
+        let fd = (0..=2).find(|&fd| unsafe { libc::isatty(fd) == 1 && libc::tcgetpgrp(fd) > 0 })?;
+        Some(Self {
+            fd,
             // SAFETY: getpgrp has no preconditions.
             own_group: unsafe { libc::getpgrp() },
             handed_to: None,
@@ -45,8 +47,8 @@ impl Terminal {
 
     /// Whether the CLI's own group is the terminal's foreground group.
     pub fn in_foreground(&self) -> bool {
-        // SAFETY: tcgetpgrp only inspects descriptor 0.
-        unsafe { libc::tcgetpgrp(TERMINAL) == self.own_group }
+        // SAFETY: tcgetpgrp only inspects the terminal descriptor.
+        unsafe { libc::tcgetpgrp(self.fd) == self.own_group }
     }
 
     /// Give the terminal to the workload group if the CLI holds it now. The
@@ -55,8 +57,8 @@ impl Terminal {
         if !self.in_foreground() {
             return false;
         }
-        // SAFETY: tcsetpgrp only changes descriptor 0's foreground group.
-        let given = without_ttou(|| unsafe { libc::tcsetpgrp(TERMINAL, group) } == 0);
+        // SAFETY: tcsetpgrp only changes the terminal's foreground group.
+        let given = without_ttou(|| unsafe { libc::tcsetpgrp(self.fd, group) } == 0);
         if given {
             self.handed_to = Some(group);
         }
@@ -66,10 +68,10 @@ impl Terminal {
     /// Take the terminal back if the workload group still holds it.
     pub fn take_back(&mut self) {
         if let Some(group) = self.handed_to.take() {
-            // SAFETY: tcgetpgrp/tcsetpgrp only inspect or change descriptor 0.
+            // SAFETY: tcgetpgrp/tcsetpgrp only inspect or change the terminal.
             without_ttou(|| unsafe {
-                if libc::tcgetpgrp(TERMINAL) == group {
-                    libc::tcsetpgrp(TERMINAL, self.own_group);
+                if libc::tcgetpgrp(self.fd) == group {
+                    libc::tcsetpgrp(self.fd, self.own_group);
                 }
             });
         }

@@ -9,7 +9,7 @@ use crate::server::{NativeAuthority, Options, Server};
 use devguard_client::protocol::CallerCredential;
 use devguard_contract::{AttemptKey, AttemptRecord, Budget, Error, ErrorCode, Result, Secret};
 use devguard_core::{InstanceRecord, PressureState};
-use devguard_macos::{HostCapacity, HostProbe, HostReading, VolumeReading};
+use devguard_macos::{HostProbe, HostReading, VolumeReading};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -132,6 +132,12 @@ impl TestAuthority {
         Ok(())
     }
 
+    /// Whether admission is at Normal pressure now, so a refusal observed
+    /// by a test is about capacity rather than pressure.
+    pub fn pressure_normal(&self) -> Result<bool> {
+        Ok(self.authority()?.pressure() == PressureState::Normal)
+    }
+
     pub fn paths(&self) -> &AuthorityPaths {
         &self.paths
     }
@@ -176,9 +182,7 @@ impl TestAuthority {
     /// Workload capacity of the policy the service derived from this host:
     /// the admission target at Normal pressure.
     pub fn work_capacity(&self) -> Result<Budget> {
-        self.config
-            .policy(HostCapacity::observe()?, self.paths.uid())?
-            .work_capacity()
+        self.config.observed_work_capacity(self.paths.uid())
     }
 
     /// Budget still charged to unreleased attempts.

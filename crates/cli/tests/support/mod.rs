@@ -120,11 +120,21 @@ pub fn quiet(command: &mut Command) {
 
 /// Start the CLI as its own process against `base`'s fixture authority.
 pub fn cli_at(base: &Path, args: &[String], configure: impl FnOnce(&mut Command)) -> Child {
+    cli_with_helper(base, &helper(), args, configure)
+}
+
+/// Start the CLI with `helper` as its launch helper.
+pub fn cli_with_helper(
+    base: &Path,
+    helper: &Path,
+    args: &[String],
+    configure: impl FnOnce(&mut Command),
+) -> Child {
     let mut command = Command::new(exe());
     command.args(probe_args("cli_child"));
     command.env(
         CLI_CHILD,
-        json!({"base": base, "helper": helper(), "args": args}).to_string(),
+        json!({"base": base, "helper": helper, "args": args}).to_string(),
     );
     configure(&mut command);
     command.spawn().unwrap()
@@ -154,21 +164,65 @@ pub fn cli_child() {
     devguard_cli::terminate(exit)
 }
 
+/// The signals the CLI forwards, whose inherited dispositions matter.
+pub const FORWARDED: [i32; 4] = [libc::SIGINT, libc::SIGTERM, libc::SIGHUP, libc::SIGQUIT];
+
+/// Wait until `path` exists. A workload whose test has ended, and with it
+/// the directory, gives up instead of waiting out the limit.
+fn await_release(path: &Path) {
+    let deadline = Instant::now() + Duration::from_secs(120);
+    while !path.exists() {
+        if Instant::now() >= deadline || !path.parent().is_some_and(Path::exists) {
+            std::process::exit(3);
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// Let a workload waiting in [`await_release`] continue.
+pub fn release(path: &Path) {
+    std::fs::write(path, b"release").unwrap();
+}
+
+/// The descriptors open in this process.
+fn open_descriptors() -> Vec<i32> {
+    // SAFETY: F_GETFD only inspects a descriptor number.
+    (0..256)
+        .filter(|&fd| unsafe { libc::fcntl(fd, libc::F_GETFD) } >= 0)
+        .collect()
+}
+
 /// The workload role. It records what it inherited to `out`, can leave a
-/// survivor in its group, signal readiness, sleep, and end by exiting or by
-/// raising a signal.
+/// survivor in its group, signal readiness, wait for a release file or
+/// sleep, stop itself, and end by exiting or by raising a signal.
 pub fn payload() {
     let Some(config) = std::env::var_os(PROBE) else {
         return;
     };
     let config: Value = serde_json::from_str(&config.to_string_lossy()).unwrap();
-    // SAFETY: these calls only read this process's identity and descriptor 0.
-    let (pgid, ppid, tty, foreground) = unsafe {
+    let descriptors = open_descriptors();
+    // SAFETY: these calls only read this process's identity, its standard
+    // descriptors and its signal dispositions.
+    let (pgid, ppid, tty, tty_fds, foreground, ignored) = unsafe {
+        let tty_fds: Vec<bool> = (0..=2).map(|fd| libc::isatty(fd) == 1).collect();
+        let foreground = (0..=2)
+            .find(|&fd| libc::isatty(fd) == 1)
+            .map_or(-1, |fd| libc::tcgetpgrp(fd));
+        let ignored: Vec<i32> = FORWARDED
+            .into_iter()
+            .filter(|&signal| {
+                let mut current: libc::sigaction = std::mem::zeroed();
+                libc::sigaction(signal, std::ptr::null(), &mut current) == 0
+                    && current.sa_sigaction == libc::SIG_IGN
+            })
+            .collect();
         (
             libc::getpgrp(),
             libc::getppid(),
             libc::isatty(0) == 1,
-            libc::tcgetpgrp(0),
+            tty_fds,
+            foreground,
+            ignored,
         )
     };
     let marks: serde_json::Map<String, Value> = std::env::vars()
@@ -190,19 +244,46 @@ pub fn payload() {
         survivor = Some(child.id());
         std::mem::forget(child);
     }
+    if let Some(release) = config["survivor_release"].as_str() {
+        // A member that outlives the root until the test releases it.
+        let child = Command::new("/bin/sh")
+            .args([
+                "-c",
+                "until [ -e \"$1\" ] || [ ! -d \"$(dirname \"$1\")\" ]; do sleep 0.05; done",
+                "survivor",
+                release,
+            ])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        survivor = Some(child.id());
+        std::mem::forget(child);
+    }
     if let Some(out) = config["out"].as_str() {
         let record = json!({
             "pid": std::process::id(), "pgid": pgid, "ppid": ppid,
             "argv": std::env::args().collect::<Vec<_>>(),
             "cwd": std::env::current_dir().unwrap(),
             "marks": marks, "environment_names": names,
-            "tty": tty, "terminal_foreground_group": foreground,
+            "tty": tty, "tty_fds": tty_fds, "terminal_foreground_group": foreground,
+            "descriptors": descriptors, "ignored_signals": ignored,
             "survivor": survivor,
         });
         std::fs::write(out, record.to_string()).unwrap();
     }
     if let Some(ready) = config["ready"].as_str() {
         std::fs::write(ready, b"ready").unwrap();
+    }
+    if config["stop_self"].as_bool() == Some(true) {
+        // SAFETY: stopping this process until someone continues it.
+        unsafe {
+            libc::raise(libc::SIGSTOP);
+        }
+    }
+    if let Some(release) = config["release"].as_str() {
+        await_release(Path::new(release));
     }
     if let Some(millis) = config["sleep_ms"].as_u64() {
         std::thread::sleep(Duration::from_millis(millis));
@@ -240,6 +321,29 @@ pub fn wait_exit(child: &mut Child, limit: Duration) -> ExitStatus {
         }
         std::thread::sleep(Duration::from_millis(20));
     }
+}
+
+/// Wait for `child` and collect its standard output, which must be piped.
+/// The output is read on a thread, so a child that never exits fails the
+/// test at `limit` instead of blocking it.
+pub fn output_within(child: &mut Child, limit: Duration) -> (ExitStatus, String) {
+    let mut stdout = child.stdout.take().expect("piped standard output");
+    let reader = std::thread::spawn(move || {
+        let mut text = String::new();
+        let _ = std::io::Read::read_to_string(&mut stdout, &mut text);
+        text
+    });
+    let status = wait_exit(child, limit);
+    (status, reader.join().unwrap())
+}
+
+/// Whether `pid` is stopped, as `ps` reports it.
+pub fn stopped(pid: u32) -> bool {
+    Command::new("/bin/ps")
+        .args(["-o", "stat=", "-p", &pid.to_string()])
+        .output()
+        .map(|output| String::from_utf8_lossy(&output.stdout).contains('T'))
+        .unwrap_or(false)
 }
 
 pub fn wait_for(limit: Duration, mut done: impl FnMut() -> bool) {

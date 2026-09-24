@@ -13,7 +13,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::{OsStr, OsString};
 use std::io::Read;
 use std::os::unix::ffi::OsStrExt;
-use std::os::unix::fs::{MetadataExt, PermissionsExt};
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
 /// The profile every workload uses.
@@ -140,12 +140,23 @@ fn identity(path: &Path) -> Result<String> {
 }
 
 fn read_project_settings(root: &Path) -> Result<ProjectSettings> {
-    let file = std::fs::File::open(root.join(".devguard.toml")).map_err(|_| {
-        Error::new(
-            ErrorCode::InvalidRequest,
-            "the registered project root has no readable .devguard.toml",
-        )
-    })?;
+    // Neither a symbolic link nor a FIFO or device: opening does not block,
+    // and only a regular file is read.
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC)
+        .open(root.join(".devguard.toml"))
+        .map_err(|_| {
+            Error::new(
+                ErrorCode::InvalidRequest,
+                "the registered project root has no readable .devguard.toml",
+            )
+        })?;
+    if !file.metadata().is_ok_and(|meta| meta.is_file()) {
+        return Err(invalid(
+            "the project's .devguard.toml is not a regular file",
+        ));
+    }
     let mut bytes = Vec::new();
     file.take(CONFIG_BYTES as u64 + 1)
         .read_to_end(&mut bytes)

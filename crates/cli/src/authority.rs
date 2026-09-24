@@ -109,14 +109,6 @@ impl Endpoint {
         }
     }
 
-    pub fn key(&self, attempt_id: String) -> AttemptKey {
-        AttemptKey {
-            consumer_id: CONSUMER.into(),
-            consumer_generation: self.generation.clone(),
-            attempt_id,
-        }
-    }
-
     /// Connect and authenticate, without registering.
     pub fn authenticated(&self, compatibility: Compatibility) -> Result<Client> {
         let mut client = Client::connect(&self.socket, self.uid, compatibility)?;
@@ -149,6 +141,8 @@ impl Endpoint {
 /// endpoint opens a fresh session for it. Tests script lost replies through
 /// this seam, which a real authority cannot produce on demand.
 pub trait Service {
+    /// The key of a new attempt of this owner.
+    fn key(&self, attempt_id: String) -> AttemptKey;
     fn admit(&self, request: AdmissionRequest) -> Result<AttemptRecord>;
     /// Only the first successful commit carries the permit.
     fn begin_launch(&self, key: &AttemptKey) -> Result<LaunchGrant>;
@@ -162,6 +156,14 @@ pub trait Service {
 }
 
 impl Service for Endpoint {
+    fn key(&self, attempt_id: String) -> AttemptKey {
+        AttemptKey {
+            consumer_id: CONSUMER.into(),
+            consumer_generation: self.generation.clone(),
+            attempt_id,
+        }
+    }
+
     fn admit(&self, request: AdmissionRequest) -> Result<AttemptRecord> {
         self.session()?.admit(request)
     }

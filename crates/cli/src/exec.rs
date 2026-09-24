@@ -34,10 +34,15 @@ pub const NOT_STARTED: i32 = 125;
 pub const NOT_EXECUTABLE: i32 = 126;
 /// A shell's status for a program that was not found.
 pub const NOT_FOUND: i32 = 127;
-/// How long the helper may take to report READY or its refusal.
-const TRANSCRIPT_LIMIT: Duration = Duration::from_secs(30);
+/// How long the transcript may stay open once the root has exited. Only a
+/// helper that passed its end on to another process can hold it open.
+const TRANSCRIPT_GRACE: Duration = Duration::from_secs(5);
 const FIRST_BACKOFF: Duration = Duration::from_millis(250);
-const MAX_BACKOFF: Duration = Duration::from_secs(2);
+/// Each refused admission leaves a denied attempt in the journal until its
+/// generation is retired, so a long wait backs off to one attempt per 10 s.
+const MAX_BACKOFF: Duration = Duration::from_secs(10);
+/// The stops a terminal's job control causes; only these are mirrored.
+const JOB_CONTROL_STOPS: [libc::c_int; 3] = [libc::SIGTSTP, libc::SIGTTIN, libc::SIGTTOU];
 
 /// What an admission request led to.
 enum Admission {
@@ -282,6 +287,20 @@ impl Run {
                 };
             }
         };
+        // The transcript is read to its end on its own thread, started before
+        // any helper exists, while this thread waits for the root from the
+        // start: a stop before READY is mirrored at once, and no deadline can
+        // make a slow launch look like one that never started.
+        let (sender, transcript) = std::sync::mpsc::channel();
+        let reader = std::thread::Builder::new()
+            .name("devguard-transcript".into())
+            .spawn(move || {
+                let _ = sender.send(report.read_until_closed());
+            });
+        if let Err(error) = reader {
+            self.abandon(service, key, AbandonReason::SpawnFailed);
+            return Step::Stop(format!("cannot read the helper transcript: {error}"));
+        }
         {
             let command = command.command_mut();
             for name in &pre.removed {
@@ -302,15 +321,27 @@ impl Run {
             }
         };
         let root = child.id() as libc::pid_t;
+        let signals_before = signals.received().len();
         signals.attach(root);
         let mut terminal = Terminal::open();
         let handed = terminal
             .as_mut()
             .is_some_and(|terminal| terminal.give(root));
-        let (outcome, phases) = report
-            .wait(TRANSCRIPT_LIMIT)
-            .unwrap_or((LaunchOutcome::Lost { ready: false }, Vec::new()));
-        let stops = wait_for_exit(root, terminal.as_mut(), signals);
+        let (stops, waited) = wait_for_exit(root, terminal.as_mut(), signals);
+        // Take the terminal back while the root's group still exists.
+        if let Some(terminal) = terminal.as_mut() {
+            terminal.take_back();
+        }
+        // The root has exited, and with it the helper's end of the
+        // transcript, so the reader finishes at once.
+        let read = transcript
+            .recv_timeout(TRANSCRIPT_GRACE)
+            .map_err(|_| "the helper transcript stayed open after the helper exited".to_string())
+            .and_then(|read| {
+                read.map_err(|error| {
+                    format!("the helper transcript is not valid: {}", error_text(&error))
+                })
+            });
         // Observe before reaping: the exited root still holds its PID and
         // group, so members left in the group can still be proven the scope's.
         match service.observe(key) {
@@ -323,16 +354,6 @@ impl Run {
         }
         signals.detach();
         let status = child.wait();
-        if let Some(terminal) = terminal.as_mut() {
-            terminal.take_back();
-        }
-        self.receipt.launch = Some(LaunchSummary {
-            helper_pid: root as u32,
-            phases: phases.clone(),
-            outcome: format!("{outcome:?}"),
-            terminal_handed: handed,
-            stops_mirrored: stops,
-        });
         let exit = match status {
             Ok(status) => match (status.code(), status.signal()) {
                 (Some(code), _) => Exit::Code(code),
@@ -342,45 +363,108 @@ impl Run {
             Err(_) => Exit::Code(NOT_STARTED),
         };
         self.receipt.exit = Some(exit);
-        let ready = phases.contains(&HelperPhase::Ready {});
-        if !ready {
-            // READY is written before the exec, so the executable never ran.
-            let refusal = match &outcome {
-                LaunchOutcome::NotStarted(HelperPhase::Refused { code, message }) => {
-                    Some((*code, message.clone()))
-                }
-                _ => None,
-            };
-            let released = self.abandon(service, key, AbandonReason::HelperExited);
-            self.observe_after_reap(service, key);
-            let reason = match &refusal {
-                Some((code, message)) => format!("the launch was refused: {code:?}: {message}"),
-                None => format!("the helper ended before READY ({outcome:?})"),
-            };
-            if let Exit::Signal(signal) = exit {
-                eprintln!("devguard: interrupted by signal {signal} before the command started");
-                self.receipt.reason = Some(reason);
-                return Step::Finished(Exit::Signal(signal));
-            }
-            let transient = matches!(
-                refusal,
-                Some((
-                    ErrorCode::ResourceControlUnavailable | ErrorCode::ResourceUnavailable,
-                    _
-                ))
-            );
-            return if released && transient && exit == Exit::Code(NOT_AUTHORIZED_STATUS) {
-                Step::Retry(reason)
-            } else {
-                Step::Stop(reason)
-            };
-        }
-        self.observe_after_reap(service, key);
-        self.receipt.result = match outcome {
-            LaunchOutcome::ExecFailed { .. } => ExecResult::ExecFailed,
-            _ => ExecResult::Completed,
+        let (outcome, phases) = match &read {
+            Ok((outcome, phases)) => (Some(outcome.clone()), phases.clone()),
+            Err(_) => (None, Vec::new()),
         };
-        Step::Finished(exit)
+        self.receipt.launch = Some(LaunchSummary {
+            helper_pid: root as u32,
+            phases,
+            outcome: outcome
+                .as_ref()
+                .map_or_else(|| "unknown".to_string(), |outcome| format!("{outcome:?}")),
+            terminal_handed: handed,
+            stops_mirrored: stops,
+        });
+        let uncertain = match (&waited, &outcome) {
+            (Err(error), _) => Some(format!("cannot wait for the helper: {error}")),
+            (_, None) => read.as_ref().err().cloned(),
+            (_, Some(LaunchOutcome::Lost { ready: true })) => {
+                Some("the helper reported READY and then no final report".to_string())
+            }
+            _ => None,
+        };
+        if let Some(reason) = uncertain {
+            // The root is reaped, so this owner holds no helper; a grant the
+            // helper claimed is still settled only by its scope.
+            self.abandon(service, key, AbandonReason::HelperExited);
+            self.observe_after_reap(service, key);
+            eprintln!("devguard: {reason}; whether the command started is unknown");
+            self.receipt.result = ExecResult::Uncertain;
+            self.receipt.reason = Some(reason);
+            return Step::Finished(exit);
+        }
+        match outcome {
+            Some(LaunchOutcome::Started) => {
+                self.observe_after_reap(service, key);
+                self.receipt.result = ExecResult::Completed;
+                Step::Finished(exit)
+            }
+            Some(LaunchOutcome::ExecFailed { .. }) => {
+                self.observe_after_reap(service, key);
+                self.receipt.result = ExecResult::ExecFailed;
+                Step::Finished(exit)
+            }
+            // The transcript ended without READY, which is written before
+            // the exec, so the executable never ran.
+            refused => {
+                let interrupted = signals
+                    .received()
+                    .get(signals_before..)
+                    .and_then(|received| received.first().copied());
+                self.not_launched(service, key, refused, exit, interrupted)
+            }
+        }
+    }
+
+    /// The helper ended before READY. Retry only a transient refusal whose
+    /// grant is known released, and never after a signal asked the CLI to stop.
+    fn not_launched(
+        &mut self,
+        service: &dyn Service,
+        key: &AttemptKey,
+        outcome: Option<LaunchOutcome>,
+        exit: Exit,
+        interrupted: Option<libc::c_int>,
+    ) -> Step {
+        let refusal = match &outcome {
+            Some(LaunchOutcome::NotStarted(HelperPhase::Refused { code, message })) => {
+                Some((*code, message.clone()))
+            }
+            _ => None,
+        };
+        let released = self.abandon(service, key, AbandonReason::HelperExited);
+        self.observe_after_reap(service, key);
+        let reason = match (&refusal, &outcome) {
+            (Some((code, message)), _) => format!("the launch was refused: {code:?}: {message}"),
+            (None, Some(outcome)) => format!("the helper ended before READY ({outcome:?})"),
+            (None, None) => "the helper ended before READY".to_string(),
+        };
+        if let Exit::Signal(signal) = exit {
+            eprintln!("devguard: interrupted by signal {signal} before the command started");
+            self.receipt.reason = Some(reason);
+            return Step::Finished(Exit::Signal(signal));
+        }
+        // A signal received and forwarded during the launch cancels the run,
+        // even when the helper ended for another reason.
+        if let Some(signal) = interrupted {
+            eprintln!("devguard: cancelled by signal {signal} before the command started");
+            self.receipt.wait.cancelled_by_signal = Some(signal);
+            self.receipt.reason = Some(format!("{reason}; cancelled by signal {signal}"));
+            return Step::Finished(Exit::Signal(signal));
+        }
+        let transient = matches!(
+            refusal,
+            Some((
+                ErrorCode::ResourceControlUnavailable | ErrorCode::ResourceUnavailable,
+                _
+            ))
+        );
+        if released && transient && exit == Exit::Code(NOT_AUTHORIZED_STATUS) {
+            Step::Retry(reason)
+        } else {
+            Step::Stop(reason)
+        }
     }
 
     fn observe_after_reap(&mut self, service: &dyn Service, key: &AttemptKey) {
@@ -395,16 +479,23 @@ impl Run {
     }
 }
 
-/// Wait until the root exits, without reaping it. A stopped workload is
-/// mirrored: the CLI takes the terminal back and stops itself, so the shell
-/// that started it regains control; when continued it hands the terminal
-/// back and continues the workload. Returns how many stops were mirrored.
-fn wait_for_exit(root: libc::pid_t, mut terminal: Option<&mut Terminal>, signals: &Signals) -> u32 {
+/// Wait until the root exits, without reaping it. A job-control stop of the
+/// workload is mirrored: the CLI takes the terminal back and stops itself by
+/// the same signal, so the shell that started it regains control; when
+/// continued it hands the terminal back and continues the workload. Any other
+/// stop, such as SIGSTOP or a tracer's, is left to whoever caused it. Returns
+/// how many stops were mirrored, and an error when the root can no longer be
+/// waited for: whether it has exited is then unknown.
+fn wait_for_exit(
+    root: libc::pid_t,
+    mut terminal: Option<&mut Terminal>,
+    signals: &Signals,
+) -> (u32, std::io::Result<()>) {
     let mut stops = 0;
     loop {
         // SAFETY: info is plain data filled by waitid; WNOWAIT leaves the
         // root waitable, so it is reaped only after the observation.
-        let (result, code) = unsafe {
+        let (result, code, status) = unsafe {
             let mut info: libc::siginfo_t = std::mem::zeroed();
             let result = libc::waitid(
                 libc::P_PID,
@@ -412,18 +503,20 @@ fn wait_for_exit(root: libc::pid_t, mut terminal: Option<&mut Terminal>, signals
                 &mut info,
                 libc::WEXITED | libc::WSTOPPED | libc::WNOWAIT,
             );
-            (result, info.si_code)
+            (result, info.si_code, info.si_status())
         };
         if result != 0 {
-            if std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted {
+            let error = std::io::Error::last_os_error();
+            if error.kind() == std::io::ErrorKind::Interrupted {
                 continue;
             }
-            return stops;
+            return (stops, Err(error));
         }
         match code {
             libc::CLD_STOPPED | libc::CLD_TRAPPED => {
                 // Consume the stop report without reaping anything.
-                // SAFETY: as above; WNOHANG returns at once if it is gone.
+                // SAFETY: as above; WNOHANG returns at once if it is gone,
+                // and without WEXITED an exit is never consumed here.
                 unsafe {
                     let mut info: libc::siginfo_t = std::mem::zeroed();
                     libc::waitid(
@@ -433,21 +526,24 @@ fn wait_for_exit(root: libc::pid_t, mut terminal: Option<&mut Terminal>, signals
                         libc::WSTOPPED | libc::WNOHANG,
                     );
                 }
+                if code != libc::CLD_STOPPED || !JOB_CONTROL_STOPS.contains(&status) {
+                    continue;
+                }
                 stops += 1;
                 if let Some(terminal) = terminal.as_deref_mut() {
                     terminal.take_back();
                 }
                 // SAFETY: raise has no preconditions; the default action of
-                // SIGTSTP stops this process until it is continued.
+                // each job-control stop stops this process until continued.
                 unsafe {
-                    libc::raise(libc::SIGTSTP);
+                    libc::raise(status);
                 }
                 if let Some(terminal) = terminal.as_deref_mut() {
                     terminal.give(root);
                 }
                 signals.send(libc::SIGCONT);
             }
-            libc::CLD_EXITED | libc::CLD_KILLED | libc::CLD_DUMPED => return stops,
+            libc::CLD_EXITED | libc::CLD_KILLED | libc::CLD_DUMPED => return (stops, Ok(())),
             _ => {}
         }
     }
@@ -489,6 +585,7 @@ pub fn run(args: ExecArgs, paths: &AuthorityPaths, helper: &Path) -> Exit {
     if let Ok(signals) = &signals {
         run.receipt.signals.received = signals.received();
         run.receipt.signals.forwarded = signals.forwarded();
+        run.receipt.signals.ignored = signals.ignored();
     }
     if run.admitted_after.is_none() {
         run.admitted_after = Some(run.started.elapsed());
@@ -559,6 +656,24 @@ fn execute(
             capabilities: Default::default(),
         },
     });
+    if args.wait.is_some() {
+        // A wait cannot make room the host does not have: refuse at once
+        // rather than leave a denied attempt behind every backoff.
+        match endpoint.config.observed_work_capacity(endpoint.uid) {
+            Ok(capacity) => {
+                run.receipt.wait.work_capacity = Some(capacity);
+                if !pre.intent.requested.fits(capacity) {
+                    return run.not_started(format!(
+                        "the request exceeds this host's work capacity of {} mCPU, {} bytes and {} tasks, so no wait can admit it",
+                        capacity.cpu_milli, capacity.memory_bytes, capacity.tasks
+                    ));
+                }
+            }
+            Err(error) => {
+                run.receipt.wait.work_capacity_unknown = Some(error_text(&error));
+            }
+        }
+    }
     let exit = admit_and_run(run, &endpoint, &pre, helper, signals);
     // Held adapter resources, such as a shared jobserver, outlive the run and
     // report what they observed once it has ended.
@@ -572,7 +687,7 @@ fn execute(
 /// be made.
 fn admit_and_run(
     run: &mut Run,
-    endpoint: &Endpoint,
+    service: &dyn Service,
     pre: &Preflight,
     helper: &Path,
     signals: &Signals,
@@ -583,19 +698,19 @@ fn admit_and_run(
             run.not_started(format!("cancelled by signal {signal}"));
             return Exit::Signal(signal);
         }
-        let key = endpoint.key(uuid::Uuid::new_v4().to_string());
+        let key = service.key(uuid::Uuid::new_v4().to_string());
         run.receipt.wait.admissions += 1;
-        let step = match run.admit(endpoint, &key, &pre.digest, &pre.intent) {
-            Admission::Admitted => match run.commit_admitted(endpoint, &key) {
+        let step = match run.admit(service, &key, &pre.digest, &pre.intent) {
+            Admission::Admitted => match run.commit_admitted(service, &key) {
                 Ok(permit) => {
                     if let Some(signal) = signals.cancelled() {
                         drop(permit);
-                        run.abandon(endpoint, &key, AbandonReason::SpawnFailed);
+                        run.abandon(service, &key, AbandonReason::SpawnFailed);
                         run.receipt.wait.cancelled_by_signal = Some(signal);
                         run.not_started(format!("cancelled by signal {signal}"));
                         return Exit::Signal(signal);
                     }
-                    run.launch(endpoint, &key, permit, pre, helper, signals)
+                    run.launch(service, &key, permit, pre, helper, signals)
                 }
                 Err(step) => step,
             },
@@ -645,6 +760,8 @@ mod tests {
 
     #[derive(Default)]
     struct Scripted {
+        /// The key of every admission request, in order.
+        admitted: RefCell<Vec<AttemptKey>>,
         admit: RefCell<VecDeque<Result<AttemptRecord>>>,
         begin: RefCell<VecDeque<Result<LaunchGrant>>>,
         lookup: RefCell<VecDeque<Result<AttemptRecord>>>,
@@ -660,8 +777,15 @@ mod tests {
     }
 
     impl Service for Scripted {
-        fn admit(&self, _request: AdmissionRequest) -> Result<AttemptRecord> {
+        fn key(&self, attempt_id: String) -> AttemptKey {
+            AttemptKey {
+                attempt_id,
+                ..key()
+            }
+        }
+        fn admit(&self, request: AdmissionRequest) -> Result<AttemptRecord> {
             self.calls.borrow_mut().push("admit".into());
+            self.admitted.borrow_mut().push(request.key);
             next(&self.admit)
         }
         fn begin_launch(&self, _key: &AttemptKey) -> Result<LaunchGrant> {
@@ -764,6 +888,40 @@ mod tests {
 
     fn calls(service: &Scripted) -> Vec<String> {
         service.calls.borrow().clone()
+    }
+
+    fn preflight() -> Preflight {
+        Preflight {
+            program: PathBuf::from("/usr/bin/true"),
+            original_args: Vec::new(),
+            args: Vec::new(),
+            cwd: PathBuf::from("/"),
+            set: BTreeMap::new(),
+            removed: Default::default(),
+            tty: false,
+            intent: intent(),
+            budget_source: "command_line",
+            digest: "0".repeat(64),
+            adapter: crate::adapter::AdapterReport {
+                adapter: "generic",
+                selected_by: "command_line",
+                parallelism: "not_transformed".into(),
+                detail: serde_json::Value::Null,
+            },
+            project: None,
+            hold: Vec::new(),
+        }
+    }
+
+    /// Drive the admission loop; no helper is ever reached in these tests.
+    fn drive(service: &Scripted, run: &mut Run, signals: &Signals) -> Exit {
+        admit_and_run(
+            run,
+            service,
+            &preflight(),
+            Path::new("/nonexistent/devguard-launch"),
+            signals,
+        )
     }
 
     #[test]
@@ -878,6 +1036,160 @@ mod tests {
             };
             assert_eq!(observed, expected);
             assert_eq!(calls(&service).len(), admits);
+            // A replay repeats the same key; it never makes a second attempt.
+            let keys = service.admitted.borrow();
+            assert!(keys.iter().all(|admitted| *admitted == key()));
+        }
+    }
+
+    #[test]
+    fn a_wait_makes_a_new_attempt_after_each_refusal_until_its_deadline() {
+        let service = Scripted::default();
+        service
+            .admit
+            .borrow_mut()
+            .extend((0..16).map(|_| Ok(denied(ErrorCode::ResourceUnavailable))));
+        let mut run = run();
+        run.deadline = Some(Instant::now() + Duration::from_millis(700));
+        let started = Instant::now();
+        let exit = drive(&service, &mut run, &Signals::inert());
+        assert_eq!(exit, Exit::Code(NOT_STARTED));
+        assert!(started.elapsed() >= Duration::from_millis(700));
+        assert!(run.receipt.wait.deadline_reached);
+        assert_eq!(run.receipt.result, ExecResult::NotStarted);
+        // Backoff of 250 ms, then 500 ms cut to the deadline: at most three
+        // admissions, each a new attempt with its own key.
+        let keys = service.admitted.borrow().clone();
+        assert!((2..=3).contains(&keys.len()), "{keys:?}");
+        assert_eq!(run.receipt.wait.admissions as usize, keys.len());
+        let distinct: std::collections::BTreeSet<_> =
+            keys.iter().map(|key| key.attempt_id.clone()).collect();
+        assert_eq!(distinct.len(), keys.len());
+        assert!(calls(&service).iter().all(|call| call == "admit"));
+    }
+
+    #[test]
+    fn a_signal_cancels_a_wait_before_or_during_its_backoff() {
+        let service = Scripted::default();
+        let signals = Signals::inert();
+        signals.simulate(libc::SIGINT);
+        let mut early = run();
+        early.deadline = Some(Instant::now() + Duration::from_secs(60));
+        assert_eq!(
+            drive(&service, &mut early, &signals),
+            Exit::Signal(libc::SIGINT)
+        );
+        assert!(calls(&service).is_empty(), "nothing is admitted");
+        assert_eq!(early.receipt.wait.cancelled_by_signal, Some(libc::SIGINT));
+
+        let service = Scripted::default();
+        service
+            .admit
+            .borrow_mut()
+            .push_back(Ok(denied(ErrorCode::ResourceUnavailable)));
+        let signals = Signals::inert();
+        let sender = signals.clone();
+        let later = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(100));
+            sender.simulate(libc::SIGTERM);
+        });
+        let mut waiting = run();
+        waiting.backoff = Duration::from_secs(10);
+        waiting.deadline = Some(Instant::now() + Duration::from_secs(60));
+        let started = Instant::now();
+        let exit = drive(&service, &mut waiting, &signals);
+        later.join().unwrap();
+        assert_eq!(exit, Exit::Signal(libc::SIGTERM));
+        assert!(started.elapsed() < Duration::from_secs(5));
+        assert_eq!(calls(&service), ["admit"]);
+        assert_eq!(
+            waiting.receipt.wait.cancelled_by_signal,
+            Some(libc::SIGTERM)
+        );
+    }
+
+    #[test]
+    fn a_refusal_that_waiting_cannot_change_ends_the_wait_at_once() {
+        let service = Scripted::default();
+        service
+            .admit
+            .borrow_mut()
+            .push_back(Ok(denied(ErrorCode::ResourcePolicyUnsupported)));
+        let mut run = run();
+        run.deadline = Some(Instant::now() + Duration::from_secs(60));
+        assert_eq!(
+            drive(&service, &mut run, &Signals::inert()),
+            Exit::Code(NOT_STARTED)
+        );
+        assert_eq!(calls(&service), ["admit"]);
+        assert!(!run.receipt.wait.deadline_reached);
+    }
+
+    #[test]
+    fn a_launch_that_ended_before_ready_is_retried_only_when_released_transient_and_uninterrupted()
+    {
+        let refused = || {
+            Some(LaunchOutcome::NotStarted(HelperPhase::Refused {
+                code: ErrorCode::ResourceUnavailable,
+                message: "pressure".into(),
+            }))
+        };
+        let released = || {
+            Ok(record(
+                AttemptPhase::Released,
+                Some(ReleaseReason::NoHelperCreated),
+            ))
+        };
+        let settled = Exit::Code(NOT_AUTHORIZED_STATUS);
+        /// (transcript outcome, no-helper reply, helper exit, signal received, step)
+        type Case = (
+            Option<LaunchOutcome>,
+            Result<AttemptRecord>,
+            Exit,
+            Option<i32>,
+            &'static str,
+        );
+        let cases: Vec<Case> = vec![
+            (refused(), released(), settled, None, "retry"),
+            (refused(), released(), settled, Some(libc::SIGINT), "signal"),
+            (
+                refused(),
+                Ok(record(AttemptPhase::Suspect, None)),
+                settled,
+                None,
+                "stop",
+            ),
+            (
+                refused(),
+                released(),
+                Exit::Signal(libc::SIGKILL),
+                None,
+                "signal",
+            ),
+            (
+                Some(LaunchOutcome::Lost { ready: false }),
+                released(),
+                settled,
+                None,
+                "stop",
+            ),
+        ];
+        for (outcome, abandon, exit, interrupted, expected) in cases {
+            let service = Scripted::default();
+            service.abandon.borrow_mut().push_back(abandon);
+            let mut run = run();
+            let step = run.not_launched(&service, &key(), outcome, exit, interrupted);
+            let observed = match step {
+                Step::Retry(_) => "retry",
+                Step::Stop(_) => "stop",
+                Step::Finished(Exit::Signal(_)) => "signal",
+                Step::Finished(Exit::Code(_)) => "finished",
+            };
+            assert_eq!(observed, expected);
+            assert_eq!(run.receipt.result, ExecResult::NotStarted);
+            if let Some(signal) = interrupted {
+                assert_eq!(run.receipt.wait.cancelled_by_signal, Some(signal));
+            }
         }
     }
 }

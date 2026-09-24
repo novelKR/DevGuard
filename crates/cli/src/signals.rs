@@ -2,6 +2,9 @@
 //! only while its root is unreaped: until the owner reaps the root, the root
 //! holds its PID and with it the group ID, so neither can name an unrelated
 //! process. Before a workload exists a signal cancels the wait instead.
+//! A signal the CLI inherited as ignored, as under `nohup` or for a
+//! background command of a non-interactive shell, stays ignored: no handler
+//! is installed, and the workload inherits the same disposition.
 //!
 //! Handlers only write the signal number to a self-pipe; a thread does the rest.
 
@@ -38,6 +41,8 @@ struct State {
     received: Vec<libc::c_int>,
     /// Signals delivered to the group.
     forwarded: Vec<libc::c_int>,
+    /// Forwarded signals inherited as ignored, left ignored.
+    ignored: Vec<libc::c_int>,
 }
 
 #[derive(Clone)]
@@ -87,8 +92,17 @@ impl Signals {
             .spawn(move || forwarder.forward(reader))?;
         for signal in FORWARDED {
             // SAFETY: the handler only performs an async-signal-safe write;
-            // SA_RESTART keeps interrupted system calls transparent.
+            // SA_RESTART keeps interrupted system calls transparent. The
+            // current disposition is read first and an ignored one is kept.
             unsafe {
+                let mut current: libc::sigaction = std::mem::zeroed();
+                if libc::sigaction(signal, std::ptr::null(), &mut current) != 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                if current.sa_sigaction == libc::SIG_IGN {
+                    signals.lock().ignored.push(signal);
+                    continue;
+                }
                 let mut action: libc::sigaction = std::mem::zeroed();
                 action.sa_sigaction = record as *const () as libc::sighandler_t;
                 action.sa_flags = libc::SA_RESTART;
@@ -99,6 +113,28 @@ impl Signals {
             }
         }
         Ok(signals)
+    }
+
+    /// Forwarding state without handlers or a thread, for tests that drive
+    /// the wait loop: a signal is simulated with [`Signals::simulate`].
+    #[cfg(test)]
+    pub fn inert() -> Self {
+        Self {
+            state: Arc::new((Mutex::new(State::default()), Condvar::new())),
+        }
+    }
+
+    /// Record `signal` as the forwarding thread would.
+    #[cfg(test)]
+    pub fn simulate(&self, signal: libc::c_int) {
+        let mut state = self.lock();
+        state.received.push(signal);
+        match state.root {
+            Some(_) => state.forwarded.push(signal),
+            None => state.pending.push(signal),
+        }
+        drop(state);
+        self.state.1.notify_all();
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, State> {
@@ -195,5 +231,9 @@ impl Signals {
 
     pub fn forwarded(&self) -> Vec<libc::c_int> {
         self.lock().forwarded.clone()
+    }
+
+    pub fn ignored(&self) -> Vec<libc::c_int> {
+        self.lock().ignored.clone()
     }
 }

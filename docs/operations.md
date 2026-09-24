@@ -41,7 +41,7 @@ On a platform without native evidence, or when the macOS observation fails, `ser
 
 Authenticated status reports `storage_validated`, `registration_ready`, `execution_ready`, a reason and the configuration fingerprint. With native evidence registration and execution are ready, and admission still follows host pressure and capacity. Otherwise both are false, and the reason distinguishes an unsupported platform from a failed native observation. `devguard` finds `devguard-launch` beside itself, so build them together. Installation, a LaunchAgent and repair remain future work. Configuration or a successful handshake alone does not govern commands. Necessary bootstrap builds are not self-use evidence. Do not use the disposable `target` path for a persistent service; protected installation is C09 work.
 
-`devguard exec [--project ID] [--adapter auto|generic|cargo|cargo-pipeline] [--wait DURATION] [--cpu MILLICPU] [--memory SIZE] [--tasks N] [--receipt PATH] -- PROGRAM [ARGS...]` admits the command, starts it through `devguard-launch` and waits for it. The program and its arguments follow `--`, and no shell is used. It exits with the command's status or ends by its signal, and exits 125 when nothing was started. Without `--wait` a denial ends it at once; `--wait` retries capacity and pressure denials until the deadline. `--receipt` writes a private JSON receipt. `devguard doctor` prints a JSON diagnosis, and `--require admission,registration,macos-cooperative` makes it fail unless each requirement holds. See [contracts](contracts.md#command-line-owner).
+`devguard exec [--project ID] [--adapter auto|generic|cargo|cargo-pipeline] [--wait DURATION] [--cpu MILLICPU] [--memory SIZE] [--tasks N] [--receipt PATH] -- PROGRAM [ARGS...]` admits the command, starts it through `devguard-launch` and waits for it. The program and its arguments follow `--`, and no shell is used. It exits with the command's status or ends by its signal, and exits 125 when nothing was started. Without `--wait` a denial ends it at once; `--wait` retries capacity and pressure denials until the deadline, and refuses at once a request larger than the host's work capacity. `--receipt` writes a private JSON receipt. `devguard doctor` prints a JSON diagnosis, and `--require admission,registration,macos-cooperative` makes it fail unless each requirement holds. See [contracts](contracts.md#command-line-owner).
 
 `--adapter cargo` fits `cargo`'s compiler jobs to the reservation, and `--adapter cargo-pipeline` shares one jobserver across the Cargo runs of a program such as a validation script. `auto`, the default, selects the Cargo adapter for `cargo` commands that compile. A reservation that cannot fit one Cargo job (1 CPU and 2 GiB) is refused. See [contracts](contracts.md#cargo-adapter).
 
@@ -176,28 +176,31 @@ Core, launcher-evidence, service and wire tests cover previous-boot release, pre
 `dg1-cli` also runs only on macOS. It first builds `devguard-launch`, then runs the CLI as a separate owner process against isolated authorities. It checks:
 - a command's arguments, working directory, environment and exit status, with release after its scope ends
 - a workload ended by a signal, which ends the CLI by the same signal
-- signals sent to the CLI reaching every member of the workload's group
+- SIGTERM and SIGHUP sent to the CLI reaching every member of the workload's group, and a signal the caller ignored staying ignored and unforwarded
+- a SIGSTOP of the workload, which the CLI does not mirror
 - observation before reap, which keeps a survivor tracked and charged until it ends
-- a budget the host cannot fit, which starts nothing
+- a budget the host cannot fit, which starts nothing, and a wait for one, refused at once without an attempt
 - an explicit wait that is admitted once capacity is released, one that ends at its deadline and one that a signal cancels
-- an unavailable authority, which starts nothing, and doctor diagnostics with and without requirements
+- an unavailable authority and one without the fenced launch capability, which start nothing, and doctor diagnostics with and without requirements
 - a registered project's limits and the working directory it must contain
-- at most eight concurrent owners
-- on a pseudo-terminal, an interrupt key reaching the workload directly, and a stop mirrored so a job-control shell regains the terminal
+- at most eight concurrent owners, and owners that have ended never exhausting the pool
+- a missing or unexecutable program, an existing receipt path and a missing helper, which admit nothing
+- on a pseudo-terminal, an interrupt key reaching the workload directly, including when only output is on the terminal, and a stop mirrored so a job-control shell regains the terminal
 
-Argument, preparation, entry-point and scripted reply-loss tests cover strict parsing, program resolution, budget precedence, the meaning digest, lost admission and launch-commit replies, and malformed invocations of the real binary.
+Argument, preparation, entry-point and scripted-authority tests cover strict parsing, program resolution, budget precedence, the meaning digest, lost admission and launch-commit replies, the wait's backoff, deadline and cancellation, the retry rule after a helper ended before READY, a transcript read to its end, and malformed invocations of the real binary.
 
 `dg1-cargo` also runs only on macOS and builds `devguard-launch` first. It runs real Cargo builds of small offline workspaces through the CLI. A compiler wrapper records when each compilation starts and ends, and a `cargo` shim records the descriptors each launch inherited. It checks:
 - a direct build within the reserved jobs, with its target directory kept
 - explicit jobs clamped to the reservation or kept within it
 - conflicting jobs, an unsupported subcommand, a reservation below one job and a non-Cargo program under the Cargo adapter, which start nothing, and `auto` choosing the generic adapter for a Cargo command that compiles nothing
-- a pipeline whose concurrent Cargo runs share one jobserver, with its report path kept and its tokens returned
+- `cargo test` compiling within the reservation while its test threads are left alone
+- a Python pipeline whose concurrent Cargo runs share one FIFO jobserver, with its report path kept, both targets built and its tokens returned
 - nested Cargo in a build script sharing the outer jobserver
-- an inherited jobserver preserved and bounding the build, and stale inherited descriptors removed before Cargo runs
+- inherited FIFO and descriptor-pair jobservers preserved and bounding the build, and stale inherited descriptors removed before Cargo runs
 - concurrent consumers, each within its own reservation
 - a cancelled pipeline whose builds stop and whose jobserver is removed
 
-Each Cargo launch and pipeline script inherits only its standard descriptors. Where the host's work capacity cannot fit the Cargo jobs a case needs, as on the hosted macOS 14 runner, the case is recorded as `not_run` and the suite reports `incomplete`; CI runs it with `--allow-incomplete`.
+Each Cargo launch and pipeline script inherits only its standard descriptors, except the caller's own descriptor-pair jobserver when one is inherited. The shim also records the arguments and the jobserver and fallback variables each Cargo received. Where the host's work capacity cannot fit the Cargo jobs a case needs, as on the hosted macOS 14 runner, the case is recorded as `not_run` and the suite reports `incomplete`; CI runs it with `--allow-incomplete`.
 
 These suites leave Linux enforcement, self-use and foreground SLO `not_run`. The full validator retains the 44 original tests and validates all eight workspace crates and their explicit dependency graph. The launch crate depends on the daemon only for its tests' isolated authorities. The CLI depends on the daemon's paths and configuration and on the Cargo adapter, and on the daemon's fixtures only in tests. The Cargo adapter depends only on the contract. Core/contract remain independent of daemon configuration and native adapters, and client does not depend on core.
 

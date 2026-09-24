@@ -9,12 +9,13 @@
 //!
 //! Direct mode rewrites a `cargo` invocation: an explicit `-j`/`--jobs` above
 //! the reservation is clamped, an absent one is inserted after the subcommand,
-//! and conflicting values are refused. Pipeline mode serves a program that runs
-//! Cargo itself: it creates a private FIFO jobserver shared by every nested
-//! Cargo, because a FIFO survives helpers that close inherited descriptors.
-//! A valid jobserver inherited from the caller is preserved in both modes, and
-//! an invalid one is removed so Cargo does not silently fall back to its own
-//! pool.
+//! and values Cargo would reject are refused. Pipeline mode serves a program
+//! that runs Cargo itself: it creates a private FIFO jobserver shared by every
+//! nested Cargo, because a FIFO survives helpers that close inherited
+//! descriptors. A valid jobserver inherited from the caller is preserved in
+//! both modes, and an invalid one is removed so Cargo does not silently fall
+//! back to its own pool. Both modes also set `CARGO_BUILD_JOBS` to the
+//! reservation's jobs, which bounds a Cargo that cannot open any jobserver.
 
 use devguard_contract::{Budget, Error, ErrorCode, Result};
 use serde_json::{json, Value};
@@ -38,6 +39,11 @@ pub const DEFAULT_JOBS: u64 = 2;
 pub const DEFAULT_TASKS: u64 = 64;
 /// Variables that carry a jobserver, in the order Cargo reads them.
 pub const JOBSERVER_VARIABLES: [&str; 3] = ["CARGO_MAKEFLAGS", "MAKEFLAGS", "MFLAGS"];
+/// The largest private pool: its tokens are written once, without blocking,
+/// into the FIFO's buffer.
+pub const MAX_POOL_JOBS: u64 = 1024;
+/// Cargo's own pool when it can open no jobserver.
+pub const FALLBACK_VARIABLE: &str = "CARGO_BUILD_JOBS";
 
 /// Subcommands whose compilation parallelism `--jobs` governs.
 const SUPPORTED: [&str; 16] = [
@@ -108,6 +114,8 @@ pub enum JobsForm {
     Separate,
     /// `-jN`.
     ShortJoined,
+    /// `-j=N`.
+    ShortEquals,
     /// `--jobs=N`.
     LongJoined,
 }
@@ -188,6 +196,10 @@ pub fn parse(args: &[OsString]) -> Result<CargoArgs> {
             parsed
                 .jobs
                 .push((index, value.to_string(), JobsForm::LongJoined));
+        } else if let Some(value) = arg.strip_prefix("-j=") {
+            parsed
+                .jobs
+                .push((index, value.to_string(), JobsForm::ShortEquals));
         } else if let Some(value) = arg.strip_prefix("-j").filter(|value| !value.is_empty()) {
             parsed
                 .jobs
@@ -298,14 +310,14 @@ pub fn inherited(environment: &BTreeMap<OsString, OsString>) -> Vec<JobserverRef
         .collect()
 }
 
-/// The jobserver Cargo will use: Cargo reads only the first of its variables
-/// that is present, after the adapter's own changes, and uses it only when it
-/// names a usable jobserver.
+/// The jobserver Cargo will use, as (variable, auth): Cargo reads only the
+/// first of its variables that is present, after the adapter's own changes,
+/// and uses it only when it names a usable jobserver.
 fn governing(
     environment: &BTreeMap<OsString, OsString>,
     set: &BTreeMap<String, String>,
     removed: &BTreeSet<String>,
-) -> Option<String> {
+) -> Option<(String, String)> {
     let variable = JOBSERVER_VARIABLES.iter().find(|variable| {
         set.contains_key(**variable)
             || (!removed.contains(**variable) && environment.contains_key(OsStr::new(variable)))
@@ -315,7 +327,25 @@ fn governing(
         None => environment.get(OsStr::new(variable))?.to_str()?.to_string(),
     };
     let auth = auth_of(&flags)?;
-    check_auth(&auth).ok().map(|()| variable.to_string())
+    check_auth(&auth)
+        .ok()
+        .map(|()| (variable.to_string(), auth))
+}
+
+/// What a governing jobserver means for the run, for the receipt.
+fn governing_note(variable: &str, auth: &str, fallback: u64) -> String {
+    if auth.starts_with("fifo:") {
+        format!(
+            "the FIFO jobserver inherited through {variable} bounds parallelism; its size cannot be observed. \
+             {FALLBACK_VARIABLE}={fallback} bounds a Cargo that cannot open it"
+        )
+    } else {
+        format!(
+            "the descriptor-pair jobserver inherited through {variable} bounds parallelism; its size cannot be observed. \
+             It reaches only programs that keep inherited descriptors open; a Cargo started by one that closes them, \
+             such as Python's subprocess by default, uses {FALLBACK_VARIABLE}={fallback} instead"
+        )
+    }
 }
 
 /// A jobserver reference, or a job count that belongs to one.
@@ -364,17 +394,18 @@ fn references_report(references: &[JobserverReference]) -> Value {
     )
 }
 
-/// Parse a jobs value the way Cargo reads it: a positive count, or a
-/// host-relative value (`default`, zero is invalid, negative counts back from
-/// the host's CPUs).
-enum JobsValue {
-    Count(u64),
-    HostRelative,
+/// The host's logical CPUs as Cargo counts them for host-relative values.
+pub fn host_cpus() -> u64 {
+    std::thread::available_parallelism().map_or(1, |cpus| cpus.get() as u64)
 }
 
-fn jobs_value(value: &str) -> Result<JobsValue> {
+/// The jobs Cargo would run for an explicit value on a host with `cpus`
+/// logical CPUs: a positive count, `default` for the CPUs, or a negative
+/// count back from them and never below one. Zero and anything else are
+/// refused, as Cargo refuses them.
+pub fn resolve_jobs(value: &str, cpus: u64) -> Result<u64> {
     if value == "default" {
-        return Ok(JobsValue::HostRelative);
+        return Ok(cpus);
     }
     let parsed: i64 = value.parse().map_err(|_| {
         refused(
@@ -387,8 +418,8 @@ fn jobs_value(value: &str) -> Result<JobsValue> {
             ErrorCode::InvalidRequest,
             "Cargo jobs may not be zero",
         )),
-        count if count > 0 => Ok(JobsValue::Count(count as u64)),
-        _ => Ok(JobsValue::HostRelative),
+        count if count > 0 => Ok(count as u64),
+        negative => Ok(cpus.saturating_sub(negative.unsigned_abs()).max(1)),
     }
 }
 
@@ -397,6 +428,16 @@ pub fn direct(
     args: &[OsString],
     environment: &BTreeMap<OsString, OsString>,
     budget: Budget,
+) -> Result<Plan> {
+    direct_on(args, environment, budget, host_cpus())
+}
+
+/// Direct mode on a host with `cpus` logical CPUs.
+pub fn direct_on(
+    args: &[OsString],
+    environment: &BTreeMap<OsString, OsString>,
+    budget: Budget,
+    cpus: u64,
 ) -> Result<Plan> {
     let jobs = required_jobs(budget)?;
     let parsed = parse(args)?;
@@ -418,6 +459,14 @@ pub fn direct(
             "Cargo jobs are given more than once; Cargo rejects repeated jobs options",
         ));
     }
+    // An explicit value is checked first: Cargo rejects the same values
+    // whether or not a jobserver governs.
+    let explicit = match parsed.jobs.first() {
+        Some((index, value, form)) => {
+            Some((*index, value.clone(), *form, resolve_jobs(value, cpus)?))
+        }
+        None => None,
+    };
     let references = inherited(environment);
     let mut plan = Plan {
         args: args.to_vec(),
@@ -425,57 +474,52 @@ pub fn direct(
     };
     strip_invalid(environment, &references, &mut plan.set, &mut plan.removed);
     let environment_jobs = environment
-        .get(OsStr::new("CARGO_BUILD_JOBS"))
+        .get(OsStr::new(FALLBACK_VARIABLE))
         .map(|value| value.to_string_lossy().into_owned());
-    let original = parsed.jobs.first().map(|(_, value, _)| value.clone());
-    let (action, applied, reason) = if let Some(variable) =
-        governing(environment, &plan.set, &plan.removed)
-    {
-        // Cargo ignores -j under a jobserver; the inherited pool governs.
-        (
-            "inherited_jobserver",
-            None,
-            format!(
-                "the jobserver inherited through {variable} bounds parallelism; its size cannot be observed"
-            ),
-        )
-    } else if let Some((index, value, form)) = parsed.jobs.first().cloned() {
-        let clamp = |plan: &mut Plan| rewrite_jobs(&mut plan.args, index, form, jobs);
-        match jobs_value(&value)? {
-            JobsValue::Count(count) if count <= jobs => (
-                "kept",
-                Some(count),
-                format!("{count} jobs fit the reservation of {jobs}"),
-            ),
-            JobsValue::Count(count) => {
-                clamp(&mut plan);
-                (
-                    "clamped",
-                    Some(jobs),
-                    format!("{count} jobs exceed the reservation, which fits {jobs}"),
-                )
-            }
-            JobsValue::HostRelative => {
-                clamp(&mut plan);
-                (
-                    "clamped",
-                    Some(jobs),
-                    format!("the host-relative value {value:?} was replaced by the reservation's {jobs}"),
-                )
-            }
+    plan.set.insert(FALLBACK_VARIABLE.into(), jobs.to_string());
+    let governing = governing(environment, &plan.set, &plan.removed);
+    // Under a valid jobserver Cargo ignores -j with a warning, so the pool
+    // governs and an explicit value only bounds a Cargo that cannot open it.
+    let under = governing
+        .as_ref()
+        .map(|(variable, auth)| format!("; {}", governing_note(variable, auth, jobs)))
+        .unwrap_or_default();
+    let original = explicit.as_ref().map(|(_, value, _, _)| value.clone());
+    let (action, applied, reason) = match explicit {
+        Some((_, value, _, count)) if count <= jobs => (
+            "kept",
+            Some(count),
+            format!("{value} ({count} jobs on {cpus} CPUs) fits the reservation of {jobs}{under}"),
+        ),
+        Some((index, value, form, count)) => {
+            rewrite_jobs(&mut plan.args, index, form, jobs);
+            (
+                "clamped",
+                Some(jobs),
+                format!("{value} ({count} jobs on {cpus} CPUs) exceeds the reservation, which fits {jobs}{under}"),
+            )
         }
-    } else {
-        let at = parsed.subcommand_index.unwrap_or(0) + 1;
-        plan.args.splice(
-            at..at,
-            [OsString::from("--jobs"), OsString::from(jobs.to_string())],
-        );
-        (
-            "inserted",
-            Some(jobs),
-            "--jobs on the command line takes precedence over CARGO_BUILD_JOBS and configuration"
-                .to_string(),
-        )
+        None => match &governing {
+            // Inserting -j would only add Cargo's warning that it is ignored.
+            Some((variable, auth)) => (
+                "inherited_jobserver",
+                None,
+                governing_note(variable, auth, jobs),
+            ),
+            None => {
+                let at = parsed.subcommand_index.unwrap_or(0) + 1;
+                plan.args.splice(
+                    at..at,
+                    [OsString::from("--jobs"), OsString::from(jobs.to_string())],
+                );
+                (
+                    "inserted",
+                    Some(jobs),
+                    "--jobs on the command line takes precedence over CARGO_BUILD_JOBS and configuration"
+                        .to_string(),
+                )
+            }
+        },
     };
     plan.report = json!({
         "mode": "direct",
@@ -483,17 +527,27 @@ pub fn direct(
         "reservation_jobs": jobs,
         "jobs": {"action": action, "original": original, "applied": applied, "reason": reason,
                  "environment": environment_jobs, "config": parsed.config_jobs},
-        "jobserver": references_report(&references),
+        "jobserver": {"governing": governing.as_ref().map(|(variable, _)| variable),
+                      "inherited": references_report(&references)},
+        "fallback": fallback_note(jobs),
         "test_threads": "not capped: Cargo jobs bound compilation, not the threads of the programs it runs",
         "memory": "an accounting estimate of 512 MiB plus 1.5 GiB per job, not measured enforcement",
     });
     Ok(plan)
 }
 
+fn fallback_note(jobs: u64) -> String {
+    format!(
+        "{FALLBACK_VARIABLE}={jobs} is set: a Cargo that opens no jobserver runs at most {jobs} jobs, \
+         unless its own command line or --config gives another value"
+    )
+}
+
 fn rewrite_jobs(args: &mut [OsString], index: usize, form: JobsForm, jobs: u64) {
     match form {
         JobsForm::Separate => args[index + 1] = OsString::from(jobs.to_string()),
         JobsForm::ShortJoined => args[index] = OsString::from(format!("-j{jobs}")),
+        JobsForm::ShortEquals => args[index] = OsString::from(format!("-j={jobs}")),
         JobsForm::LongJoined => args[index] = OsString::from(format!("--jobs={jobs}")),
     }
 }
@@ -505,23 +559,27 @@ pub fn pipeline(environment: &BTreeMap<OsString, OsString>, budget: Budget) -> R
     let references = inherited(environment);
     let mut plan = Plan::default();
     strip_invalid(environment, &references, &mut plan.set, &mut plan.removed);
-    let (action, jobserver) = if let Some(variable) =
+    plan.set.insert(FALLBACK_VARIABLE.into(), jobs.to_string());
+    let (action, jobserver) = if let Some((variable, auth)) =
         governing(environment, &plan.set, &plan.removed)
     {
         (
-            format!("the jobserver inherited through {variable} is shared; no new pool is created"),
+            format!(
+                "shared, and no second pool is created: {}",
+                governing_note(&variable, &auth, jobs)
+            ),
             None,
         )
     } else {
-        let jobserver = Jobserver::create(jobs)?;
+        let pool = jobs.min(MAX_POOL_JOBS);
+        let jobserver = Jobserver::create(pool)?;
         plan.set.insert(
             "CARGO_MAKEFLAGS".into(),
             format!("-j --jobserver-auth={}", jobserver.auth()),
         );
         plan.removed.remove("CARGO_MAKEFLAGS");
-        plan.set.insert("CARGO_BUILD_JOBS".into(), jobs.to_string());
         (
-            format!("a private FIFO jobserver with {jobs} jobs is shared through CARGO_MAKEFLAGS"),
+            format!("a private FIFO jobserver with {pool} jobs is shared through CARGO_MAKEFLAGS"),
             Some(jobserver),
         )
     };
@@ -530,7 +588,8 @@ pub fn pipeline(environment: &BTreeMap<OsString, OsString>, budget: Budget) -> R
         "reservation_jobs": jobs,
         "jobserver": {"action": action, "path": jobserver.as_ref().map(|js| js.fifo.clone()),
                       "inherited": references_report(&references)},
-        "application": "environment: Cargo reads the jobserver and ignores its own -j while it is valid; CARGO_BUILD_JOBS bounds Cargo if the jobserver cannot be opened; each concurrently started top-level Cargo adds its own implicit job",
+        "fallback": fallback_note(jobs),
+        "application": "environment: every Cargo the program starts reads the jobserver and ignores its own -j while it can open it; each concurrently started top-level Cargo adds its own implicit job, so k of them run up to N-1+k jobs",
         "test_threads": "not capped: Cargo jobs bound compilation, not the threads of the programs it runs",
         "memory": "an accounting estimate of 512 MiB plus 1.5 GiB per job, not measured enforcement",
     });
@@ -558,8 +617,14 @@ fn io_error(message: &'static str) -> Error {
 
 impl Jobserver {
     /// A pool of `jobs` jobs: `jobs - 1` tokens, as each client also holds
-    /// the implicit job it started with.
+    /// the implicit job it started with. At most [`MAX_POOL_JOBS`].
     pub fn create(jobs: u64) -> Result<Self> {
+        if jobs == 0 || jobs > MAX_POOL_JOBS {
+            return Err(refused(
+                ErrorCode::InvalidRequest,
+                "a private jobserver has between 1 and 1024 jobs",
+            ));
+        }
         let template = std::env::temp_dir().join("devguard-jobserver-XXXXXX");
         let mut template = CString::new(template.as_os_str().as_bytes())
             .map_err(|_| io_error("the temporary directory path is not valid"))?
@@ -690,6 +755,29 @@ mod tests {
         budget_for(2, DEFAULT_TASKS)
     }
 
+    fn fallback(jobs: &str) -> BTreeMap<String, String> {
+        BTreeMap::from([(FALLBACK_VARIABLE.to_string(), jobs.to_string())])
+    }
+
+    /// Direct mode on an eight-CPU host, whatever this host has.
+    fn direct8(given: &[&str], environment: &BTreeMap<OsString, OsString>) -> Result<Plan> {
+        direct_on(&args(given), environment, two_jobs(), 8)
+    }
+
+    #[test]
+    fn jobs_values_resolve_as_cargo_reads_them() {
+        for (value, expected) in [("3", 3), ("default", 8), ("-1", 7), ("-7", 1), ("-100", 1)] {
+            assert_eq!(resolve_jobs(value, 8).unwrap(), expected, "{value}");
+        }
+        for value in ["0", "-0", "many", "", "2.5"] {
+            assert_eq!(
+                resolve_jobs(value, 8).unwrap_err().code,
+                ErrorCode::InvalidRequest,
+                "{value}"
+            );
+        }
+    }
+
     #[test]
     fn jobs_fit_both_cpu_and_the_memory_estimate() {
         assert_eq!(jobs_for(budget_for(2, 1)), 2);
@@ -760,6 +848,11 @@ mod tests {
         );
         let long = parse(&args(&["check", "--jobs=3"])).unwrap();
         assert_eq!(long.jobs, vec![(1, "3".to_string(), JobsForm::LongJoined)]);
+        let equals = parse(&args(&["check", "-j=-2"])).unwrap();
+        assert_eq!(
+            equals.jobs,
+            vec![(1, "-2".to_string(), JobsForm::ShortEquals)]
+        );
         assert_eq!(parse(&args(&["--version"])).unwrap().subcommand, None);
     }
 
@@ -769,31 +862,42 @@ mod tests {
             ("CARGO_TARGET_DIR", "/tmp/target"),
             ("CARGO_BUILD_JOBS", "16"),
         ]);
-        let inserted = direct(&args(&["build", "--release"]), &environment, two_jobs()).unwrap();
+        let inserted = direct8(&["build", "--release"], &environment).unwrap();
         assert_eq!(
             strings(&inserted.args),
             ["build", "--jobs", "2", "--release"]
         );
         assert_eq!(inserted.report["jobs"]["action"], "inserted");
         assert_eq!(inserted.report["jobs"]["environment"], "16");
-        assert!(inserted.set.is_empty() && inserted.removed.is_empty());
-        let kept = direct(&args(&["build", "-j", "1"]), &environment, two_jobs()).unwrap();
-        assert_eq!(strings(&kept.args), ["build", "-j", "1"]);
-        assert_eq!(kept.report["jobs"]["action"], "kept");
+        // The fallback replaces the caller's value; nothing else changes.
+        assert_eq!(inserted.set, fallback("2"));
+        assert!(inserted.removed.is_empty());
+        for (given, applied) in [
+            (&["build", "-j", "1"][..], 1),
+            (&["build", "-j", "-7"], 1),
+            (&["build", "-j=-100"], 1),
+        ] {
+            let kept = direct8(given, &environment).unwrap();
+            assert_eq!(strings(&kept.args), given, "{given:?}");
+            assert_eq!(kept.report["jobs"]["action"], "kept", "{given:?}");
+            assert_eq!(kept.report["jobs"]["applied"], applied, "{given:?}");
+        }
         for (given, expected) in [
             (
                 &["test", "-j", "8", "--", "-j", "9"][..],
                 &["test", "-j", "2", "--", "-j", "9"][..],
             ),
             (&["check", "-j8"], &["check", "-j2"]),
+            (&["check", "-j=8"], &["check", "-j=2"]),
             (&["build", "--jobs=9"], &["build", "--jobs=2"]),
             (&["build", "--jobs", "default"], &["build", "--jobs", "2"]),
             (&["build", "-j", "-1"], &["build", "-j", "2"]),
         ] {
-            let plan = direct(&args(given), &environment, two_jobs()).unwrap();
+            let plan = direct8(given, &environment).unwrap();
             assert_eq!(strings(&plan.args), expected, "{given:?}");
             assert_eq!(plan.report["jobs"]["action"], "clamped", "{given:?}");
             assert_eq!(plan.report["jobs"]["applied"], 2);
+            assert_eq!(plan.set, fallback("2"));
         }
     }
 
@@ -807,6 +911,8 @@ mod tests {
             ),
             (&["build", "-j", "2", "-j", "2"], ErrorCode::InvalidRequest),
             (&["build", "-j", "0"], ErrorCode::InvalidRequest),
+            (&["build", "-j=0"], ErrorCode::InvalidRequest),
+            (&["build", "--jobs=0"], ErrorCode::InvalidRequest),
             (&["build", "-j", "many"], ErrorCode::InvalidRequest),
             (&["build", "-j"], ErrorCode::InvalidRequest),
             (&["metadata"], ErrorCode::ResourcePolicyUnsupported),
@@ -844,21 +950,38 @@ mod tests {
                 "-j4 --jobserver-fds=902,903 --jobserver-auth=902,903",
             ),
         ]);
-        let plan = direct(&args(&["build"]), &stale, two_jobs()).unwrap();
+        let plan = direct8(&["build"], &stale).unwrap();
         assert_eq!(plan.set.get("MAKEFLAGS").map(String::as_str), Some("-k"));
         assert!(plan.removed.contains("CARGO_MAKEFLAGS"));
         assert_eq!(plan.report["jobs"]["action"], "inserted");
-        assert_eq!(plan.report["jobserver"][0]["valid"], false);
-        // A FIFO owned by this user is usable and governs parallelism.
+        assert_eq!(plan.report["jobserver"]["inherited"][0]["valid"], false);
+        assert_eq!(plan.report["jobserver"]["governing"], Value::Null);
+        // A FIFO owned by this user is usable and governs parallelism: no
+        // jobs value is inserted, and an explicit one still fits the
+        // reservation for a Cargo that cannot open the pool.
         let jobserver = Jobserver::create(3).unwrap();
         let valid = env(&[(
             "CARGO_MAKEFLAGS",
             &format!("-j --jobserver-auth={}", jobserver.auth()),
         )]);
-        let plan = direct(&args(&["build", "-j", "16"]), &valid, two_jobs()).unwrap();
-        assert_eq!(strings(&plan.args), ["build", "-j", "16"]);
+        let plan = direct8(&["build"], &valid).unwrap();
+        assert_eq!(strings(&plan.args), ["build"]);
         assert_eq!(plan.report["jobs"]["action"], "inherited_jobserver");
-        assert!(plan.set.is_empty() && plan.removed.is_empty());
+        assert_eq!(plan.report["jobserver"]["governing"], "CARGO_MAKEFLAGS");
+        assert_eq!(plan.set, fallback("2"));
+        assert!(plan.removed.is_empty());
+        let plan = direct8(&["build", "-j", "16"], &valid).unwrap();
+        assert_eq!(strings(&plan.args), ["build", "-j", "2"]);
+        assert_eq!(plan.report["jobs"]["action"], "clamped");
+        assert!(plan.report["jobs"]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("FIFO jobserver inherited through CARGO_MAKEFLAGS"));
+        assert_eq!(
+            direct8(&["build", "-j", "0"], &valid).unwrap_err().code,
+            ErrorCode::InvalidRequest,
+            "a value Cargo rejects is refused under a jobserver too"
+        );
         // A close-on-exec pipe would not reach Cargo, so it is invalid.
         let mut fds = [0; 2];
         assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0);
@@ -874,6 +997,16 @@ mod tests {
             libc::fcntl(write.as_raw_fd(), libc::F_SETFD, 0);
         }
         assert_eq!(check_auth(&auth), Ok(()));
+        let plan = direct8(
+            &["build"],
+            &env(&[("MAKEFLAGS", &format!("-j --jobserver-auth={auth}"))]),
+        )
+        .unwrap();
+        assert_eq!(plan.report["jobs"]["action"], "inherited_jobserver");
+        assert!(plan.report["jobs"]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("descriptor-pair jobserver inherited through MAKEFLAGS"));
     }
 
     #[test]
@@ -909,7 +1042,35 @@ mod tests {
         )
         .unwrap();
         assert!(inherited_plan.jobserver.is_none());
-        assert!(inherited_plan.set.is_empty());
+        assert_eq!(inherited_plan.set, fallback("3"));
+        // An inherited descriptor pair is shared as well; the report says a
+        // program that closes descriptors leaves Cargo on the fallback.
+        let mut fds = [0; 2];
+        assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0);
+        let (read, write) = unsafe { (OwnedFd::from_raw_fd(fds[0]), OwnedFd::from_raw_fd(fds[1])) };
+        let pipe_plan = pipeline(
+            &env(&[(
+                "MAKEFLAGS",
+                &format!(
+                    "-j --jobserver-auth={},{}",
+                    read.as_raw_fd(),
+                    write.as_raw_fd()
+                ),
+            )]),
+            budget_for(3, 8),
+        )
+        .unwrap();
+        assert!(pipe_plan.jobserver.is_none());
+        assert_eq!(pipe_plan.set, fallback("3"));
+        let action = pipe_plan.report["jobserver"]["action"].as_str().unwrap();
+        assert!(action.contains("descriptor-pair") && action.contains("CARGO_BUILD_JOBS=3"));
+        for jobs in [0, MAX_POOL_JOBS + 1] {
+            assert_eq!(
+                Jobserver::create(jobs).unwrap_err().code,
+                ErrorCode::InvalidRequest
+            );
+        }
+        assert_eq!(Jobserver::create(1).unwrap().available(), 0);
         assert_eq!(
             pipeline(
                 &env(&[]),

@@ -9,7 +9,6 @@ use std::io::Read;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::process::{CommandExt, ExitStatusExt};
 use std::process::{Command, Stdio};
-use std::time::Duration;
 use support::*;
 
 #[test]
@@ -27,6 +26,7 @@ fn payload() {
 /// A minimal job-control shell: it runs the CLI as a job in its own group on
 /// this session's terminal, reports a stop, takes the terminal back as a
 /// shell does, then resumes the job in the foreground and waits for it.
+/// Each event is also appended to `events` as it happens.
 #[test]
 #[ignore = "a job-control shell for the terminal tests"]
 fn shell_child() {
@@ -78,6 +78,15 @@ fn shell_child() {
         }
     };
     assert_eq!(set_foreground(pid), 0);
+    let log = config["events"].as_str().unwrap().to_string();
+    let note = |event: &Value| {
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log)
+            .unwrap();
+        std::io::Write::write_all(&mut file, format!("{event}\n").as_bytes()).unwrap();
+    };
     let mut events = Vec::new();
     loop {
         let mut status = 0;
@@ -88,14 +97,15 @@ fn shell_child() {
             // The job stopped: the shell takes the terminal back, then
             // resumes the job in the foreground, as `fg` does.
             let holder = unsafe { libc::tcgetpgrp(0) };
-            events.push(
-                json!({"stopped": libc::WSTOPSIG(status), "terminal_holder": holder, "job": pid}),
-            );
+            let event =
+                json!({"stopped": libc::WSTOPSIG(status), "terminal_holder": holder, "job": pid});
+            note(&event);
+            events.push(event);
             assert_eq!(set_foreground(own), 0);
-            std::thread::sleep(Duration::from_millis(300));
             assert_eq!(set_foreground(pid), 0);
             // SAFETY: continuing the shell's own stopped job group.
             unsafe { libc::killpg(pid, libc::SIGCONT) };
+            note(&json!({"resumed": pid}));
             continue;
         }
         let exit = if libc::WIFEXITED(status) {
@@ -146,14 +156,20 @@ fn pty() -> Pty {
 /// Run `command` as the leader of a new session whose controlling terminal
 /// is the pty slave, on all three standard descriptors.
 fn in_session(command: &mut Command, pty: &Pty) {
+    command.stdin(Stdio::from(pty.slave.try_clone().unwrap()));
+    output_in_session(command, pty);
+}
+
+/// As [`in_session`], with the pty on standard output and error only; the
+/// caller chooses standard input.
+fn output_in_session(command: &mut Command, pty: &Pty) {
     command
-        .stdin(Stdio::from(pty.slave.try_clone().unwrap()))
         .stdout(Stdio::from(pty.slave.try_clone().unwrap()))
         .stderr(Stdio::from(pty.slave.try_clone().unwrap()));
     // SAFETY: setsid and ioctl are async-signal-safe and act on this child.
     unsafe {
         command.pre_exec(|| {
-            if libc::setsid() < 0 || libc::ioctl(0, libc::TIOCSCTTY.into(), 0) < 0 {
+            if libc::setsid() < 0 || libc::ioctl(1, libc::TIOCSCTTY.into(), 0) < 0 {
                 return Err(std::io::Error::last_os_error());
             }
             Ok(())
@@ -209,6 +225,8 @@ fn the_terminal_goes_to_the_workload_so_its_keys_reach_it_directly() {
     );
     in_session(&mut command, &pty);
     let mut cli = command.spawn().unwrap();
+    // Only the child keeps the terminal's descriptors.
+    drop(command);
     wait_for(EXIT_LIMIT, || ready.exists());
     let seen = read_json(&out);
     // The workload's group holds the terminal.
@@ -239,11 +257,13 @@ fn the_terminal_goes_to_the_workload_so_its_keys_reach_it_directly() {
 fn a_stopped_workload_is_mirrored_so_the_shell_regains_the_terminal() {
     let fixture = Fixture::start();
     let work = fixture.work("work");
-    let (out, ready, receipt, shell_out) = (
+    let (out, ready, release, receipt, shell_out, events_log) = (
         work.join("payload.json"),
         work.join("ready"),
+        work.join("release"),
         work.join("receipt.json"),
         work.join("shell.json"),
+        work.join("shell-events.jsonl"),
     );
     let pty = pty();
     let reader = drain(&pty);
@@ -260,17 +280,23 @@ fn a_stopped_workload_is_mirrored_so_the_shell_regains_the_terminal() {
     let mut command = Command::new(exe());
     command.args(probe_args("shell_child")).env(
         "DEVGUARD_TEST_SHELL",
-        json!({"base": fixture.base(), "args": args, "out": shell_out,
-               "probe": json!({"out": out, "ready": ready, "sleep_ms": 1_500}).to_string()})
+        json!({"base": fixture.base(), "args": args, "out": shell_out, "events": events_log,
+               "probe": json!({"out": out, "ready": ready, "release": release}).to_string()})
         .to_string(),
     );
     in_session(&mut command, &pty);
     let mut shell = command.spawn().unwrap();
+    drop(command);
     wait_for(EXIT_LIMIT, || ready.exists());
     let seen = read_json(&out);
     assert_eq!(seen["terminal_foreground_group"], seen["pgid"]);
-    // Ctrl-Z stops the foreground workload; the CLI mirrors the stop.
+    // Ctrl-Z stops the foreground workload; the CLI mirrors the stop, and
+    // the shell resumes the job. Only then may the workload end.
     type_keys(&pty, b"\x1a");
+    wait_for(EXIT_LIMIT, || {
+        std::fs::read_to_string(&events_log).is_ok_and(|text| text.contains("resumed"))
+    });
+    support::release(&release);
     assert!(wait_exit(&mut shell, EXIT_LIMIT).success());
     drop(pty);
     let _ = reader.join();
@@ -288,6 +314,62 @@ fn a_stopped_workload_is_mirrored_so_the_shell_regains_the_terminal() {
         "terminal-stop",
         json!({"shell_events": events, "receipt_launch": receipt["launch"],
                "receipt_exit": receipt["exit"]}),
+        &fixture.secret(),
+    );
+}
+
+#[test]
+fn a_terminal_on_standard_output_alone_is_still_handed_to_the_workload() {
+    let fixture = Fixture::start();
+    let work = fixture.work("work");
+    let (out, ready, receipt) = (
+        work.join("payload.json"),
+        work.join("ready"),
+        work.join("receipt.json"),
+    );
+    let pty = pty();
+    let reader = drain(&pty);
+    let args = exec_payload(&[
+        "--cpu",
+        "50",
+        "--memory",
+        "16MiB",
+        "--tasks",
+        "2",
+        "--receipt",
+        receipt.to_str().unwrap(),
+    ]);
+    let mut command = Command::new(exe());
+    command.args(probe_args("cli_child")).env(
+        CLI_CHILD,
+        json!({"base": fixture.base(), "helper": helper(), "args": args}).to_string(),
+    );
+    command.env(
+        PROBE,
+        json!({"out": out, "ready": ready, "sleep_ms": 30_000}).to_string(),
+    );
+    // Input is redirected, as for `producer | devguard exec -- pager`.
+    command.stdin(Stdio::null());
+    output_in_session(&mut command, &pty);
+    let mut cli = command.spawn().unwrap();
+    drop(command);
+    wait_for(EXIT_LIMIT, || ready.exists());
+    let seen = read_json(&out);
+    assert_eq!(seen["tty_fds"], json!([false, true, true]));
+    assert_eq!(seen["terminal_foreground_group"], seen["pgid"]);
+    type_keys(&pty, b"\x03");
+    let status = wait_exit(&mut cli, EXIT_LIMIT);
+    assert_eq!(status.signal(), Some(libc::SIGINT), "{status:?}");
+    drop(pty);
+    let _ = reader.join();
+    let receipt = read_json(&receipt);
+    assert_eq!(receipt["launch"]["terminal_handed"], true);
+    assert_eq!(receipt["signals"]["received"], json!([]));
+    record(
+        "terminal-output-only",
+        json!({"payload": {"tty_fds": seen["tty_fds"], "pgid": seen["pgid"],
+                           "terminal_foreground_group": seen["terminal_foreground_group"]},
+               "cli_signal": status.signal(), "receipt_launch": receipt["launch"]}),
         &fixture.secret(),
     );
 }

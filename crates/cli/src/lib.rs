@@ -77,15 +77,21 @@ pub fn run(
 }
 
 /// End the process as the command ended: with its exit code, or by the same
-/// signal with its default action.
+/// signal with its default action. The workload's core dump, if any, is its
+/// own; the CLI's core limit is set to zero first so it never writes one.
 pub fn terminate(exit: Exit) -> ! {
     match exit {
         Exit::Code(code) => std::process::exit(code),
         Exit::Signal(signal) => {
-            // SAFETY: restoring the default action and raising the signal on
-            // this process has no preconditions; SIGSTOP-like signals are not
-            // passed here.
+            // SAFETY: lowering this process's core limit, restoring the
+            // default action and raising the signal on this process have no
+            // preconditions; SIGSTOP-like signals are not passed here.
             unsafe {
+                let none = libc::rlimit {
+                    rlim_cur: 0,
+                    rlim_max: 0,
+                };
+                libc::setrlimit(libc::RLIMIT_CORE, &none);
                 libc::signal(signal, libc::SIG_DFL);
                 let mut set: libc::sigset_t = std::mem::zeroed();
                 libc::sigemptyset(&mut set);
