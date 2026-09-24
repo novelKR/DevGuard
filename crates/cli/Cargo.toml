@@ -16,6 +16,7 @@ path = "src/main.rs"
 devguard-contract = { path = "../contract" }
 devguard-client = { path = "../client" }
 devguard-daemon = { path = "../daemon" }
+devguard-cargo = { path = "../cargo" }
 libc.workspace = true
 serde.workspace = true
 serde_json.workspace = true

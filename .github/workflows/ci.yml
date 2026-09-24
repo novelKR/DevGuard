@@ -48,6 +48,11 @@ jobs:
       - name: Native command-line owner functional checks
         if: runner.os == 'macOS'
         run: python3 scripts/qualify.py dg1-cli --output target/qualification/dg1-cli
+      - name: Native Cargo adapter functional checks
+        if: runner.os == 'macOS'
+        # Hosted runners' work capacity cannot fit one Cargo job (1 CPU and
+        # 2 GiB), so real-build cases are recorded not run there; refusals still run.
+        run: python3 scripts/qualify.py dg1-cargo --allow-incomplete --output target/qualification/dg1-cargo
       - name: Preserve qualification evidence
         if: always()
         uses: actions/upload-artifact@v6
@@ -62,9 +67,9 @@ jobs:
           import json, os
           from pathlib import Path
           with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as out:
-              for name in ['ci', 'dg1-authority', 'dg1-auth', 'dg1-probes', 'dg1-scopes', 'dg1-launch', 'dg1-reconcile', 'dg1-cli']:
+              for name in ['ci', 'dg1-authority', 'dg1-auth', 'dg1-probes', 'dg1-scopes', 'dg1-launch', 'dg1-reconcile', 'dg1-cli', 'dg1-cargo']:
                   path = Path('target/qualification') / name / 'report.json'
                   status = json.loads(path.read_text())['status'] if path.exists() else 'not_run'
                   out.write(name + ': ' + status + '\n\n')
-              out.write('Contract regression, service/UDS, native host evidence, native scope, launch helper, reconciliation and command-line owner functional checks only; native suites run on macOS. Self-use and foreground SLO qualification are not run.\n')
+              out.write('Contract regression, service/UDS, native host evidence, native scope, launch helper, reconciliation, command-line owner and Cargo adapter functional checks only; native suites run on macOS. Self-use and foreground SLO qualification are not run.\n')
           PY

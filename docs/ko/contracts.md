@@ -1,6 +1,6 @@
 # 구현된 authority 계약
 
-이 문서는 구현된 DG-0 authority, C01/C02 서비스·저장소·transport 동작, C03 native macOS 호스트 증거, C04 협조적 정책·scope 증거, C05 fenced launch helper, C06 대조, C07 명령행 owner를 설명한다. PR과 병합 후 main 전달 증거는 구현과 별도로 추적한다. 실제 제공 명령은 [운영 문서](operations.md)에 있다. Native 호스트 증거가 있으면 서비스는 등록·launch·대조를 열며, CodeSpace 결합은 아직 구현하지 않았다. [영문 정본](../contracts.md).
+이 문서는 구현된 DG-0 authority, C01/C02 서비스·저장소·transport 동작, C03 native macOS 호스트 증거, C04 협조적 정책·scope 증거, C05 fenced launch helper, C06 대조, C07 명령행 owner, C08 Cargo adapter를 설명한다. PR과 병합 후 main 전달 증거는 구현과 별도로 추적한다. 실제 제공 명령은 [운영 문서](operations.md)에 있다. Native 호스트 증거가 있으면 서비스는 등록·launch·대조를 열며, CodeSpace 결합은 아직 구현하지 않았다. [영문 정본](../contracts.md).
 
 ## Authority와 transport 경계
 
@@ -130,7 +130,18 @@ DG1-C07은 관리 실행의 명령행 owner인 `devguard`를 추가한다. 명�
 - **종료값.** CLI는 workload의 종료값으로 끝나거나 같은 signal로 끝난다. 아무것도 시작하지 않았으면 `env`·`timeout`처럼 125로 끝나며, helper의 126·127은 그대로 전달한다.
 - **Receipt.** `--receipt PATH`는 admission 전에 새 private 파일을 만들고 `devguard-exec-receipt/v1`을 기록한다. 명령, adapter 보고, 예산과 그 출처, 프로젝트, authority, 예약과 lease ID를 포함한 모든 attempt, 대기, helper phase, 종료값, reap 전후의 관측, 받은 signal과 전달한 signal을 담는다. Permit·호출자 자격·상속된 환경은 담지 않는다.
 - **Doctor.** `devguard doctor`는 경로, 설정, helper, 서비스의 정체성·capability·상태를 보고하고, 선택적으로 등록과 프로젝트도 확인한다. 관리 실행을 사용할 수 있는지와 관리되지 않는 대체 실행이 없다는 점을 밝힌다. `--require admission,registration,macos-cooperative`를 주면 요구 사항이 하나라도 충족되지 않을 때 1로 끝난다.
-- **Adapter.** C07은 admission과 분리된 adapter 인터페이스를 정의한다. Adapter는 실행될 예약에 맞춰 인자와 환경을 바꿀 수 있으며 무엇을 했는지 보고한다. Generic adapter는 아무것도 바꾸지 않는다. C08에서 Cargo adapter가 제공되기 전까지 `auto`는 generic을 고른다.
+- **Adapter.** C07은 admission과 분리된 adapter 인터페이스를 정의한다. Adapter는 실행될 예약에 맞춰 인자와 환경을 바꿀 수 있으며 무엇을 했는지 보고한다. Generic adapter는 아무것도 바꾸지 않는다. Cargo adapter는 아래에서 설명한다.
+
+## Cargo adapter
+
+DG1-C08은 command가 실행되는 예약에 맞춰 Cargo의 compiler 병렬도를 조정하는 Cargo adapter(`devguard-cargo`)를 추가한다. Cargo jobs는 compile만 제한하며, Cargo가 실행하는 시험 프로그램의 thread 수는 제한하지 않는다. 메모리는 회계 추정치이며 측정된 강제가 아니다.
+
+- **추정.** Compiler job 하나에는 논리 CPU 1개와 1.5 GiB가 필요하고, build마다 고정 512 MiB가 더해진다. 따라서 예약이 수용하는 job 수는 min(CPU ÷ 1,000 mCPU, (메모리 − 512 MiB) ÷ 1.5 GiB)이다. Job 하나도 수용할 수 없는 예약은 admission 전에 거절하며, job을 강제하지 않는다. Cargo 기본 요청은 job 2개(2,000 mCPU·3.5 GiB·64 task)이며 검증되지 않은 초기값이다.
+- **선택.** `--adapter cargo`는 `cargo`만 실행하며 다른 프로그램은 거절한다. `--adapter cargo-pipeline`은 검증 script처럼 Cargo를 실행하는 프로그램을 위한 것이다. `auto`는 프로그램이 compile하는 subcommand(build·check·test·bench·run·doc·clippy·rustc·rustdoc·install·fix와 그 별칭)를 쓰는 `cargo`일 때 Cargo adapter를, 그 밖에는 generic adapter를 고르고 이유를 기록한다.
+- **Direct mode.** Adapter는 Cargo 인자를 `--`까지 읽는다. 예약 안의 명시적 `-j`/`--jobs`는 유지한다. 더 크거나 호스트 기준인 값(`default`나 음수)은 그 자리에서 예약의 job 수로 바꾸고, 반복되거나 0이거나 해석할 수 없는 값은 거절한다. 값이 없으면 subcommand 뒤에 `--jobs N`을 넣으며, 이는 `CARGO_BUILD_JOBS`와 설정보다 우선한다. `CARGO_TARGET_DIR`·보고서 경로·명령 선택은 바꾸지 않으며, receipt에 원래 job 수·적용한 job 수·이유를 기록한다. `--adapter cargo`에서 지원하지 않는 subcommand는 거절한다.
+- **Pipeline mode.** Adapter는 새 0700 디렉터리에 N−1개 token을 가진 private FIFO jobserver를 만든다. CLI는 실행 동안 이를 열어 두었다가 끝나면 제거한다. 이 jobserver는 `CARGO_MAKEFLAGS`로 내보내고 `CARGO_BUILD_JOBS=N`을 fallback으로 둔다. 프로그램이 직접 또는 중첩으로 시작하는 모든 Cargo가 이 pool을 공유하며, jobserver가 유효한 동안에는 자체 `-j`를 무시한다. Python `subprocess`처럼 상속 descriptor를 닫는 프로그램을 거쳐도 유지되도록 FIFO를 쓴다. 동시에 시작한 최상위 Cargo는 각자 암묵 job 하나를 더한다. 실행 뒤 receipt는 pool로 돌아온 token 수를 기록한다.
+- **상속된 jobserver.** CLI가 `CARGO_MAKEFLAGS`·`MAKEFLAGS`·`MFLAGS`로 상속한 jobserver는 Cargo가 읽는 방식대로 검사한다. 처음 존재하는 변수가 열려 있고 상속 가능한 pipe 쌍이나 사용자 소유 FIFO를 가리켜야 한다. 유효한 jobserver는 두 mode 모두에서 보존되어 병렬도를 제한하며, receipt에는 그 크기를 관측할 수 없다고 기록한다. 두 번째 pool은 만들지 않는다. 닫힌 descriptor처럼 오래된 참조는 함께 온 job 수와 함께 환경에서 제거하므로, Cargo가 조용히 자체 pool로 돌아가지 않는다.
+- **중첩 Cargo.** Cargo는 build script에 jobserver를 넘기므로, 중첩 Cargo는 새 pool을 만들지 않고 바깥 pool을 공유한다.
 
 ## 내구성 admission과 launch
 
@@ -164,7 +175,7 @@ Journal은 instance의 등록 정책을 기록한다. Active/suspect instance가
 
 ## 후속 마일스톤의 책임
 
-- 남은 DG-1: Cargo, bounded 자기 적용, update·repair, 측정한 macOS SLO.
+- 남은 DG-1: bounded 자기 적용, update·repair, 측정한 macOS SLO.
 - CS-RG: Runner 슬롯·전송 lane, 승인 migration, client pin, 상태 결합과 회귀 qualification.
 - DG-LINUX: 실제 cgroup 계층·controller·ancestor와 sandbox·proxy 포함.
 - DG-CACHE·DG-ADAPTERS: 등록 cache 회수와 추가 도구 제어.

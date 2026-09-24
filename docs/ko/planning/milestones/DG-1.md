@@ -4,7 +4,7 @@
 
 아래 ID·제목·PR 묶음은 **예정 값**이다. 실제 SHA나 GitHub PR 번호가 아니다. 모듈 경로는 구현 전까지 예정 책임을 나타낸다. 현재 daemon/client crate는 존재하며 launcher·platform-macos·cli·adapters는 후속 책임이다. crate 추가는 해당 PR에서 명시적 의존 allowlist와 전체 그래프 검증을 함께 확장하고 검사를 제거하지 않는다. 실제 상태는 ledger가 소유한다.
 
-구현된 C01은 정상 경로·명시 bootstrap·배타 journal 검사를 제공한다. C02는 foreground devguardd serve, 제한된 인증 UDS 통신, OS UID/PID 관측, 엄격한 client 호환성과 private 자격 FD 전달을 추가한다. C03은 `devguard-macos`의 boot 시계, native PID/start 정체성, 호스트 용량과 serve에서 journal을 활성화하는 2초 압력 sampler를 추가한다. C04는 협조적 QoS/nice 적용과 readback, 이탈·추적 상실이 고정되는 관측 process group scope, 정체성을 확인한 종료를 추가한다. C05는 wire 등록과 fenced `devguard-launch` helper를 추가한다. Grant마다 claim된 helper는 하나이며, READY와 exec 전에 scope binding과 authorization을 거치고, transcript와 exec 실패 보고를 분리하며, payload descriptor를 정리한다. C06은 서비스 reconciler를 추가한다. 관측된 scope 종료, helper가 없다는 owner 보고, 이전 boot에서만 회수하며, reap 전 owner 관측, scope 종료, instance 폐기, 재시작 전후의 Suspect 회계를 제공한다. Native 증거가 있으면 서비스는 등록·launch·대조를 연다. C07은 `devguard` 명령행 owner를 추가한다. 명시적이고 제한된 대기, terminal·signal 전달, reap 전 관측, receipt, doctor 진단을 갖춘 관리 실행을 제공하며, 관리되지 않는 대체 실행은 없다. PR과 병합 후 main 전달 증거는 별도로 추적한다. Cargo adapter는 C08에서 제공한다. [운영 문서](../../operations.md)를 참조한다.
+구현된 C01은 정상 경로·명시 bootstrap·배타 journal 검사를 제공한다. C02는 foreground devguardd serve, 제한된 인증 UDS 통신, OS UID/PID 관측, 엄격한 client 호환성과 private 자격 FD 전달을 추가한다. C03은 `devguard-macos`의 boot 시계, native PID/start 정체성, 호스트 용량과 serve에서 journal을 활성화하는 2초 압력 sampler를 추가한다. C04는 협조적 QoS/nice 적용과 readback, 이탈·추적 상실이 고정되는 관측 process group scope, 정체성을 확인한 종료를 추가한다. C05는 wire 등록과 fenced `devguard-launch` helper를 추가한다. Grant마다 claim된 helper는 하나이며, READY와 exec 전에 scope binding과 authorization을 거치고, transcript와 exec 실패 보고를 분리하며, payload descriptor를 정리한다. C06은 서비스 reconciler를 추가한다. 관측된 scope 종료, helper가 없다는 owner 보고, 이전 boot에서만 회수하며, reap 전 owner 관측, scope 종료, instance 폐기, 재시작 전후의 Suspect 회계를 제공한다. Native 증거가 있으면 서비스는 등록·launch·대조를 연다. C07은 `devguard` 명령행 owner를 추가한다. 명시적이고 제한된 대기, terminal·signal 전달, reap 전 관측, receipt, doctor 진단을 갖춘 관리 실행을 제공하며, 관리되지 않는 대체 실행은 없다. C08은 Cargo adapter를 추가한다. Compiler job을 예약에 맞춰 조정하거나 거절하며, pipeline과 중첩 Cargo 실행이 jobserver 하나를 공유하게 한다. PR과 병합 후 main 전달 증거는 별도로 추적한다. [운영 문서](../../operations.md)를 참조한다.
 
 ## PR 순서와 활성화 경계
 
@@ -17,7 +17,7 @@
 | DG1-P5 | DG1-C09, DG1-C10, DG1-C11 | DG1-P4 | 설치·후보·독립 복구를 묶어 자기 적용 활성화 |
 | DG1-P6 | DG1-C12 | DG1-P5 | 기능 기준 artifact와 SLO 안정 artifact를 구분해 승격 |
 
-공통 현재 명령 python3 scripts/validate.py --offline은 Rust 1.95.0 계약 회귀를 확인하며 fake backend로 native 동작을 입증하지 않는다. C01 authority, C02 인증·transport, C03 native probe, C04 native scope, C05 native launch, C06 native 대조, C07 CLI suite는 현재 제공한다. 아래에서 예정이라고 명시한 나머지 명령은 미제공이며 각 PR에서 fixture·실행 case 수·log·정리를 함께 구현하고 제공 상태를 갱신한다. 이름만 있는 테스트나 0개 실행을 통과로 처리하지 않는다. 공통 toolchain·증거·SLO 규칙은 상위 검증 문서에 있다.
+공통 현재 명령 python3 scripts/validate.py --offline은 Rust 1.95.0 계약 회귀를 확인하며 fake backend로 native 동작을 입증하지 않는다. C01 authority, C02 인증·transport, C03 native probe, C04 native scope, C05 native launch, C06 native 대조, C07 CLI, C08 Cargo suite는 현재 제공한다. 아래에서 예정이라고 명시한 나머지 명령은 미제공이며 각 PR에서 fixture·실행 case 수·log·정리를 함께 구현하고 제공 상태를 갱신한다. 이름만 있는 테스트나 0개 실행을 통과로 처리하지 않는다. 공통 toolchain·증거·SLO 규칙은 상위 검증 문서에 있다.
 
 P1은 runtime을 닫아 두고 P2는 실제 probe, P3는 launch·안전 정리, P4는 개발 진입점, P5는 설치·부모 예산·repair, P6는 측정·승격을 제공한다. C08까지 foreground daemon과 최소 단일 Cargo job·test thread bootstrap을 사용한다. P4 bundle은 삭제할 build 경로 밖에 보존한다. C10에서 부모 예산을 포함한 artifact를 먼저 기능 시험·동결한 직후 제한된 실제 자기 적용을 시작하며 SLO qualification은 C12에서 확립한다.
 
@@ -120,7 +120,7 @@ P1은 runtime을 닫아 두고 P2는 실제 probe, P3는 launch·안전 정리, 
 - 대상/산출물: 예정 Cargo adapter, pipeline wrapper, jobs/환경 조정 정책; CodeSpace 검증 entrypoint를 수정 없이 감싸는 예시.
 - 불변 조건: 기존 `CARGO_TARGET_DIR`와 `target/upstream-reports/local` 경로 보존; explicit 옵션 충돌은 설명·거절; 자식 jobserver token 중복 발행 금지.
 - 시험: 정상 cargo build/test와 pipeline; 미지원 subcommand/충돌 jobs·닫힌 FD; nested Cargo·동시 소비자·cancel 중 token 회수.
-- 검증 명령: 현재 공통 회귀 + 예정 `python3 scripts/qualify.py dg1-cargo`; CodeSpace 실제 검증은 CS-RG qualification과 별개다.
+- 검증 명령: 현재 공통 회귀 + **제공** `python3 scripts/qualify.py dg1-cargo --offline` (macOS 전용이며 다른 플랫폼은 `not_run`으로 기록한다). 작업 용량이 Cargo job 하나도 수용하지 못하는 호스트는 build 경우를 `not_run`으로 기록한다. CodeSpace 실제 검증은 CS-RG qualification과 별개다.
 - 완료 증거: 원래/변환 argv·env 차이, 동일 종료값/산출 경로, parent budget 이하의 관측 병렬도와 FD 누출 0.
 - rollback: adapter 경로를 비활성화하고 검증된 generic 소비로 복귀; 기존 target/cache 삭제 금지.
 - 인계: DG1-C09에서 사용할 제한된 기능 기준 artifact를 이 기능·장애 suite 통과 후 동결한다.

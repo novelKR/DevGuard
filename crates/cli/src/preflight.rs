@@ -2,7 +2,7 @@
 //! the project, the adapter, the budget and the canonical meaning digest.
 //! A failure here starts nothing and reserves nothing.
 
-use crate::adapter::{self, AdapterReport, Invocation};
+use crate::adapter::{self, AdapterReport, Held, Invocation};
 use crate::args::ExecArgs;
 use devguard_contract::{
     Budget, Error, ErrorCode, ExecutionMeaning, ResourceIntent, ResourceLevels, Result,
@@ -61,7 +61,7 @@ pub struct Preflight {
     pub digest: String,
     pub adapter: AdapterReport,
     pub project: Option<ProjectSummary>,
-    pub hold: Vec<Box<dyn std::any::Any>>,
+    pub hold: Vec<Box<dyn Held>>,
 }
 
 fn invalid(message: &'static str) -> Error {
@@ -241,9 +241,9 @@ pub fn prepare(
         (None, Some(project)) => (project.adapter.clone(), "project"),
         (None, None) => (AdapterSelection::Auto, "auto"),
     };
-    let adapter = adapter::select(&selection, &program)?;
+    let (adapter, selection_reason) = adapter::select(&selection, &program, &args.args)?;
     let (requested, budget_source) = budget(args, project.as_ref(), adapter.default_budget())?;
-    let transformation = adapter.transform(
+    let mut transformation = adapter.transform(
         &Invocation {
             program: &program,
             args: &args.args,
@@ -252,6 +252,12 @@ pub fn prepare(
         requested,
         selected_by,
     )?;
+    if let (Some(reason), Some(detail)) = (
+        selection_reason,
+        transformation.report.detail.as_object_mut(),
+    ) {
+        detail.insert("selection".into(), serde_json::Value::String(reason));
+    }
     let intent = ResourceIntent {
         profile: PROFILE.into(),
         requested,

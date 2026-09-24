@@ -103,6 +103,9 @@ pub struct ExecReceipt {
     pub reason: Option<String>,
     pub command: CommandSummary,
     pub adapter: Option<AdapterReport>,
+    /// What the adapter's held resources reported after the run, such as the
+    /// tokens a shared jobserver had once every client ended.
+    pub adapter_after: Vec<serde_json::Value>,
     pub budget: Option<BudgetSummary>,
     pub project: Option<ProjectSummary>,
     pub authority: Option<AuthoritySummary>,
@@ -138,6 +141,7 @@ impl ExecReceipt {
                 ..CommandSummary::default()
             },
             adapter: None,
+            adapter_after: Vec::new(),
             budget: None,
             project: None,
             authority: None,

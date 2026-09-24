@@ -74,7 +74,9 @@ def dependency_boundary(offline, environment, output):
         "devguard-launch": {"devguard-contract", "devguard-client", "devguard-macos", "devguard-daemon"},
         # The CLI shares the daemon's canonical paths and configuration; it never
         # depends on the native backend or core directly.
-        "devguard-cli": {"devguard-contract", "devguard-client", "devguard-daemon"},
+        "devguard-cli": {"devguard-contract", "devguard-client", "devguard-daemon", "devguard-cargo"},
+        # The Cargo adapter is a pure transformation over the contract types.
+        "devguard-cargo": {"devguard-contract"},
     }
     if roots != set(allowed):
         raise RuntimeError("unexpected workspace graph; update explicit boundaries with new crates")

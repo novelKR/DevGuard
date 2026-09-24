@@ -520,7 +520,7 @@ fn execute(
         }
     };
     let environment: BTreeMap<OsString, OsString> = std::env::vars_os().collect();
-    let pre = match preflight::prepare(args, &endpoint.config, &environment) {
+    let mut pre = match preflight::prepare(args, &endpoint.config, &environment) {
         Ok(pre) => pre,
         Err(Refusal::NotFound(program)) => {
             run.not_started(format!("{program}: command not found"));
@@ -559,6 +559,24 @@ fn execute(
             capabilities: Default::default(),
         },
     });
+    let exit = admit_and_run(run, &endpoint, &pre, helper, signals);
+    // Held adapter resources, such as a shared jobserver, outlive the run and
+    // report what they observed once it has ended.
+    for held in std::mem::take(&mut pre.hold) {
+        run.receipt.adapter_after.push(held.finish());
+    }
+    exit
+}
+
+/// Admit, commit and launch until the run finishes or no further attempt may
+/// be made.
+fn admit_and_run(
+    run: &mut Run,
+    endpoint: &Endpoint,
+    pre: &Preflight,
+    helper: &Path,
+    signals: &Signals,
+) -> Exit {
     loop {
         if let Some(signal) = signals.cancelled() {
             run.receipt.wait.cancelled_by_signal = Some(signal);
@@ -567,17 +585,17 @@ fn execute(
         }
         let key = endpoint.key(uuid::Uuid::new_v4().to_string());
         run.receipt.wait.admissions += 1;
-        let step = match run.admit(&endpoint, &key, &pre.digest, &pre.intent) {
-            Admission::Admitted => match run.commit_admitted(&endpoint, &key) {
+        let step = match run.admit(endpoint, &key, &pre.digest, &pre.intent) {
+            Admission::Admitted => match run.commit_admitted(endpoint, &key) {
                 Ok(permit) => {
                     if let Some(signal) = signals.cancelled() {
                         drop(permit);
-                        run.abandon(&endpoint, &key, AbandonReason::SpawnFailed);
+                        run.abandon(endpoint, &key, AbandonReason::SpawnFailed);
                         run.receipt.wait.cancelled_by_signal = Some(signal);
                         run.not_started(format!("cancelled by signal {signal}"));
                         return Exit::Signal(signal);
                     }
-                    run.launch(&endpoint, &key, permit, &pre, helper, signals)
+                    run.launch(endpoint, &key, permit, pre, helper, signals)
                 }
                 Err(step) => step,
             },

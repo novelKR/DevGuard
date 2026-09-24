@@ -1,6 +1,6 @@
 # Implemented authority contract
 
-This document describes the implemented DG-0 authority, C01/C02 service, storage and transport behavior, C03 native macOS host evidence, C04 cooperative policy and scope evidence, the C05 fenced launch helper, C06 reconciliation and the C07 command-line owner. PR and post-merge main delivery evidence is tracked separately from implementation. [Operations](operations.md) lists actual command availability. With native host evidence the service opens registration, launch and reconciliation; CodeSpace integration remains unimplemented. [Korean translation](ko/contracts.md).
+This document describes the implemented DG-0 authority, C01/C02 service, storage and transport behavior, C03 native macOS host evidence, C04 cooperative policy and scope evidence, the C05 fenced launch helper, C06 reconciliation, the C07 command-line owner and the C08 Cargo adapters. PR and post-merge main delivery evidence is tracked separately from implementation. [Operations](operations.md) lists actual command availability. With native host evidence the service opens registration, launch and reconciliation; CodeSpace integration remains unimplemented. [Korean translation](ko/contracts.md).
 
 ## Authority and transport boundaries
 
@@ -130,7 +130,18 @@ DG1-C07 adds `devguard`, the command-line owner of managed execution. It runs a 
 - **Exit.** The CLI exits with the workload's status, or ends by the same signal. It exits 125 when nothing was started, as `env` and `timeout` do, and passes the helper's 126 and 127 through.
 - **Receipts.** `--receipt PATH` creates a new private file before anything is admitted, and writes `devguard-exec-receipt/v1`: the command, the adapter's report, the budget and its source, the project, the authority, every attempt with its reservation and lease ID, the wait, the helper's phases, the exit, the observations before and after reap, and the signals received and forwarded. It never contains a permit, a caller credential or the inherited environment.
 - **Doctor.** `devguard doctor` reports the paths, the configuration, the helper, the service's identity, capabilities and status, and optionally registration and a project. It states whether managed execution is available, and that there is no unmanaged fallback. `--require admission,registration,macos-cooperative` makes it exit 1 unless each requirement holds.
-- **Adapters.** C07 defines the adapter interface, separate from admission. An adapter may change arguments and environment for the reservation it will run under, and it reports what it did. The generic adapter changes nothing. `auto` selects generic until the Cargo adapters arrive with C08.
+- **Adapters.** C07 defines the adapter interface, separate from admission. An adapter may change arguments and environment for the reservation it will run under, and it reports what it did. The generic adapter changes nothing. The Cargo adapters are described below.
+
+## Cargo adapter
+
+DG1-C08 adds the Cargo adapters (`devguard-cargo`), which fit Cargo's compiler parallelism to the reservation a command runs under. Cargo jobs bound compilation only; they do not cap the threads of the test programs Cargo runs. Memory is an accounting estimate, not measured enforcement.
+
+- **Estimate.** One compiler job needs one logical CPU and 1.5 GiB, plus a fixed 512 MiB per build. A reservation therefore fits min(CPU ÷ 1,000 mCPU, (memory − 512 MiB) ÷ 1.5 GiB) jobs. A reservation that cannot fit one job is refused before admission; a job is never forced. The Cargo default request fits two jobs (2,000 mCPU, 3.5 GiB and 64 tasks), an unqualified initial value.
+- **Selection.** `--adapter cargo` runs `cargo` itself and refuses any other program. `--adapter cargo-pipeline` serves a program that runs Cargo, such as a validation script. `auto` selects the Cargo adapter when the program is `cargo` with a subcommand that compiles (build, check, test, bench, run, doc, clippy, rustc, rustdoc, install, fix and their aliases), and the generic adapter otherwise, recording why.
+- **Direct mode.** The adapter reads Cargo's arguments up to `--`. An explicit `-j`/`--jobs` within the reservation is kept. A larger or host-relative value (`default` or negative) is rewritten in place to the reservation's jobs, and a repeated, zero or unparsable value is refused. Without one, the adapter inserts `--jobs N` after the subcommand, which takes precedence over `CARGO_BUILD_JOBS` and configuration. `CARGO_TARGET_DIR`, report paths and command selection are untouched, and the receipt records the original and applied jobs and why. An unsupported subcommand under `--adapter cargo` is refused.
+- **Pipeline mode.** The adapter creates a private FIFO jobserver with N−1 tokens in a new 0700 directory; the CLI holds it open for the run and removes it afterwards. It is exported through `CARGO_MAKEFLAGS`, with `CARGO_BUILD_JOBS=N` as a fallback. Every Cargo the program starts, directly or nested, shares that pool and ignores its own `-j` while the jobserver is valid. A FIFO is used because it survives programs, such as Python's `subprocess`, that close inherited descriptors. Each concurrently started top-level Cargo still adds its own implicit job. After the run, the receipt records how many tokens were back in the pool.
+- **Inherited jobservers.** A jobserver the CLI inherited through `CARGO_MAKEFLAGS`, `MAKEFLAGS` or `MFLAGS` is checked the way Cargo will read it: the first variable present must name an open, inheritable pipe pair or a FIFO the user owns. A valid one is preserved and bounds parallelism in both modes, and the receipt states that its size cannot be observed; no second pool is created. A stale one, such as closed descriptors, is removed from the environment together with the job counts that came with it, so Cargo does not silently fall back to its own pool.
+- **Nested Cargo.** Cargo passes its jobserver to build scripts, so a nested Cargo shares the outer pool rather than creating another.
 
 ## Durable admission and launch
 
@@ -164,7 +175,7 @@ Every resource carries its own level and method. Accounting is not an OS memory 
 
 ## Boundaries deliberately left to later milestones
 
-- Remaining DG-1: Cargo adaptation, bounded self-use, update/repair and measured macOS SLOs.
+- Remaining DG-1: bounded self-use, update/repair and measured macOS SLOs.
 - CS-RG: Runner slots and transport lanes, approval migration, pinned client, process status integration and regression qualification.
 - DG-LINUX: actual cgroup hierarchy, controllers, ancestor constraints and sandbox/proxy inclusion.
 - DG-CACHE / DG-ADAPTERS: registered cache reclamation and additional tool-specific controls.
