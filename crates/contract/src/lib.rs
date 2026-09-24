@@ -530,6 +530,9 @@ pub enum Capability {
     /// not the host. A service states it only to a client that requires it,
     /// so a client that cannot decode it never receives it.
     ParentLease,
+    /// An administrator can close admission for an upgrade, reopen it and
+    /// ask what is still charged. Stated only to a client that requires it.
+    UpgradeDrain,
 }
 
 /// A parent lease's phase. An Ending lease admits no new child and is released

@@ -19,7 +19,9 @@ pub mod signals;
 pub mod terminal;
 
 use devguard_contract::Result;
+use devguard_daemon::install::{InstallOptions, Launchctl};
 use devguard_daemon::paths::AuthorityPaths;
+use devguard_daemon::upgrade::UpgradeOptions;
 pub use receipt::Exit;
 use std::ffi::OsString;
 use std::path::PathBuf;
@@ -31,6 +33,8 @@ devguard exec [--project ID] [--adapter auto|generic|cargo|cargo-pipeline] [--wa
 devguard doctor [--require admission,registration,macos-cooperative] [--project ID]
 devguard test-candidate --candidate DIR --report DIR [--cpu MILLICPU] [--memory SIZE] [--tasks N]
               [--ttl DURATION] [--wait DURATION]
+devguard upgrade --release ID [--drain-timeout DURATION] [--stopped]
+devguard repair --use last-known-good
 devguard --help | --version
 
 exec admits the command at the central authority, starts it through devguard-launch under
@@ -43,7 +47,15 @@ authority comes from the operating account; there is no path or authority overri
 
 test-candidate admits one parent lease and runs a candidate tree's build, its applicable
 tests and its own candidate authority as children of it, checks the candidate's admission,
-ends the lease and writes report.json in the new report directory.";
+ends the lease and writes report.json in the new report directory.
+
+upgrade replaces the installed release with a staged one (`devguardd stage --package DIR`)
+and must run from that release's own devguard: it closes admission, waits up to the drain
+timeout (60s by default) for charged work to end, backs up the journal, starts the new
+release closed, verifies it and reopens admission; otherwise the current release keeps
+serving. --stopped replaces a release that cannot close admission by stopping it first,
+only if nothing is then charged. repair starts the last known good release, or its
+recovery copy, while no authority serves; it never reinitializes the journal.";
 
 /// Run the command line `args` (without the program name). `locate` supplies
 /// the authority paths and the launch helper, and is consulted only by
@@ -82,6 +94,39 @@ pub fn run(
                 Exit::Code(1)
             }
         },
+        args::Command::Upgrade(upgrade) => match locate() {
+            Ok((paths, _)) => operate(|| {
+                devguard_daemon::upgrade::upgrade(
+                    &paths,
+                    &upgrade.release,
+                    &Launchctl::new(paths.uid()),
+                    &InstallOptions::canonical(&paths),
+                    &UpgradeOptions {
+                        drain_timeout: upgrade
+                            .drain_timeout
+                            .unwrap_or(devguard_daemon::upgrade::DEFAULT_DRAIN_TIMEOUT),
+                        stopped: upgrade.stopped,
+                    },
+                )
+            }),
+            Err(error) => {
+                eprintln!("devguard: {}", error.message);
+                Exit::Code(1)
+            }
+        },
+        args::Command::Repair => match locate() {
+            Ok((paths, _)) => operate(|| {
+                devguard_daemon::upgrade::repair(
+                    &paths,
+                    &Launchctl::new(paths.uid()),
+                    &InstallOptions::canonical(&paths),
+                )
+            }),
+            Err(error) => {
+                eprintln!("devguard: {}", error.message);
+                Exit::Code(1)
+            }
+        },
         args::Command::TestCandidate(candidate) => match locate() {
             Ok((paths, _)) => candidate::run_args(&candidate, &paths),
             Err(error) => {
@@ -89,6 +134,26 @@ pub fn run(
                 Exit::Code(exec::NOT_STARTED)
             }
         },
+    }
+}
+
+/// Run an operation on the installed service and print its JSON report.
+fn operate<T: serde::Serialize>(operation: impl FnOnce() -> Result<T>) -> Exit {
+    match operation() {
+        Ok(report) => match serde_json::to_string_pretty(&report) {
+            Ok(text) => {
+                println!("{text}");
+                Exit::Code(0)
+            }
+            Err(_) => {
+                eprintln!("devguard: the report could not be encoded");
+                Exit::Code(1)
+            }
+        },
+        Err(error) => {
+            eprintln!("devguard: {:?}: {}", error.code, error.message);
+            Exit::Code(1)
+        }
     }
 }
 

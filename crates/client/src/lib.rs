@@ -176,6 +176,24 @@ impl Client {
             _ => Err(unavailable()),
         }
     }
+    /// Administrator only: close admission and cancel Prepared attempts.
+    pub fn close_admission(&mut self, reason: String) -> Result<Quiescence> {
+        self.quiescence_call(Request::CloseAdmission { reason })
+    }
+    /// Administrator only: reopen admission.
+    pub fn open_admission(&mut self) -> Result<Quiescence> {
+        self.quiescence_call(Request::OpenAdmission)
+    }
+    /// Administrator only: whether admission is open and what is charged.
+    pub fn quiescence(&mut self) -> Result<Quiescence> {
+        self.quiescence_call(Request::Quiescence)
+    }
+    fn quiescence_call(&mut self, request: Request) -> Result<Quiescence> {
+        match self.call(request)? {
+            Response::Quiescence(quiescence) => Ok(quiescence),
+            _ => Err(unavailable()),
+        }
+    }
     fn attempt(&mut self, request: Request) -> Result<AttemptRecord> {
         match self.call(request)? {
             Response::Attempt(attempt) => Ok(attempt),

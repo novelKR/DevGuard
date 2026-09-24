@@ -36,6 +36,7 @@ python3 scripts/qualify.py dg1-cli --offline
 python3 scripts/qualify.py dg1-cargo --offline
 python3 scripts/qualify.py dg1-bootstrap --offline
 python3 scripts/qualify.py dg1-self-use --offline
+python3 scripts/qualify.py dg1-upgrade --offline
 git diff --check
 ```
 
@@ -77,7 +78,7 @@ V-DOC-DG는 scripts/check_docs.py와 수동 의미 검토로 영어/한국어 ha
 
 ## 향후 suite와 장애 주입 계약
 
-scripts/qualify.py dg1-authority --offline은 C01 설정·저장소, scripts/qualify.py dg1-auth --offline은 C02 인증·transport, scripts/qualify.py dg1-probes --offline은 C03 native 증거, scripts/qualify.py dg1-scopes --offline은 C04 정책·scope 증거, scripts/qualify.py dg1-launch --offline은 C05 launch helper, scripts/qualify.py dg1-reconcile --offline은 C06 대조, scripts/qualify.py dg1-cli --offline은 C07 명령행 owner, scripts/qualify.py dg1-cargo --offline은 C08 Cargo adapter, scripts/qualify.py dg1-bootstrap --offline은 C09 설치, scripts/qualify.py dg1-self-use --offline은 C10 부모 lease와 후보 authority 검증을 제공한다. 그 밖의 DevGuard suite와 CodeSpace scripts/qualify-devguard.py는 해당 작업에서 제공할 예정 인터페이스다. 각 구현 PR이 실제 CLI·case inventory·nonzero case assertion·timeout·log 수집·격리 cleanup을 구현하고 제공 명령을 갱신해야 한다. macOS/Ubuntu CI는 전체 validator와 이식 가능한 두 기능 suite를 실행하고 각각의 report·log를 보존한다. Native suite는 macOS CI에서만 실행하고 그 밖의 환경에서는 `not_run`으로 기록한다. 증거를 제공할 수 없는 플랫폼에서 통과로 처리하지 않는다. 각 native 단계는 만들어야 할 raw receipt를 선언한다. 어떤 경우를 `not_run`으로 기록한 receipt가 있으면 suite는 `passed`가 아니라 `incomplete`가 된다.
+scripts/qualify.py dg1-authority --offline은 C01 설정·저장소, scripts/qualify.py dg1-auth --offline은 C02 인증·transport, scripts/qualify.py dg1-probes --offline은 C03 native 증거, scripts/qualify.py dg1-scopes --offline은 C04 정책·scope 증거, scripts/qualify.py dg1-launch --offline은 C05 launch helper, scripts/qualify.py dg1-reconcile --offline은 C06 대조, scripts/qualify.py dg1-cli --offline은 C07 명령행 owner, scripts/qualify.py dg1-cargo --offline은 C08 Cargo adapter, scripts/qualify.py dg1-bootstrap --offline은 C09 설치, scripts/qualify.py dg1-self-use --offline은 C10 부모 lease와 후보 authority, scripts/qualify.py dg1-upgrade --offline은 C11 upgrade와 repair 검증을 제공한다. 그 밖의 DevGuard suite와 CodeSpace scripts/qualify-devguard.py는 해당 작업에서 제공할 예정 인터페이스다. 각 구현 PR이 실제 CLI·case inventory·nonzero case assertion·timeout·log 수집·격리 cleanup을 구현하고 제공 명령을 갱신해야 한다. macOS/Ubuntu CI는 전체 validator와 이식 가능한 두 기능 suite를 실행하고 각각의 report·log를 보존한다. Native suite는 macOS CI에서만 실행하고 그 밖의 환경에서는 `not_run`으로 기록한다. 증거를 제공할 수 없는 플랫폼에서 통과로 처리하지 않는다. 각 native 단계는 만들어야 할 raw receipt를 선언한다. 어떤 경우를 `not_run`으로 기록한 receipt가 있으면 suite는 `passed`가 아니라 `incomplete`가 된다.
 
 C03 증거는 다음 파일에 기록한다.
 - **Raw receipt** (보고서의 `raw/` 디렉터리): 단위를 포함한 boot ID·시계 읽기, 호스트 용량, zombie·reap·거부 관측을 포함한 반복 프로세스 정체성, 계산된 비율을 포함한 native 압력 읽기, 마지막 sample 이후 admission이 닫히기까지 측정한 시간, 주입한 실패부터 Critical까지 걸린 서비스 loop 시간과 멈춘 probe에 대한 서비스 loop의 동작.
@@ -130,6 +131,12 @@ C10 증거는 다음을 포함한다.
 - **실제 프로세스**: 시험 바이너리를 `devguard exec --lease` owner, 실제 `devguard-launch` 아래의 workload, 격리 fixture 부모의 lease를 쓰는 후보 authority로 다시 실행한다. `test-candidate` orchestrator는 lease owner로서 시험 프로세스 안에서 실행한다.
 - **단위·서비스 시험**: core lease 계약(과금, 남은 예산, token, 재요청, 종료·owner 소실·기한에 의한 fence, Suspect 자식, 재시작, 폐기, 새 table이 없는 journal), 요구한 client에게만 알리는 capability, token만 쓰는 보유자 session, 후보 session과 그 거절, 엄격한 lease wire fixture, 인자 parsing, 후보 tree로 만드는 plan.
 - **실제 자기 적용**: 동결해 설치한 C10 부모 아래에서 작업 tree로 실행한 `test-candidate`는 그 release에 대한 사용자 확인이 필요하며, 보고·receipt·부모 hash와 함께 C10 완료 증거로 기록한다. 호스트 메모리 압력이 admission을 허용해야 한다.
+
+C11 증거는 다음을 포함한다.
+- **Raw receipt**: drain·백업·닫힌 시작·재개를 거친 정상 upgrade, 현재 release와 그 과금을 유지한 drain 시간 초과와 작업 정리 뒤의 같은 upgrade, 시작할 수 없던 release와 다시 제공하는 이전 release, 거절된 호환되지 않는 downgrade, 과금된 작업이 있는 동안 거절된 drain 불가 release의 정지 교체, 복구 사본을 쓴 repair와 열 수 없는 journal에서의 repair.
+- **실제 프로세스**: 각 패키지의 `devguardd`와 `devguard`로 시험 바이너리를 복사하므로, 각 upgrade와 repair는 자신이 선택하는 release에서 실행된다. 각 서비스는 격리 fixture authority를 제공하는 그 사본이며, fake manager가 launchd와 같은 방식으로 시작한다.
+- **단위·서비스 시험**: core quiescence 계약(Prepared attempt만 취소, 활성화 없이 읽는 유휴 journal의 과금, 완전한 journal인 백업, lease table이 없는 journal), 재시작 뒤에도 유지되는 관리자 drain 요청, 엄격한 drain wire fixture, 호환성 규칙, release id, 인자 parsing.
+- **실제 upgrade**: 사용자 확인이 필요한 qualification 호스트의 설치 release upgrade는 stage·upgrade 보고, 백업 hash, status와 함께 C11 완료 증거로 기록한다.
 
 C02 증거는 양쪽 실제 OS socket UID/PID 관측, 분리된 consumer·관리 자격, helper-role 인증 거절, 현재·미래 wire fixture의 엄격한 decoding, 64 KiB frame, 세션 32개 제한, idle 대기를 포함한 frame별 절대 250 ms 기한, 부분·느린·마지막 응답과 private 자격 FD 전달을 포함한다. 전용 subprocess helper는 후속 exec 전 FD 닫기를 관측하고 argv·환경·debug·출력의 secret 누출을 확인한다. Parent test가 helper를 실행하며 별도의 ignored test를 독립 qualification 성공으로 세지 않는다. 0개가 아닌 parent case 수와 프로세스 정리를 함께 기록한다.
 

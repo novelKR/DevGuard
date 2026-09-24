@@ -133,6 +133,43 @@ pub enum Request {
         key: AttemptKey,
         token: Secret,
     },
+    /// Administrator only: close admission, cancelling every Prepared
+    /// attempt, while queries, stops and reconciliation continue. The closure
+    /// survives a restart. Sent only after the service echoed `upgrade_drain`.
+    CloseAdmission {
+        reason: String,
+    },
+    /// Administrator only: reopen admission.
+    OpenAdmission,
+    /// Administrator only: whether admission is open and what is still charged.
+    Quiescence,
+}
+
+/// The longest reason an administrator may give for closing admission.
+pub const MAX_CLOSURE_REASON: usize = 256;
+
+/// Admission closed by an administrator, for example for an upgrade.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AdmissionClosure {
+    pub reason: String,
+    pub since_unix_ms: u64,
+}
+
+/// Whether admission is open, and every attempt and lease still charged.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Quiescence {
+    pub closure: Option<AdmissionClosure>,
+    pub attempts: Vec<AttemptRecord>,
+    pub leases: Vec<LeaseRecord>,
+}
+
+impl Quiescence {
+    /// Nothing is charged, so the service can be stopped without disturbing work.
+    pub fn quiet(&self) -> bool {
+        self.attempts.is_empty() && self.leases.is_empty()
+    }
 }
 
 /// A new lease with its token, returned once.
@@ -266,5 +303,6 @@ pub enum Response {
     Terminated(Termination),
     LeaseGranted(LeaseGranted),
     Lease(LeaseView),
+    Quiescence(Quiescence),
     Error(WireError),
 }

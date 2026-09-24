@@ -10,7 +10,7 @@
 //! service that cannot open or reconcile its state fails closed, and launchd
 //! restarts it only after a crash.
 
-use crate::paths::{secure_directory, AuthorityPaths};
+use crate::paths::{replace_private, secure_directory, AuthorityPaths};
 use devguard_client::protocol::{Hello, WIRE_VERSION};
 use devguard_client::Client;
 use devguard_contract::{
@@ -140,7 +140,7 @@ fn read_regular(path: &Path, limit: u64) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
-fn digest_file(path: &Path) -> Result<String> {
+pub(crate) fn digest_file(path: &Path) -> Result<String> {
     Ok(digest_bytes(&read_regular(path, ARTIFACT_BYTES)?))
 }
 
@@ -166,6 +166,23 @@ fn directory_entries(path: &Path) -> Result<BTreeSet<String>> {
 /// binaries, each a regular executable file whose size and hash match, and a
 /// manifest this build can install.
 pub fn validate_package(dir: &Path) -> Result<Package> {
+    let package = read_release(dir)?;
+    let expected = compiled();
+    if package.manifest.compatibility != expected
+        || package.manifest.version != expected.package_version
+    {
+        return Err(Error::new(
+            ErrorCode::ResourcePolicyUnsupported,
+            "the package's compatibility differs from this installer's build",
+        ));
+    }
+    Ok(package)
+}
+
+/// Check an intact release of any build: exactly the manifest and the three
+/// binaries, each a regular executable file whose size and hash match. Its
+/// compatibility may differ from this build's, as an earlier release's does.
+pub fn read_release(dir: &Path) -> Result<Package> {
     let entries = directory_entries(dir)?;
     if entries != BTreeSet::from([MANIFEST_FILE.to_string(), "bin".to_string()]) {
         return Err(invalid("a package holds exactly MANIFEST.json and bin/"));
@@ -179,13 +196,6 @@ pub fn validate_package(dir: &Path) -> Result<Package> {
     if !valid_release_id(&manifest.release_id) {
         return Err(invalid(
             "the release id may use only letters, digits, '.', '_' and '-'",
-        ));
-    }
-    let expected = compiled();
-    if manifest.compatibility != expected || manifest.version != expected.package_version {
-        return Err(Error::new(
-            ErrorCode::ResourcePolicyUnsupported,
-            "the package's compatibility differs from this installer's build",
         ));
     }
     if !matches!(
@@ -453,7 +463,7 @@ pub struct SelectionEvent {
     pub unix_ms: u128,
 }
 
-fn unix_ms() -> u128 {
+pub(crate) fn unix_ms() -> u128 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|since| since.as_millis())
@@ -481,36 +491,7 @@ pub fn read_selection(paths: &AuthorityPaths) -> Result<Option<Selection>> {
     Ok(Some(selection))
 }
 
-/// Replace a private file atomically: write a new sibling, sync it, rename it.
-fn replace_private(path: &Path, bytes: &[u8]) -> Result<()> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| invalid("a private file needs a directory"))?;
-    let temporary = parent.join(format!(
-        ".{}.{}",
-        path.file_name().and_then(|n| n.to_str()).unwrap_or("file"),
-        uuid::Uuid::new_v4().simple()
-    ));
-    let written = (|| -> std::io::Result<()> {
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
-            .open(&temporary)?;
-        file.write_all(bytes)?;
-        file.sync_all()?;
-        fs::rename(&temporary, path)?;
-        File::open(parent)?.sync_all()
-    })();
-    if written.is_err() {
-        let _ = fs::remove_file(&temporary);
-        return Err(unavailable(format!("cannot write {}", path.display())));
-    }
-    Ok(())
-}
-
-fn write_selection(paths: &AuthorityPaths, selection: &Selection) -> Result<()> {
+pub(crate) fn write_selection(paths: &AuthorityPaths, selection: &Selection) -> Result<()> {
     let bytes =
         serde_json::to_vec_pretty(selection).map_err(|_| invalid("selection encoding failed"))?;
     replace_private(&paths.selection(), &bytes)
@@ -520,7 +501,7 @@ fn write_selection(paths: &AuthorityPaths, selection: &Selection) -> Result<()> 
 /// immutable release: the copy is made in a private sibling, synced, made
 /// read-only and renamed into place, so a partial copy never has the final
 /// name. An existing destination is reused only when its manifest is identical.
-fn freeze_copy(from: &Package, destination: &Path) -> Result<bool> {
+pub(crate) fn freeze_copy(from: &Package, destination: &Path) -> Result<bool> {
     if fs::symlink_metadata(destination).is_ok() {
         let existing = validate_package(destination)?;
         if existing.manifest_sha256 != from.manifest_sha256 {
@@ -596,7 +577,7 @@ fn remove_incoming(incoming: &Path) {
 }
 
 /// Remove incoming copies left by installers that are no longer running.
-fn sweep_incoming(parent: &Path) {
+pub(crate) fn sweep_incoming(parent: &Path) {
     let Ok(entries) = fs::read_dir(parent) else {
         return;
     };
@@ -615,7 +596,7 @@ fn sweep_incoming(parent: &Path) {
 }
 
 /// A handshake that demands nothing, to learn who serves the socket.
-fn handshake(paths: &AuthorityPaths) -> Result<Hello> {
+pub(crate) fn handshake(paths: &AuthorityPaths) -> Result<Hello> {
     let client = Client::connect(
         &paths.socket(),
         paths.uid(),
@@ -640,7 +621,7 @@ pub struct RunningEvidence {
 
 /// Prove that the service launchd runs is `release`'s `devguardd`, serving
 /// the canonical endpoint.
-fn observe_running(
+pub(crate) fn observe_running(
     paths: &AuthorityPaths,
     manager: &dyn ServiceManager,
     label: &str,
@@ -676,7 +657,7 @@ fn observe_running(
     })
 }
 
-fn wait_running(
+pub(crate) fn wait_running(
     paths: &AuthorityPaths,
     manager: &dyn ServiceManager,
     options: &InstallOptions,
@@ -706,7 +687,7 @@ pub struct InstallReport {
     pub selection: Selection,
 }
 
-fn ensure_plain_directory(path: &Path, mode: u32) -> Result<()> {
+pub(crate) fn ensure_plain_directory(path: &Path, mode: u32) -> Result<()> {
     match fs::symlink_metadata(path) {
         Ok(meta) if meta.is_dir() && !meta.file_type().is_symlink() => Ok(()),
         Ok(_) => Err(invalid(format!("{} is not a directory", path.display()))),
@@ -900,28 +881,48 @@ pub fn status(
         report.running_error = Some("no release has been installed".into());
         return Ok(report);
     };
-    let release_dir = paths.releases().join(&selection.current);
-    let release = match validate_package(&release_dir) {
-        Ok(release) => release,
-        Err(error) => {
-            report.running_error = Some(format!(
-                "the current release is not intact: {}",
-                error.message
-            ));
-            return Ok(report);
+    // The service runs the current release or, after a repair, its recovery
+    // copy; either must be intact, and the plist must name the one that runs.
+    let installed = fs::read_to_string(&options.plist).ok();
+    let mut chosen = None;
+    let mut damage = Vec::new();
+    for dir in [
+        paths.releases().join(&selection.current),
+        paths.recovery().join(&selection.current),
+    ] {
+        let release = match read_release(&dir) {
+            Ok(release) => release,
+            Err(error) => {
+                damage.push(format!("{}: {}", dir.display(), error.message));
+                continue;
+            }
+        };
+        let spec = ServiceSpec {
+            label: options.label.clone(),
+            plist: options.plist.clone(),
+            program: dir.join("bin/devguardd"),
+            args: options.program_args.clone(),
+            environment: options.environment.clone(),
+        };
+        let matches = render_plist(&spec, &options.log, options.throttle_seconds)
+            .ok()
+            .zip(installed.as_ref())
+            .is_some_and(|(rendered, actual)| rendered == *actual);
+        if matches || chosen.is_none() {
+            chosen = Some((release, matches));
         }
+        if matches {
+            break;
+        }
+    }
+    let Some((release, matches)) = chosen else {
+        report.running_error = Some(format!(
+            "the current release is not intact: {}",
+            damage.join("; ")
+        ));
+        return Ok(report);
     };
-    let spec = ServiceSpec {
-        label: options.label.clone(),
-        plist: options.plist.clone(),
-        program: release_dir.join("bin/devguardd"),
-        args: options.program_args.clone(),
-        environment: options.environment.clone(),
-    };
-    report.plist_matches_selection = render_plist(&spec, &options.log, options.throttle_seconds)
-        .ok()
-        .zip(fs::read_to_string(&options.plist).ok())
-        .is_some_and(|(rendered, actual)| rendered == actual);
+    report.plist_matches_selection = matches;
     match observe_running(paths, manager, &options.label, &release) {
         Ok(evidence) => report.running = Some(evidence),
         Err(error) => report.running_error = Some(error.message),

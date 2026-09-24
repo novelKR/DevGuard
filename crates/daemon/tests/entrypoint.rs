@@ -7,6 +7,8 @@ fn alternate_authority_and_unparented_candidate_arguments_are_rejected() {
         vec!["check", "--socket", "/tmp/second.sock"],
         vec!["init", "--test-capacity", "8000"],
         vec!["candidate"],
+        vec!["stage"],
+        vec!["stage", "--package"],
     ] {
         let result = Command::new(env!("CARGO_BIN_EXE_devguardd"))
             .args(arguments)

@@ -243,11 +243,11 @@ impl Candidate {
             &paths,
             Options {
                 probe,
-                reconcile_paused: None,
                 candidate: Some(CandidateMode {
                     capacity: spec.capacity,
                     reason: spec.reason(),
                 }),
+                ..Options::default()
             },
         )?;
         receipt(json!({"event": "candidate_opened", "candidate": spec,

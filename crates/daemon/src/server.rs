@@ -1,4 +1,7 @@
-use crate::{config::HostConfig, paths::AuthorityPaths};
+use crate::{
+    config::HostConfig,
+    paths::{read_private, replace_private, AuthorityPaths},
+};
 use devguard_client::{connect::connect_timeout, framing, peer, protocol::*};
 use devguard_contract::{
     validate_id, AppliedResources, AttemptKey, AttemptPhase, AttemptRecord, Budget, Capability,
@@ -47,6 +50,8 @@ pub(crate) struct Options {
     pub reconcile_paused: Option<Arc<AtomicBool>>,
     /// A candidate authority bounded by a parent lease.
     pub candidate: Option<CandidateMode>,
+    /// Fixtures only: state no upgrade drain, as a release before C11 does.
+    pub without_upgrade_drain: bool,
 }
 
 /// A candidate's leased capacity and its status reason. A candidate states
@@ -81,6 +86,8 @@ pub struct Server {
     launcher: Option<Launcher>,
     /// A candidate states no fenced launch or parent lease and refuses both.
     candidate: bool,
+    /// Whether the upgrade drain is stated to clients that require it.
+    upgrade_drain: bool,
 }
 
 /// Service receipts are JSON lines on stderr; they never include credentials.
@@ -295,7 +302,69 @@ fn poisoned() -> Error {
 
 /// Capabilities stated only to clients that require them.
 pub(crate) fn echoed_capabilities() -> BTreeSet<Capability> {
-    BTreeSet::from([Capability::ParentLease])
+    BTreeSet::from([Capability::ParentLease, Capability::UpgradeDrain])
+}
+
+/// Admission closed by an administrator. The closure is kept in a private
+/// marker beside the journal, written before it takes effect, so a restarted
+/// service, or the next release, still finds admission closed.
+#[derive(Clone)]
+struct AdmissionGate {
+    marker: PathBuf,
+    closure: Arc<Mutex<Option<AdmissionClosure>>>,
+}
+
+impl AdmissionGate {
+    fn open(paths: &AuthorityPaths) -> Self {
+        let marker = paths.admission_marker();
+        let closure = fs::symlink_metadata(&marker).is_ok().then(|| {
+            read_private(&marker, paths.uid(), 4096)
+                .ok()
+                .and_then(|bytes| serde_json::from_slice::<AdmissionClosure>(&bytes).ok())
+                // A marker that cannot be read still keeps admission closed.
+                .unwrap_or(AdmissionClosure {
+                    reason: "the admission marker is unreadable".into(),
+                    since_unix_ms: 0,
+                })
+        });
+        if let Some(closure) = &closure {
+            receipt(json!({"event": "admission_closed_at_start", "closure": closure}));
+        }
+        Self {
+            marker,
+            closure: Arc::new(Mutex::new(closure)),
+        }
+    }
+
+    fn lock(&self) -> Result<std::sync::MutexGuard<'_, Option<AdmissionClosure>>> {
+        self.closure.lock().map_err(|_| poisoned())
+    }
+
+    /// Held for the whole of an admission, so a closure cannot interleave.
+    fn admitting(&self) -> Result<std::sync::MutexGuard<'_, Option<AdmissionClosure>>> {
+        let gate = self.lock()?;
+        if let Some(closure) = gate.as_ref() {
+            return Err(closed_admission(closure));
+        }
+        Ok(gate)
+    }
+}
+
+fn closed_admission(closure: &AdmissionClosure) -> Error {
+    Error::new(
+        ErrorCode::ResourceUnavailable,
+        format!(
+            "admission is closed ({}); queries, stops and reconciliation continue",
+            closure.reason
+        ),
+    )
+}
+
+fn unix_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|since| since.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 /// The capabilities of a service with registration and fenced launch open.
@@ -343,6 +412,7 @@ struct Launcher {
     principals: Arc<Mutex<Principals>>,
     clock: BootClock,
     paused: Arc<AtomicBool>,
+    gate: AdmissionGate,
 }
 
 /// Whether `identity` still names a running process. A process of an earlier
@@ -361,6 +431,67 @@ fn still_running(
 impl Launcher {
     fn authority(&self) -> Result<std::sync::MutexGuard<'_, NativeAuthority>> {
         self.authority.lock().map_err(|_| poisoned())
+    }
+
+    /// Whether admission is open, and every charged attempt and lease.
+    fn quiescence(&self) -> Result<Quiescence> {
+        let closure = self.gate.lock()?.clone();
+        let mut authority = self.authority()?;
+        Ok(Quiescence {
+            closure,
+            attempts: authority.attempts()?,
+            leases: authority.leases()?,
+        })
+    }
+
+    /// Close admission: the closure is written before it takes effect, and
+    /// Prepared attempts are cancelled while the gate is held, so none can be
+    /// admitted meanwhile. Closing again keeps the first closure.
+    fn close_admission(&self, reason: String) -> Result<Quiescence> {
+        if reason.is_empty()
+            || reason.len() > MAX_CLOSURE_REASON
+            || reason.chars().any(char::is_control)
+        {
+            return Err(Error::new(
+                ErrorCode::InvalidRequest,
+                "a closure reason is 1 to 256 bytes without control characters",
+            ));
+        }
+        let mut gate = self.gate.lock()?;
+        if gate.is_none() {
+            let closure = AdmissionClosure {
+                reason,
+                since_unix_ms: unix_ms(),
+            };
+            let bytes = serde_json::to_vec(&closure)
+                .map_err(|_| unavailable("cannot encode the admission closure"))?;
+            replace_private(&self.gate.marker, &bytes)?;
+            receipt(json!({"event": "admission_closed", "closure": closure}));
+            *gate = Some(closure);
+        }
+        let cancelled = self.authority()?.cancel_prepared()?;
+        if !cancelled.is_empty() {
+            receipt(json!({"event": "prepared_cancelled",
+                           "keys": cancelled.iter().map(|record| &record.key).collect::<Vec<_>>()}));
+        }
+        drop(gate);
+        self.quiescence()
+    }
+
+    /// Reopen admission; the marker is removed before it takes effect.
+    fn open_admission(&self) -> Result<Quiescence> {
+        let mut gate = self.gate.lock()?;
+        if gate.is_some() {
+            match fs::remove_file(&self.gate.marker) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(_) => return Err(unavailable("cannot remove the admission marker")),
+            }
+            receipt(json!({"event": "admission_opened", "closure": *gate}));
+            *gate = None;
+        }
+        drop(gate);
+        self.quiescence()
     }
 
     /// Register the OS-observed peer with its native start identity.
@@ -797,6 +928,7 @@ impl Server {
                 principals: Arc::default(),
                 clock: clock.clone(),
                 paused: options.reconcile_paused.unwrap_or_default(),
+                gate: AdmissionGate::open(paths),
             }),
             Evidence::Closed { .. } => None,
         };
@@ -862,6 +994,7 @@ impl Server {
             evidence,
             launcher,
             candidate,
+            upgrade_drain: !options.without_upgrade_drain,
         })
     }
 
@@ -939,12 +1072,14 @@ impl Server {
                     let status = self.status.clone();
                     let launcher = self.launcher.clone();
                     let stop = stop.clone();
-                    let candidate = self.candidate;
+                    let flags = Flags {
+                        candidate: self.candidate,
+                        upgrade_drain: self.upgrade_drain,
+                    };
                     if let Ok(worker) = std::thread::Builder::new()
                         .name("devguard-session".into())
                         .spawn(move || {
-                            let _ =
-                                session(stream, uid, &config, &status, launcher, candidate, &stop);
+                            let _ = session(stream, uid, &config, &status, launcher, flags, &stop);
                         })
                     {
                         workers.push(worker);
@@ -1059,6 +1194,13 @@ struct Session {
     lease_holder: bool,
 }
 
+/// What a session's service states and refuses.
+#[derive(Clone, Copy)]
+struct Flags {
+    candidate: bool,
+    upgrade_drain: bool,
+}
+
 struct Context<'a> {
     uid: u32,
     caller: PeerIdentity,
@@ -1066,6 +1208,7 @@ struct Context<'a> {
     status: &'a ServiceStatus,
     launcher: Option<&'a Launcher>,
     candidate: bool,
+    upgrade_drain: bool,
 }
 
 fn session(
@@ -1074,7 +1217,7 @@ fn session(
     config: &HostConfig,
     status: &ServiceStatus,
     launcher: Option<Launcher>,
-    candidate: bool,
+    flags: Flags,
     stop: &AtomicBool,
 ) -> Result<()> {
     // Framing uses poll and per-call nonblocking I/O with an absolute deadline;
@@ -1089,7 +1232,8 @@ fn session(
         config,
         status,
         launcher: launcher.as_ref(),
-        candidate,
+        candidate: flags.candidate,
+        upgrade_drain: flags.upgrade_drain,
     };
     let timeout = Duration::from_millis(FRAME_DEADLINE_MS);
     let mut state = Session::default();
@@ -1129,6 +1273,16 @@ fn session(
     Ok(())
 }
 
+/// The launcher, for a session authenticated as the administrator.
+fn administrator<'a>(session: &Session, context: &Context<'a>) -> Result<&'a Launcher> {
+    if session.role != Some(SessionRole::Administrator) {
+        return Err(unauthorized());
+    }
+    context
+        .launcher
+        .ok_or_else(|| unavailable("the authority is not open; there is no admission to close"))
+}
+
 /// The launcher and the instance registered in this session.
 fn registered<'a>(
     session: &'a Session,
@@ -1165,6 +1319,9 @@ fn handle(session: &mut Session, request: Request, context: &Context<'_>) -> Res
                 | Request::AdmitChild { .. }
                 | Request::EndLease { .. }
                 | Request::LeaseStatus { .. }
+                | Request::CloseAdmission { .. }
+                | Request::OpenAdmission
+                | Request::Quiescence
         )
     {
         return Err(candidate_refusal());
@@ -1189,7 +1346,10 @@ fn handle(session: &mut Session, request: Request, context: &Context<'_>) -> Res
                 capabilities.extend(
                     echoed_capabilities()
                         .intersection(&compatibility.required)
-                        .copied(),
+                        .copied()
+                        .filter(|capability| {
+                            context.upgrade_drain || *capability != Capability::UpgradeDrain
+                        }),
                 );
                 capabilities
             };
@@ -1227,7 +1387,14 @@ fn handle(session: &mut Session, request: Request, context: &Context<'_>) -> Res
             if session.role.is_none() {
                 return Err(unauthorized());
             }
-            Ok(Response::Status(context.status.clone()))
+            let mut status = context.status.clone();
+            if let Some(launcher) = context.launcher {
+                if let Some(closure) = launcher.gate.lock()?.as_ref() {
+                    status.execution_ready = false;
+                    status.reason = closed_admission(closure).message;
+                }
+            }
+            Ok(Response::Status(status))
         }
         Request::Register { instance_id } => {
             validate_id(&instance_id)?;
@@ -1252,6 +1419,7 @@ fn handle(session: &mut Session, request: Request, context: &Context<'_>) -> Res
         }
         Request::Admit { request } => {
             let (launcher, principal) = registered(session, context)?;
+            let _gate = launcher.gate.admitting()?;
             let record = launcher.authority()?.admit(principal, request)?;
             receipt(
                 json!({"event": "admission", "key": record.key, "phase": record.phase,
@@ -1262,6 +1430,7 @@ fn handle(session: &mut Session, request: Request, context: &Context<'_>) -> Res
         }
         Request::BeginLaunch { key } => {
             let (launcher, principal) = registered(session, context)?;
+            let _gate = launcher.gate.admitting()?;
             let decision = launcher.authority()?.begin_launch(principal, &key)?;
             receipt(
                 json!({"event": "launch_committed", "key": decision.attempt.key,
@@ -1326,6 +1495,7 @@ fn handle(session: &mut Session, request: Request, context: &Context<'_>) -> Res
             ttl_ms,
         } => {
             let (launcher, principal) = registered(session, context)?;
+            let _gate = launcher.gate.admitting()?;
             let grant = launcher
                 .authority()?
                 .admit_lease(principal, &key, budget, ttl_ms)?;
@@ -1343,6 +1513,7 @@ fn handle(session: &mut Session, request: Request, context: &Context<'_>) -> Res
             request,
         } => {
             let (launcher, principal) = registered(session, context)?;
+            let _gate = launcher.gate.admitting()?;
             let record = launcher
                 .authority()?
                 .admit_child(principal, &lease, &token, request)?;
@@ -1373,6 +1544,15 @@ fn handle(session: &mut Session, request: Request, context: &Context<'_>) -> Res
                 launcher.authority()?.lease_status(&key, &token)?,
             ))
         }
+        Request::CloseAdmission { reason } => Ok(Response::Quiescence(
+            administrator(session, context)?.close_admission(reason)?,
+        )),
+        Request::OpenAdmission => Ok(Response::Quiescence(
+            administrator(session, context)?.open_admission()?,
+        )),
+        Request::Quiescence => Ok(Response::Quiescence(
+            administrator(session, context)?.quiescence()?,
+        )),
     }
 }
 
@@ -1918,6 +2098,205 @@ mod tests {
                 ErrorCode::Unauthorized
             );
             owner.end_lease(lease).unwrap();
+        }
+    }
+
+    /// Closing admission for an upgrade: an administrator's request, echoed
+    /// only to clients that require it, kept across a restart, and leaving
+    /// queries and reconciliation open.
+    #[cfg(target_os = "macos")]
+    mod drain {
+        use super::*;
+        use crate::fixture::{TestAuthority, CONSUMER};
+        use devguard_contract::{
+            AdmissionRequest, AttemptKey, Budget, Capability, Compatibility, ResourceIntent,
+            ResourceLevels, Secret,
+        };
+
+        fn base() -> tempfile::TempDir {
+            tempfile::Builder::new()
+                .prefix("dg-d-")
+                .tempdir_in("/private/tmp")
+                .unwrap()
+        }
+
+        fn started(base: &std::path::Path, restart: bool) -> TestAuthority {
+            let authority = if restart {
+                TestAuthority::restart(base).unwrap()
+            } else {
+                TestAuthority::start(base).unwrap()
+            };
+            authority
+                .wait_until_admitting(Duration::from_secs(10))
+                .unwrap();
+            authority
+        }
+
+        fn connect(authority: &TestAuthority, required: &[Capability]) -> Client {
+            Client::connect(
+                &authority.socket(),
+                authority.uid(),
+                Compatibility {
+                    minimum_protocol: 1,
+                    maximum_protocol: 1,
+                    required: required.iter().copied().collect(),
+                },
+            )
+            .unwrap()
+        }
+
+        fn administrator(authority: &TestAuthority) -> Client {
+            let secret = Secret::new(
+                String::from_utf8(
+                    read_private(&authority.paths().admin_credential(), authority.uid(), 64)
+                        .unwrap(),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+            let mut client = connect(authority, &[Capability::UpgradeDrain]);
+            client
+                .authenticate(CallerCredential::Administrator { secret })
+                .unwrap();
+            client
+        }
+
+        fn workload(authority: &TestAuthority) -> Client {
+            let mut client = connect(
+                authority,
+                &[Capability::DurableAdmission, Capability::ParentLease],
+            );
+            client.authenticate(authority.consumer().unwrap()).unwrap();
+            client.register("drain-owner".into()).unwrap();
+            client
+        }
+
+        fn request(authority: &TestAuthority, id: &str) -> AdmissionRequest {
+            AdmissionRequest {
+                key: AttemptKey {
+                    consumer_id: CONSUMER.into(),
+                    consumer_generation: authority.generation(),
+                    attempt_id: id.into(),
+                },
+                execution_digest: devguard_contract::digest_bytes(b"drain"),
+                intent: ResourceIntent {
+                    profile: "interactive".into(),
+                    requested: Budget {
+                        cpu_milli: 100,
+                        memory_bytes: 64 * 1024 * 1024,
+                        tasks: 4,
+                    },
+                    minimum: ResourceLevels::MACOS,
+                },
+            }
+        }
+
+        #[test]
+        fn drain_closes_admission_for_the_administrator_only_and_keeps_it_across_a_restart() {
+            let directory = base();
+            let authority = started(directory.path(), false);
+            let plain = connect(&authority, &[Capability::DurableAdmission]);
+            assert!(!plain.hello.capabilities.contains(&Capability::UpgradeDrain));
+            // A workload cannot close admission.
+            assert_eq!(
+                workload(&authority)
+                    .close_admission("not mine".into())
+                    .unwrap_err()
+                    .code,
+                ErrorCode::Unauthorized
+            );
+            let prepared = workload(&authority)
+                .admit(request(&authority, "prepared"))
+                .unwrap();
+            assert_eq!(prepared.phase, AttemptPhase::Prepared);
+            let staged = workload(&authority)
+                .admit(request(&authority, "staged"))
+                .unwrap();
+            assert_eq!(
+                administrator(&authority)
+                    .close_admission(String::new())
+                    .unwrap_err()
+                    .code,
+                ErrorCode::InvalidRequest
+            );
+            let closed = administrator(&authority)
+                .close_admission("upgrade to test".into())
+                .unwrap();
+            let since = closed.closure.clone().unwrap().since_unix_ms;
+            // The Prepared attempt was cancelled, so nothing is charged.
+            assert!(closed.quiet(), "{closed:?}");
+            assert_eq!(
+                workload(&authority)
+                    .lookup(prepared.key.clone())
+                    .unwrap()
+                    .phase,
+                AttemptPhase::Cancelled
+            );
+            for refused in [
+                workload(&authority)
+                    .admit(request(&authority, "late"))
+                    .err(),
+                workload(&authority)
+                    .admit_lease(
+                        request(&authority, "lease").key,
+                        request(&authority, "lease").intent.requested,
+                        None,
+                    )
+                    .err(),
+            ] {
+                let error = refused.expect("admission is closed");
+                assert_eq!(error.code, ErrorCode::ResourceUnavailable);
+                assert!(error.message.contains("admission is closed"), "{error:?}");
+            }
+            // No launch is committed while admission is closed, so no helper
+            // can arrive for an attempt the drain cancelled.
+            assert_eq!(
+                workload(&authority)
+                    .begin_launch(staged.key.clone())
+                    .unwrap_err()
+                    .code,
+                ErrorCode::ResourceUnavailable
+            );
+            let status = workload(&authority).status().unwrap();
+            assert!(!status.execution_ready && status.registration_ready);
+            assert!(status.reason.contains("upgrade to test"));
+            // Closing again keeps the first closure.
+            let again = administrator(&authority)
+                .close_admission("another reason".into())
+                .unwrap();
+            assert_eq!(again.closure.unwrap().since_unix_ms, since);
+            let marker = authority.paths().admission_marker();
+            assert!(read_private(&marker, authority.uid(), 4096).is_ok());
+            // A restarted service starts with admission still closed.
+            drop(authority);
+            let authority = started(directory.path(), true);
+            assert_eq!(
+                workload(&authority)
+                    .admit(request(&authority, "after-restart"))
+                    .unwrap_err()
+                    .code,
+                ErrorCode::ResourceUnavailable
+            );
+            let opened = administrator(&authority).open_admission().unwrap();
+            assert!(opened.closure.is_none());
+            assert!(!marker.exists());
+            assert_eq!(
+                workload(&authority)
+                    .admit(request(&authority, "reopened"))
+                    .unwrap()
+                    .phase,
+                AttemptPhase::Prepared
+            );
+            // Quiescence reports what is charged again.
+            let charged = administrator(&authority).quiescence().unwrap();
+            assert_eq!(charged.attempts.len(), 1);
+            assert!(!charged.quiet());
+            // Opening twice changes nothing.
+            assert!(administrator(&authority)
+                .open_admission()
+                .unwrap()
+                .closure
+                .is_none());
         }
     }
 

@@ -152,6 +152,28 @@ impl AuthorityStorage {
             authority_lock,
         })
     }
+
+    /// What the idle journal still charges: attempts not yet settled and
+    /// leases not yet released. It is read without activating the journal
+    /// and changes nothing.
+    pub fn charged(&mut self) -> Result<(Vec<AttemptRecord>, Vec<LeaseRecord>)> {
+        self.journal.transaction(|tx| {
+            let attempts = journal::active(tx)?;
+            let leases = if journal::lease_tables_exist(tx)? {
+                journal::validate_leases(tx)?;
+                journal::active_leases(tx)?
+            } else {
+                Vec::new()
+            };
+            Ok((attempts, leases))
+        })
+    }
+
+    /// Copy the journal, complete and consistent, into the new empty private
+    /// file at `path`, while this storage holds the authority lock.
+    pub fn backup(&mut self, path: &Path) -> Result<()> {
+        self.journal.backup(path)
+    }
 }
 
 impl<B: Backend, C: Clock> Authority<B, C> {
@@ -575,6 +597,25 @@ impl<B: Backend, C: Clock> Authority<B, C> {
                 journal::save(tx, &record)?;
             }
             Ok(record)
+        })
+    }
+
+    /// Trusted path for closing admission before an upgrade: cancel every
+    /// Prepared attempt, which is known not to have started. Launched work is
+    /// left to finish and be reconciled.
+    pub fn cancel_prepared(&mut self) -> Result<Vec<AttemptRecord>> {
+        let now = self.clock.now();
+        self.journal.transaction(|tx| {
+            journal::expire_prepared(tx, &now)?;
+            let mut cancelled = Vec::new();
+            for mut record in journal::active(tx)? {
+                if record.phase == AttemptPhase::Prepared {
+                    record.phase = AttemptPhase::Cancelled;
+                    journal::save(tx, &record)?;
+                    cancelled.push(record);
+                }
+            }
+            Ok(cancelled)
         })
     }
 

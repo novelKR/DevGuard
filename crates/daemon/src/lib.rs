@@ -6,3 +6,4 @@ pub mod fixture;
 pub mod install;
 pub mod paths;
 pub mod server;
+pub mod upgrade;

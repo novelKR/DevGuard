@@ -365,3 +365,37 @@ fn lease_requests_decode_strictly_and_never_print_the_token() {
         json!("parent_lease")
     );
 }
+
+#[test]
+fn drain_requests_decode_strictly_and_report_what_is_charged() {
+    for body in [
+        json!({"method": "close_admission", "params": {"reason": "upgrade"}}),
+        json!({"method": "open_admission"}),
+        json!({"method": "quiescence"}),
+    ] {
+        let frame = json!({"version": 1, "request_id": 13, "body": body});
+        assert!(
+            serde_json::from_value::<Frame<Request>>(frame.clone()).is_ok(),
+            "{frame}"
+        );
+    }
+    let mut extended = json!({"version": 1, "request_id": 14, "body": {"method": "close_admission", "params": {"reason": "upgrade"}}});
+    extended["body"]["params"]["drain_timeout_ms"] = json!(1);
+    assert!(serde_json::from_value::<Frame<Request>>(extended).is_err());
+    let report = json!({"version": 1, "request_id": 15, "body": {"result": "quiescence", "value": {
+        "closure": {"reason": "upgrade", "since_unix_ms": 1},
+        "attempts": [serde_json::to_value(attempt()).unwrap()],
+        "leases": [serde_json::to_value(lease()).unwrap()]}}});
+    let decoded = serde_json::from_value::<Frame<Response>>(report.clone()).unwrap();
+    let Response::Quiescence(quiescence) = decoded.body else {
+        panic!("expected a quiescence report")
+    };
+    assert!(!quiescence.quiet());
+    let mut future = report;
+    future["body"]["value"]["closure"]["future_field"] = json!(true);
+    assert!(serde_json::from_value::<Frame<Response>>(future).is_err());
+    assert_eq!(
+        serde_json::to_value(devguard_contract::Capability::UpgradeDrain).unwrap(),
+        json!("upgrade_drain")
+    );
+}

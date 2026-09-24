@@ -47,13 +47,13 @@ fn until_signalled<T>(serve: impl FnOnce(Arc<AtomicBool>) -> Result<T>) -> Resul
 fn run() -> Result<()> {
     let args: Vec<_> = std::env::args().skip(1).collect();
     if args == ["--help"] || args == ["help"] {
-        println!("devguardd paths | init | check | serve | status | install --package DIR | version --json\n          candidate --id ID --lease CONSUMER/GENERATION/ATTEMPT --capacity MILLICPU,BYTES,TASKS --token-fd N\nNormal authority paths come from the OS account. No path or test-budget override is accepted.\nserve observes native boot, process and host pressure evidence and, with it, opens registration, fenced launch through devguard-launch and reconciliation; `devguard` runs commands through it. install copies a package into a protected release and starts it as the current user's LaunchAgent; it must run from that package and refuses while an authority or the agent exists. status reports the installed service. init and check never start workloads.\ncandidate serves an isolated candidate authority whose capacity is a parent lease of the account's authority; it reads the lease token from the private descriptor N, launches nothing, and closes when the lease ends. `devguard test-candidate` starts it as a lease child.");
+        println!("devguardd paths | init | check | serve | status | install --package DIR | stage --package DIR | version --json\n          candidate --id ID --lease CONSUMER/GENERATION/ATTEMPT --capacity MILLICPU,BYTES,TASKS --token-fd N\nNormal authority paths come from the OS account. No path or test-budget override is accepted.\nserve observes native boot, process and host pressure evidence and, with it, opens registration, fenced launch through devguard-launch and reconciliation; `devguard` runs commands through it. install copies a package into a protected release and starts it as the current user's LaunchAgent; it must run from that package and refuses while an authority or the agent exists. status reports the installed service. stage copies a package into a protected release for `devguard upgrade`, without touching the service; it too must run from that package. init and check never start workloads.\ncandidate serves an isolated candidate authority whose capacity is a parent lease of the account's authority; it reads the lease token from the private descriptor N, launches nothing, and closes when the lease ends. `devguard test-candidate` starts it as a lease child.");
         return Ok(());
     }
     let command = args.first().map(String::as_str).unwrap_or_default();
     let valid = match command {
         "paths" | "init" | "check" | "serve" | "status" => args.len() == 1,
-        "install" => args.len() == 3 && args[1] == "--package",
+        "install" | "stage" => args.len() == 3 && args[1] == "--package",
         "candidate" => args.len() == 9,
         "version" => args.len() == 2 && args[1] == "--json",
         _ => false,
@@ -61,7 +61,7 @@ fn run() -> Result<()> {
     if !valid {
         return Err(Error::new(
             ErrorCode::InvalidRequest,
-            "expected paths, init, check, serve, status, install --package DIR, candidate or version --json; no alternate authority arguments are supported",
+            "expected paths, init, check, serve, status, install --package DIR, stage --package DIR, candidate or version --json; no alternate authority arguments are supported",
         ));
     }
     if command == "version" {
@@ -81,6 +81,14 @@ fn run() -> Result<()> {
                 &Launchctl::new(paths.uid()),
                 &InstallOptions::canonical(&paths),
             )?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&report)
+                    .map_err(|_| Error::new(ErrorCode::InvalidRequest, "report encoding failed"))?
+            );
+        }
+        "stage" => {
+            let report = devguard_daemon::upgrade::stage(&paths, std::path::Path::new(&args[2]))?;
             println!(
                 "{}",
                 serde_json::to_string_pretty(&report)

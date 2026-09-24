@@ -18,8 +18,19 @@ pub enum Command {
     Exec(ExecArgs),
     Doctor(DoctorArgs),
     TestCandidate(CandidateArgs),
+    Upgrade(UpgradeArgs),
+    /// `repair --use last-known-good`, the only repair.
+    Repair,
     Help,
     Version,
+}
+
+/// `devguard upgrade`: replace the current release with a staged one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UpgradeArgs {
+    pub release: String,
+    pub drain_timeout: Option<Duration>,
+    pub stopped: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -194,10 +205,12 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Command> {
         Some("exec") => parse_exec(raw).map(Command::Exec),
         Some("doctor") => parse_doctor(raw).map(Command::Doctor),
         Some("test-candidate") => parse_candidate(raw).map(Command::TestCandidate),
+        Some("upgrade") => parse_upgrade(raw).map(Command::Upgrade),
+        Some("repair") => parse_repair(raw).map(|()| Command::Repair),
         Some("--help" | "-h" | "help") if raw.next().is_none() => Ok(Command::Help),
         Some("--version" | "-V") if raw.next().is_none() => Ok(Command::Version),
         _ => Err(usage(
-            "expected exec, doctor, test-candidate, --help or --version",
+            "expected exec, doctor, test-candidate, upgrade, repair, --help or --version",
         )),
     }
 }
@@ -264,6 +277,40 @@ fn parse_exec(mut raw: impl Iterator<Item = OsString>) -> Result<ExecArgs> {
         program,
         args: raw.collect(),
     })
+}
+
+fn parse_upgrade(mut raw: impl Iterator<Item = OsString>) -> Result<UpgradeArgs> {
+    let (mut release, mut drain_timeout, mut stopped) = (None, None, false);
+    while let Some(option) = raw.next() {
+        match option.to_str() {
+            Some("--release") => once(&mut release, project_id(value(&mut raw)?)?)?,
+            Some("--drain-timeout") => {
+                once(&mut drain_timeout, parse_duration(&value(&mut raw)?)?)?
+            }
+            Some("--stopped") if !stopped => stopped = true,
+            _ => {
+                return Err(usage(
+                    "upgrade accepts --release ID, --drain-timeout DURATION and --stopped",
+                ))
+            }
+        }
+    }
+    Ok(UpgradeArgs {
+        release: release.ok_or_else(|| usage("upgrade needs --release ID"))?,
+        drain_timeout,
+        stopped,
+    })
+}
+
+fn parse_repair(mut raw: impl Iterator<Item = OsString>) -> Result<()> {
+    match (
+        raw.next().as_deref().and_then(|option| option.to_str()),
+        raw.next().as_deref().and_then(|value| value.to_str()),
+        raw.next(),
+    ) {
+        (Some("--use"), Some("last-known-good"), None) => Ok(()),
+        _ => Err(usage("repair takes exactly --use last-known-good")),
+    }
 }
 
 fn parse_candidate(mut raw: impl Iterator<Item = OsString>) -> Result<CandidateArgs> {
@@ -426,6 +473,45 @@ mod tests {
         assert_eq!(candidate.memory_bytes, Some(4 << 30));
         assert_eq!(candidate.ttl, Some(Duration::from_secs(7_200)));
         assert_eq!(candidate.wait, None);
+    }
+
+    #[test]
+    fn upgrade_and_repair_name_a_release_or_the_last_known_good() {
+        let Command::Upgrade(upgrade) = parse(args(&[
+            "upgrade",
+            "--release",
+            "0.1.0-abc-1234",
+            "--drain-timeout",
+            "90s",
+        ]))
+        .unwrap() else {
+            panic!("expected upgrade")
+        };
+        assert_eq!(upgrade.release, "0.1.0-abc-1234");
+        assert_eq!(upgrade.drain_timeout, Some(Duration::from_secs(90)));
+        assert!(!upgrade.stopped);
+        let Command::Upgrade(stopped) =
+            parse(args(&["upgrade", "--stopped", "--release", "r1"])).unwrap()
+        else {
+            panic!("expected upgrade")
+        };
+        assert!(stopped.stopped);
+        assert_eq!(
+            parse(args(&["repair", "--use", "last-known-good"])).unwrap(),
+            Command::Repair
+        );
+        for invalid in [
+            &["upgrade"][..],
+            &["upgrade", "--release", "../x"],
+            &["upgrade", "--release", "a", "--release", "b"],
+            &["upgrade", "--release", "a", "--stopped", "--stopped"],
+            &["upgrade", "--release", "a", "--drain-timeout", "60"],
+            &["repair"],
+            &["repair", "--use", "current"],
+            &["repair", "--use", "last-known-good", "--force"],
+        ] {
+            assert!(parse(args(invalid)).is_err(), "{invalid:?}");
+        }
     }
 
     #[test]

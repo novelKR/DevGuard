@@ -1,6 +1,6 @@
 # 구현된 authority 계약
 
-이 문서는 구현된 DG-0 authority, C01/C02 서비스·저장소·transport 동작, C03 native macOS 호스트 증거, C04 협조적 정책·scope 증거, C05 fenced launch helper, C06 대조, C07 명령행 owner, C08 Cargo adapter, 현재 사용자 LaunchAgent로의 C09 설치, C10 부모 lease와 후보 authority를 설명한다. PR과 병합 후 main 전달 증거는 구현과 별도로 추적한다. 실제 제공 명령은 [운영 문서](operations.md)에 있다. Native 호스트 증거가 있으면 서비스는 등록·launch·대조를 열며, CodeSpace 결합은 아직 구현하지 않았다. [영문 정본](../contracts.md).
+이 문서는 구현된 DG-0 authority, C01/C02 서비스·저장소·transport 동작, C03 native macOS 호스트 증거, C04 협조적 정책·scope 증거, C05 fenced launch helper, C06 대조, C07 명령행 owner, C08 Cargo adapter, 현재 사용자 LaunchAgent로의 C09 설치, C10 부모 lease와 후보 authority, C11 upgrade와 repair를 설명한다. PR과 병합 후 main 전달 증거는 구현과 별도로 추적한다. 실제 제공 명령은 [운영 문서](operations.md)에 있다. Native 호스트 증거가 있으면 서비스는 등록·launch·대조를 열며, CodeSpace 결합은 아직 구현하지 않았다. [영문 정본](../contracts.md).
 
 ## Authority와 transport 경계
 
@@ -186,7 +186,7 @@ DG1-C09는 패키지로 만든 release를 현재 사용자의 LaunchAgent로 설
 
   서비스가 검증된 current release를 실행할 때만 0으로 끝난다.
 - **재시작.** 다시 시작한 서비스는 다른 시작과 마찬가지로 기존 journal을 다시 열어 대조한다. Journal이 없거나 손상되었으면 닫힌 채 멈춰 있다.
-- **범위.** 설치된 release를 교체하는 것은 upgrade(C11)이며 C09는 이를 거절한다. 제거 명령은 없다. `launchctl bootout gui/<uid>/io.github.novelkr.devguard`를 실행하고 plist를 지우면 서비스가 멈추며, 모든 release·복구 사본·선택·journal은 보존된다.
+- **범위.** 설치된 release를 교체하는 것은 upgrade(C11, 아래)이며 설치는 이를 거절한다. 제거 명령은 없다. `launchctl bootout gui/<uid>/io.github.novelkr.devguard`를 실행하고 plist를 지우면 서비스가 멈추며, 모든 release·복구 사본·선택·journal은 보존된다.
 
 ## 부모 lease와 후보 authority
 
@@ -223,6 +223,31 @@ DG1-C10은 안정 authority가 호스트 예산을 두 번 발행하지 않고, 
   실패하면 먼저 lease를 끝낸다. 실행 중인 자식은 끝까지 실행되고, 모두 정리되면 lease가 해제된다. 명령 자체가 kill되면 owner 규칙에 따라 lease가 끝난다.
 - **범위.** 자체 process group이나 session을 만드는 workload는 lease 자식의 scope를 벗어나 협조적 macOS 모델에서 Suspect로 남는다. 따라서 native launch·CLI·terminal·scope suite는 lease 자식이 아니라 bootstrap과 CI qualification 실행으로 남는다. 후보는 admission만 검증하며 후보의 workload는 후보를 거쳐 실행되지 않는다. 설치된 부모 아래의 실제 자기 적용에는 부모 lease를 광고하는 release가 필요하다. 호스트 메모리 압력으로 서비스가 Critical인 동안에는 lease를 admission하지 않는다.
 
+## Upgrade와 repair
+
+DG1-C11은 과금 중인 작업을 잃거나 중복하지 않고, 후보의 admission에 의존하지 않으면서 설치된 서비스를 교체하고 복구한다.
+
+- **Staging.** `devguardd stage --package DIR`은 설치와 같은 방식으로 패키지를 검증하고 변경 불가능한 `releases/<id>`로 복사한다. 패키지에서 실행해야 하며, 서비스·선택·journal은 건드리지 않는다.
+- **Admission 닫기.** 관리자 session은 admission을 닫고(`CloseAdmission {reason}`), 다시 열고(`OpenAdmission`), 아직 과금 중인 것을 물을 수 있다(`Quiescence`). 서비스는 `upgrade_drain`을 요구한 client에게만 이를 알린다.
+  - 닫기는 효력이 생기기 전에 private marker `state/admission.json`을 기록한다. 따라서 다시 시작한 서비스나 다음 release도 admission이 닫힌 채로 시작한다. 모든 Prepared attempt는 취소되며 시작되지 않았음이 알려진다.
+  - Admission이 닫힌 동안 admission, launch commit, 부모 lease, lease 자식은 `ResourceUnavailable`로 거절되며, 대기 중인 CLI는 이를 다시 시도한다. 조회·취소·정지·owner 보고·대조는 계속된다. Status는 실행 미준비와 닫은 이유를 보고한다.
+  - 다시 닫아도 처음의 닫기가 유지된다. 다시 열 때는 효력이 생기기 전에 marker를 지운다.
+- **Upgrade.** `devguard upgrade --release ID [--drain-timeout DURATION] [--stopped]`는 staged release 자신의 `devguard`로 실행해야 한다.
+  1. 다른 wire version이나 protocol을 쓰거나, 다른 journal·설정 schema를 읽거나, 소비자가 요구하는 내구성 admission이나 fenced launch가 없는 release는 거절한다. 현재 release보다 적게 알리는 release는 downgrade로 보고하며 이 범위 안에서만 허용한다. 호환되지 않는 downgrade는 아무것도 바꾸기 전에 거절한다.
+  2. 현재 release가 검증된 상태로 실행 중이어야 한다. Staged release의 복구 사본은 아무것도 바꾸기 전에 만든다.
+  3. 실행 중인 서비스의 admission을 닫고 과금 중인 attempt나 lease가 없을 때까지 기다린다. Drain이 제한 시간(기본 60초) 안에 끝나지 않으면 현재 release에서 admission을 다시 열고, 그 release가 모든 과금을 유지하며, 아무것도 교체하지 않는다. C11 이전 release는 admission을 닫을 수 없다. `--stopped`는 그 release를 먼저 멈추고, journal에 과금된 것이 없을 때만 진행한다. 그렇지 않으면 그 release를 다시 시작한다.
+  4. 서비스를 멈춘다. Authority lock을 보유한 채 `backups/<time>-<from>-to-<to>/` 아래에 quiescent 백업을 만든다. 완전한 SQLite 사본인 journal, 선택, 현재 manifest를 각각 hash와 함께 둔다.
+  5. 닫기 marker를 기록하고 새 release를 시작하므로, 새 release는 admission이 닫힌 채 시작한다. launchd가 그 release 자신의 `devguardd`를 실행하는지, 소비자 handshake가 성공하는지, 서비스가 admission이 닫혀 있고 과금된 것이 없다고 보고하는지 검증한다.
+  6. 새 release를 current와 last known good으로 기록한 뒤 admission을 다시 연다.
+
+  새 release를 검증할 수 없으면 bootout하고, 이전 release를 같은 journal로 다시 시작해 admission을 다시 연다. Release가 admission했을 수 있는 journal 위에 백업을 복원하지 않는다.
+- **Repair.** `devguard repair --use last-known-good`는 그 release 자신의 `devguard`나 그 복구 사본의 `devguard`로 실행해야 한다.
+  - 어떤 authority든 제공 중이면 거절한다. 두 번째 authority를 시작하지 않으며, 제공 중인 release는 upgrade로 교체한다.
+  - Journal은 authority lock 아래에서 열려야 한다. 열 수 없으면 admission은 닫힌 채로 남고, repair는 journal을 만들거나 초기화하거나 복원하지 않는다.
+  - 설치된 release가 손상되었으면 복구 사본을 대신 실행하며, status도 이를 정상으로 받아들인다.
+  - 남아 있는 job은 교체하고 실행 중인 바이너리를 검증한다. 중단된 upgrade가 닫아 둔 admission을 다시 열고, repair를 선택 기록에 남긴다.
+- **범위.** Upgrade에는 유휴 서비스가 필요하다. 실행 중인 작업은 끝날 때까지 기다리며 중단하지 않는다. C11 이전 release에는 `upgrade` 명령이 없다. 그 release로 돌아갈 때는 서비스를 멈춘 뒤 그 release 자신의 installer를 쓰며, 그 release는 닫기 marker를 무시한다.
+
 ## 내구성 admission과 launch
 
 Journal schema는 1이다. 초기화는 명시적으로 새 파일만 만든다. 누락·손상·미지원 schema·불일치 journal은 fail-closed다. SQLite는 WAL, FULL synchronous와 immediate transaction을 사용한다. 시작 시 모든 저장 record와 회계 index를 대조한다.
@@ -255,7 +280,7 @@ Journal은 instance의 등록 정책을 기록한다. Active/suspect instance가
 
 ## 후속 마일스톤의 책임
 
-- 남은 DG-1: 설치된 C10 부모 아래의 실제 자기 적용, update·repair, 측정한 macOS SLO.
+- 남은 DG-1: 측정한 macOS SLO와 측정된 release의 승격(C12).
 - CS-RG: Runner 슬롯·전송 lane, 승인 migration, client pin, 상태 결합과 회귀 qualification.
 - DG-LINUX: 실제 cgroup 계층·controller·ancestor와 sandbox·proxy 포함.
 - DG-CACHE·DG-ADAPTERS: 등록 cache 회수와 추가 도구 제어.

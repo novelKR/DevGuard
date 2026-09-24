@@ -144,6 +144,18 @@ impl Journal {
         tx.commit().map_err(db_error)?;
         Ok(value)
     }
+
+    /// Write a complete, consistent copy of the journal to `path`, which must
+    /// be a new empty file. The copy is itself a valid journal.
+    pub(crate) fn backup(&mut self, path: &Path) -> Result<()> {
+        let path = path
+            .to_str()
+            .ok_or_else(|| Error::new(ErrorCode::InvalidRequest, "a backup path must be UTF-8"))?;
+        self.connection
+            .execute("VACUUM INTO ?1", params![path])
+            .map_err(db_error)?;
+        Ok(())
+    }
 }
 
 pub(crate) fn load(tx: &Transaction<'_>, key: &AttemptKey) -> Result<Option<AttemptRecord>> {
@@ -319,6 +331,19 @@ pub(crate) fn committed(tx: &Transaction<'_>) -> Result<Budget> {
 /// Create the lease tables in a journal written before them.
 pub(crate) fn ensure_lease_tables(tx: &Transaction<'_>) -> Result<()> {
     tx.execute_batch(LEASE_TABLES).map_err(db_error)
+}
+
+/// Whether a journal already has the lease tables; one written before C10
+/// has none until an authority activates it.
+pub(crate) fn lease_tables_exist(tx: &Transaction<'_>) -> Result<bool> {
+    let count: u64 = tx
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('leases','lease_children')",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(db_error)?;
+    Ok(count == 2)
 }
 
 fn lease_invalid() -> Error {

@@ -1,6 +1,6 @@
 # Implemented authority contract
 
-This document describes the implemented DG-0 authority, C01/C02 service, storage and transport behavior, C03 native macOS host evidence, C04 cooperative policy and scope evidence, the C05 fenced launch helper, C06 reconciliation, the C07 command-line owner, the C08 Cargo adapters, C09 installation as the current user's LaunchAgent and C10 parent leases with candidate authorities. PR and post-merge main delivery evidence is tracked separately from implementation. [Operations](operations.md) lists actual command availability. With native host evidence the service opens registration, launch and reconciliation; CodeSpace integration remains unimplemented. [Korean translation](ko/contracts.md).
+This document describes the implemented DG-0 authority, C01/C02 service, storage and transport behavior, C03 native macOS host evidence, C04 cooperative policy and scope evidence, the C05 fenced launch helper, C06 reconciliation, the C07 command-line owner, the C08 Cargo adapters, C09 installation as the current user's LaunchAgent, C10 parent leases with candidate authorities and C11 upgrade and repair. PR and post-merge main delivery evidence is tracked separately from implementation. [Operations](operations.md) lists actual command availability. With native host evidence the service opens registration, launch and reconciliation; CodeSpace integration remains unimplemented. [Korean translation](ko/contracts.md).
 
 ## Authority and transport boundaries
 
@@ -186,7 +186,7 @@ DG1-C09 installs a packaged release as the current user's LaunchAgent. The servi
 
   It exits 0 only when the service runs the verified current release.
 - **Restart.** A restarted service reopens and reconciles the existing journal, as any start does. A missing or corrupt journal fails closed and stays down.
-- **Limits.** Replacing the installed release is an upgrade (C11); C09 refuses it. There is no uninstall command. `launchctl bootout gui/<uid>/io.github.novelkr.devguard` and removing the plist stop the service and keep every release, recovery copy, the selection and the journal.
+- **Limits.** Replacing the installed release is an upgrade (C11, below); installation refuses it. There is no uninstall command. `launchctl bootout gui/<uid>/io.github.novelkr.devguard` and removing the plist stop the service and keep every release, recovery copy, the selection and the journal.
 
 ## Parent leases and candidate authorities
 
@@ -223,6 +223,31 @@ DG1-C10 lets the stable authority lend one bounded budget, a parent lease, to th
   A failure ends the lease first. Children that are running finish, and the lease is released once they are settled. If the command itself is killed, its lease ends by the owner rule.
 - **Limits.** Workloads that create their own process groups or sessions would leave a lease child's scope and stay Suspect under the cooperative macOS model. The native launch, CLI, terminal and scope suites therefore remain bootstrap and CI qualification runs, not lease children. A candidate verifies admission only; its workloads never run through it. Real self-use under the installed parent needs a release that states parent leases. While host memory pressure keeps a service Critical, it admits no lease.
 
+## Upgrade and repair
+
+DG1-C11 replaces and repairs the installed service without losing or duplicating charged work, and without depending on a candidate's admission.
+
+- **Staging.** `devguardd stage --package DIR` validates a package and copies it into an immutable `releases/<id>`, as installation does. It must run from the package, and it leaves the service, the selection and the journal untouched.
+- **Closing admission.** An administrator session can close admission (`CloseAdmission {reason}`), reopen it (`OpenAdmission`) and ask what is still charged (`Quiescence`). The service states `upgrade_drain` only to a client that requires it.
+  - Closing writes a private marker, `state/admission.json`, before it takes effect, so a restarted service or the next release starts with admission still closed. Every Prepared attempt is cancelled and is known not to have started.
+  - While admission is closed, admissions, launch commits, parent leases and lease children are refused with `ResourceUnavailable`, which a waiting CLI retries. Queries, cancellations, stops, owner reports and reconciliation continue. The status reports execution not ready, with the closure's reason.
+  - Closing again keeps the first closure; reopening removes the marker before it takes effect.
+- **Upgrade.** `devguard upgrade --release ID [--drain-timeout DURATION] [--stopped]` must run from the staged release's own `devguard`.
+  1. It refuses a release that speaks another wire version or protocol, reads another journal or configuration schema, or lacks durable admission or fenced launch, which consumers require. A release that states less than the current one is reported as a downgrade and allowed only within those limits. An incompatible downgrade is refused before anything changes.
+  2. The current release must be running verified. The staged release's recovery copy is made before anything changes.
+  3. It closes admission at the running service and waits until no attempt or lease is charged. If the drain does not finish within the timeout (60 s by default), admission reopens on the current release, which keeps every charge, and nothing is replaced. A release before C11 cannot close admission: `--stopped` stops it first and proceeds only if its journal then charges nothing; otherwise that release starts again.
+  4. It stops the service. While holding the authority lock, it takes a quiescent backup under `backups/<time>-<from>-to-<to>/`: the journal as a complete SQLite copy, the selection and the current manifest, each hashed.
+  5. It writes the closure marker and starts the new release, which therefore starts with admission closed. It verifies that launchd runs the release's own `devguardd`, that a consumer's handshake succeeds, and that the service reports admission closed with nothing charged.
+  6. It records the new release as current and last known good, then reopens admission.
+
+  If the new release cannot be verified, it is booted out and the previous release starts again on the same journal, with admission reopened. The backup is never restored over a journal that a release may have admitted from.
+- **Repair.** `devguard repair --use last-known-good` must run from that release's own `devguard`, or from its recovery copy's.
+  - It refuses while any authority serves: it never starts a second one, and a serving release is replaced by an upgrade.
+  - The journal must open under the authority lock. One that cannot keeps admission closed; repair never creates, resets or restores it.
+  - If the installed release is damaged, it runs the recovery copy instead, which status then accepts.
+  - It replaces any job left loaded and verifies the running binary. It reopens admission left closed by an interrupted upgrade, and records the repair in the selection.
+- **Limits.** An upgrade needs the service idle: running work is waited for, never interrupted. A release before C11 has no `upgrade` command. Returning to one uses its own installer after the service is stopped, and such a release ignores the closure marker.
+
 ## Durable admission and launch
 
 The journal schema is version 1. Initialization is explicit and only creates a new file. Opening a missing, corrupt, unknown-schema or inconsistent journal fails closed. SQLite uses WAL, FULL synchronous durability and immediate transactions. A startup scan validates the accounting index against every stored record.
@@ -255,7 +280,7 @@ Every resource carries its own level and method. Accounting is not an OS memory 
 
 ## Boundaries deliberately left to later milestones
 
-- Remaining DG-1: real self-use under an installed C10 parent, update/repair and measured macOS SLOs.
+- Remaining DG-1: measured macOS SLOs and the promotion of a measured release (C12).
 - CS-RG: Runner slots and transport lanes, approval migration, pinned client, process status integration and regression qualification.
 - DG-LINUX: actual cgroup hierarchy, controllers, ancestor constraints and sandbox/proxy inclusion.
 - DG-CACHE / DG-ADAPTERS: registered cache reclamation and additional tool-specific controls.

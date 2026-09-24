@@ -31,7 +31,7 @@ SUITES = {
         # Native sampling tests belong to dg1-probes, not the transport suite.
         ("service", ["-p", "devguard-daemon", "--lib", "server::tests", "--",
                      "--skip", "server::tests::native", "--skip", "server::tests::launch",
-                     "--skip", "server::tests::lease"]),
+                     "--skip", "server::tests::lease", "--skip", "server::tests::drain"]),
     ],
     "dg1-probes": [
         ("pressure-controller", ["-p", "devguard-core", "--test", "pressure_contract"]),
@@ -113,6 +113,16 @@ SUITES = {
         ("native-self-use", ["-p", "devguard-cli", "--test", "candidate"],
          ["test-candidate", "lease-children", "test-candidate-crash"]),
     ],
+    "dg1-upgrade": [
+        ("quiescence-contract", ["-p", "devguard-core", "--test", "quiescence_contract"]),
+        ("wire-drain", ["-p", "devguard-client", "--test", "wire_compatibility", "drain_"]),
+        ("service-drain", ["-p", "devguard-daemon", "--lib", "server::tests::drain"]),
+        ("upgrade-logic", ["-p", "devguard-daemon", "--lib", "upgrade::tests"]),
+        ("upgrade-arguments", ["-p", "devguard-cli", "--lib", "args::tests::upgrade_"]),
+        ("native-upgrade", ["-p", "devguard-daemon", "--test", "upgrade"],
+         ["upgrade-normal", "drain-timeout", "upgrade-unverified", "downgrade-refused",
+          "upgrade-stopped", "repair-recovery", "repair-corrupt-journal"]),
+    ],
 }
 # Binaries a suite's tests start but whose package the suite does not test.
 PREBUILD = {
@@ -131,13 +141,14 @@ SCOPES = {
     "dg1-cargo": "the Cargo adapters through the devguard owner against isolated authorities with real Cargo builds: jobs fitted to the reservation, clamping and refusals, one jobserver shared by a pipeline and by nested Cargo, inherited and stale jobservers, concurrent consumers and cancellation; Cargo jobs are compilation parallelism, not a cap on test threads or measured memory",
     "dg1-bootstrap": "installation of a release as the current user's LaunchAgent against isolated authorities: package validation, immutable release and recovery copies, verification that launchd runs the release's own binary before it is selected, refusals, concurrent installers, and under launchd itself a crash restart, a SIGTERM stop and a fail-closed start that is not restarted; functional artifacts only, not SLO qualification",
     "dg1-reconcile": "native macOS reconciliation through isolated authorities: prepared cancellation and expiry, owner reports that no helper exists, releases only on scope termination, sticky escape and tracking loss, scope termination signals, dead owners, and a daemon crash with restart",
+    "dg1-upgrade": "replacement and repair of the installed service against isolated authorities with a fake service manager: compatibility checks that refuse an incompatible downgrade, admission closed by an administrator and kept across a restart, drains that finish or time out with every charge kept, quiescent backups, a new release started closed and verified before admission reopens, a failed start that gives way to the previous release on the same journal, a release that cannot drain replaced only when stopped with nothing charged, and repair that never starts a second authority, uses the recovery copy of a damaged release and keeps a journal that cannot be opened closed; functional fixtures only, not the real upgrade of the installed service",
     "dg1-self-use": "parent leases and candidate authorities against isolated authorities: a lease charged once against the host, children admitted only against its remainder with its token, fencing when it ends, its owner goes or its deadline passes, release once every child is settled, and a candidate authority run as a lease child through the real launch helper that admits within its leased capacity, launches nothing and closes with its lease; functional fixtures only, not real self-use under the installed parent",
 }
 # Suites that start real workloads through the launch helper (in fixtures).
 LAUNCHING = {"dg1-launch", "dg1-reconcile", "dg1-cli", "dg1-cargo", "dg1-self-use"}
 # Native suites observe the actual host; elsewhere they are not run, never passed.
 NATIVE = {"dg1-probes", "dg1-scopes", "dg1-launch", "dg1-reconcile", "dg1-cli", "dg1-cargo", "dg1-bootstrap",
-          "dg1-self-use"}
+          "dg1-self-use", "dg1-upgrade"}
 
 
 def host_facts():

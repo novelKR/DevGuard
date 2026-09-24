@@ -153,6 +153,15 @@ impl AuthorityPaths {
     pub fn lock(&self) -> PathBuf {
         self.state().join("authority.lock")
     }
+    /// Present while an administrator has closed admission, for example for
+    /// an upgrade; a service that starts finds admission still closed.
+    pub fn admission_marker(&self) -> PathBuf {
+        self.state().join("admission.json")
+    }
+    /// Quiescent journal backups taken before a release is replaced.
+    pub fn backups(&self) -> PathBuf {
+        self.root.join("backups")
+    }
     pub fn socket(&self) -> PathBuf {
         self.runtime.join("authority.sock")
     }
@@ -300,6 +309,41 @@ pub fn read_private(path: &Path, uid: u32, limit: usize) -> Result<Vec<u8>> {
         ));
     }
     Ok(bytes)
+}
+
+/// Replace a private file atomically: write a new sibling, sync it, rename it.
+pub fn replace_private(path: &Path, bytes: &[u8]) -> Result<()> {
+    let parent = path.parent().ok_or_else(|| {
+        Error::new(
+            ErrorCode::InvalidRequest,
+            "a private file needs a directory",
+        )
+    })?;
+    let temporary = parent.join(format!(
+        ".{}.{}",
+        path.file_name().and_then(|n| n.to_str()).unwrap_or("file"),
+        uuid::Uuid::new_v4().simple()
+    ));
+    let written = (|| -> std::io::Result<()> {
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+            .open(&temporary)?;
+        file.write_all(bytes)?;
+        file.sync_all()?;
+        fs::rename(&temporary, path)?;
+        File::open(parent)?.sync_all()
+    })();
+    if written.is_err() {
+        let _ = fs::remove_file(&temporary);
+        return Err(Error::new(
+            ErrorCode::ResourceControlUnavailable,
+            format!("cannot write {}", path.display()),
+        ));
+    }
+    Ok(())
 }
 
 pub fn write_new_private(path: &Path, bytes: &[u8]) -> Result<()> {

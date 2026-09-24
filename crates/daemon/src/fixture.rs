@@ -96,7 +96,7 @@ impl TestAuthority {
             Options {
                 probe: Some(Box::new(HealthyProbe)),
                 reconcile_paused: Some(reconcile_paused.clone()),
-                candidate: None,
+                ..Options::default()
             },
         )?;
         let authority = server.native_authority().ok_or_else(|| {
@@ -253,10 +253,21 @@ impl TestAuthority {
 /// SIGINT, as `devguardd serve` serves the canonical one. Tests run it as the
 /// program of a service, under launchd or a fake manager.
 pub fn serve_until_terminated(base: &Path) -> Result<()> {
+    serve_fixture(base, false)
+}
+
+/// As [`serve_until_terminated`], stating no upgrade drain, as a release
+/// before C11 does.
+pub fn serve_without_upgrade_drain_until_terminated(base: &Path) -> Result<()> {
+    serve_fixture(base, true)
+}
+
+fn serve_fixture(base: &Path, without_upgrade_drain: bool) -> Result<()> {
     let server = Server::open_with(
         &AuthorityPaths::fixture(base),
         Options {
             probe: Some(Box::new(HealthyProbe)),
+            without_upgrade_drain,
             ..Options::default()
         },
     )?;
