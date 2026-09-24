@@ -1,6 +1,6 @@
 # 구현된 authority 계약
 
-이 문서는 구현된 DG-0 authority, C01/C02 서비스·저장소·transport 동작, C03 native macOS 호스트 증거, C04 협조적 정책·scope 증거, C05 fenced launch helper, C06 대조, C07 명령행 owner, C08 Cargo adapter를 설명한다. PR과 병합 후 main 전달 증거는 구현과 별도로 추적한다. 실제 제공 명령은 [운영 문서](operations.md)에 있다. Native 호스트 증거가 있으면 서비스는 등록·launch·대조를 열며, CodeSpace 결합은 아직 구현하지 않았다. [영문 정본](../contracts.md).
+이 문서는 구현된 DG-0 authority, C01/C02 서비스·저장소·transport 동작, C03 native macOS 호스트 증거, C04 협조적 정책·scope 증거, C05 fenced launch helper, C06 대조, C07 명령행 owner, C08 Cargo adapter, 현재 사용자 LaunchAgent로의 C09 설치를 설명한다. PR과 병합 후 main 전달 증거는 구현과 별도로 추적한다. 실제 제공 명령은 [운영 문서](operations.md)에 있다. Native 호스트 증거가 있으면 서비스는 등록·launch·대조를 열며, CodeSpace 결합은 아직 구현하지 않았다. [영문 정본](../contracts.md).
 
 ## Authority와 transport 경계
 
@@ -145,6 +145,48 @@ DG1-C08은 command가 실행되는 예약에 맞춰 Cargo의 compiler 병렬도�
 - **Fallback.** 두 mode 모두 `CARGO_BUILD_JOBS`를 예약의 job 수 N으로 설정하며, 호출자가 설정한 값은 대체한다. Cargo는 jobserver를 열지 못했고 명령행이나 `--config`에도 job 수가 없을 때만 이 값을 쓴다. 따라서 pool을 열지 못한 Cargo를 제한하면서도, 유효한 jobserver 아래에서 명시적 `-j`가 일으키는 경고는 생기지 않는다. Receipt는 이를 설정한 변수로 기록한다.
 - **상속된 jobserver.** CLI가 `CARGO_MAKEFLAGS`·`MAKEFLAGS`·`MFLAGS`로 상속한 jobserver는 Cargo가 읽는 방식대로 검사한다. 처음 존재하는 변수가 열려 있고 상속 가능한 pipe 쌍이나 사용자 소유 FIFO를 가리켜야 한다. 유효한 jobserver는 승인 설계대로 두 mode 모두에서 보존되어 병렬도를 제한하며, receipt에는 그 크기를 관측할 수 없다고 기록한다. 두 번째 pool은 만들지 않는다. 이때 direct mode는 job 수를 넣지 않는다. Cargo가 무시한다는 경고만 낼 것이기 때문이다. 다만 명시적 값은 여전히 조정한다. Descriptor 쌍 jobserver는 상속 descriptor를 열어 두는 프로그램에만 전달된다. Pipeline mode에서 Python `subprocess`의 기본 동작처럼 descriptor를 닫는 프로그램이 시작한 Cargo는 `CARGO_BUILD_JOBS`로 돌아가며, receipt에 그렇게 기록한다. 닫힌 descriptor처럼 오래된 참조는 함께 온 job 수와 함께 환경에서 제거하므로, Cargo가 조용히 자체 pool로 돌아가지 않는다.
 - **중첩 Cargo.** Cargo는 build script에 jobserver를 넘기므로, 중첩 Cargo는 새 pool을 만들지 않고 바깥 pool을 공유한다.
+
+## 설치와 현재 사용자 서비스
+
+DG1-C09는 패키지로 만든 release를 현재 사용자의 LaunchAgent로 설치한다. 서비스는 여전히 같은 foreground `devguardd serve`를 실행한다. 권한 있는 daemon이 아니며, worktree `target`의 바이너리를 설치된 서비스로 쓰지 않는다.
+
+- **패키지.** `scripts/package.py`는 깨끗한 tree와 Rust 1.95.0을 요구한다. 한 번의 release build로 `devguardd`·`devguard`·`devguard-launch`를 만들며, C10 전까지 이 build는 bootstrap으로 표시한다. 그리고 `devguard-release-manifest/v1`에 다음을 기록한다.
+  - release id: `<version>-<commit7>-<artifact digest>`;
+  - source commit·tree·qualification tree digest;
+  - build 명령과 toolchain;
+  - 각 바이너리의 SHA-256과 크기;
+  - build에 컴파일된 호환성. `devguardd version --json`이 이를 출력하며, 패키지 버전·wire 버전·protocol·capability·journal schema·설정 schema를 담는다.
+
+  패키지는 기능 artifact(`scope: functional`, `slo_qualified: false`)이며, release를 qualification하는 것은 C12뿐이다.
+- **검증.**
+  - 패키지나 설치된 release에는 정확히 `MANIFEST.json`과 세 바이너리가 든 `bin/`만 있어야 한다. 바이너리는 symlink가 아닌 실행 가능한 일반 파일이어야 하며, 크기와 hash가 manifest와 일치해야 한다.
+  - Manifest의 호환성은 installer 자신의 build와 같아야 한다.
+  - Installer는 그 패키지에서 실행해야 한다. 즉 installer 자신의 실행 파일 hash가 manifest의 `devguardd`와 같아야 한다. 따라서 서로 다른 build의 바이너리가 섞이지 않는다.
+- **설치.** `devguardd install --package DIR`는 다음 경우 거절한다.
+  - authority가 정상 endpoint를 제공하거나 잠금을 보유한 동안;
+  - agent가 load되어 있거나 plist가 있을 때;
+  - authority 상태가 없을 때. Journal을 만들거나 고치거나 다시 쓰지 않는다.
+
+  Release를 private 형제 디렉터리로 복사해 sync하고 읽기 전용으로 만든다(디렉터리와 바이너리 0500, manifest 0400). 그다음에야 `releases/<id>`로 rename하므로, 부분 복사본은 최종 이름을 갖지 않는다. 이미 있는 release는 manifest가 byte 단위로 같을 때만 재사용하며, 다른 release로 덮어쓰지 않는다. 끝으로 `~/Library/LaunchAgents/io.github.novelkr.devguard.plist`(0644)를 쓰고 사용자의 `gui/<uid>` domain에 bootstrap한다.
+- **Agent.**
+  - 프로그램은 release의 `devguardd serve`이며, `RunAtLoad`로 load와 login 때 시작한다.
+  - `KeepAlive {Crashed: true}`이므로 crash 뒤에만 10초 throttle 후 다시 시작한다.
+  - 정상 종료에서는 멈춘 채로 둔다. launchd의 SIGTERM, 그리고 journal이 없거나 손상되었거나 두 번째 authority가 잠금에 거절된 경우처럼 닫힌 채 끝나는 종료가 여기에 포함된다.
+  - 출력은 `~/Library/Logs/DevGuard/devguardd.log`에 남으며, rotation은 수동이다.
+- **선택 전 검증.** Installer는 15초 안에 다음을 관측해야 한다.
+  - launchd가 보고하는 서비스의 PID가 endpoint handshake의 PID와 같을 것;
+  - 그 PID의 실행 image(`proc_pidpath`)가 release의 `devguardd`이고 manifest의 hash와 같을 것.
+
+  그다음에야 `releases/selection.json`(0600: current와 last known good, 이력)을 기록하고 `recovery/<id>`에 변경 불가능한 복구 사본을 보존한다. 검증에 실패하면 job을 bootout하고 plist를 제거하며, 아무것도 선택하지 않는다.
+- **상태.** `devguardd status`는 아무것도 바꾸지 않고 다음을 보고한다.
+  - 선택과 launchd 상태;
+  - plist가 이 build가 현재 release에 대해 만드는 plist와 정확히 같은지;
+  - 실행 중인 PID·실행 파일·hash와 manifest의 비교;
+  - release와 복구 사본.
+
+  서비스가 검증된 current release를 실행할 때만 0으로 끝난다.
+- **재시작.** 다시 시작한 서비스는 다른 시작과 마찬가지로 기존 journal을 다시 열어 대조한다. Journal이 없거나 손상되었으면 닫힌 채 멈춰 있다.
+- **범위.** 설치된 release를 교체하는 것은 upgrade(C11)이며 C09는 이를 거절한다. 제거 명령은 없다. `launchctl bootout gui/<uid>/io.github.novelkr.devguard`를 실행하고 plist를 지우면 서비스가 멈추며, 모든 release·복구 사본·선택·journal은 보존된다.
 
 ## 내구성 admission과 launch
 

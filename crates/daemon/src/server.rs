@@ -269,7 +269,7 @@ fn poisoned() -> Error {
 }
 
 /// The capabilities of a service with registration and fenced launch open.
-fn launch_capabilities() -> BTreeSet<Capability> {
+pub(crate) fn launch_capabilities() -> BTreeSet<Capability> {
     BTreeSet::from([
         Capability::DurableAdmission,
         Capability::FencedLaunch,

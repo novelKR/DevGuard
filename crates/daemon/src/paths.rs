@@ -86,6 +86,27 @@ impl AuthorityPaths {
     pub fn root(&self) -> &Path {
         &self.root
     }
+    pub fn home(&self) -> &Path {
+        &self.home
+    }
+    /// Installed immutable releases, with the selection of the current one.
+    pub fn releases(&self) -> PathBuf {
+        self.root.join("releases")
+    }
+    pub fn selection(&self) -> PathBuf {
+        self.releases().join("selection.json")
+    }
+    /// Independent copies that repair can use when a release is damaged.
+    pub fn recovery(&self) -> PathBuf {
+        self.root.join("recovery")
+    }
+    /// The current user's launchd agents.
+    pub fn launch_agents(&self) -> PathBuf {
+        self.home.join("Library/LaunchAgents")
+    }
+    pub fn logs(&self) -> PathBuf {
+        self.home.join("Library/Logs/DevGuard")
+    }
     pub fn runtime(&self) -> &Path {
         &self.runtime
     }

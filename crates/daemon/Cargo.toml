@@ -28,4 +28,6 @@ toml.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+# The installer's integration tests serve isolated fixture authorities.
+devguard-daemon = { path = ".", features = ["test-fixtures"] }
 tempfile.workspace = true

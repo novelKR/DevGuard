@@ -28,7 +28,8 @@ fn help_states_what_serve_opens_and_that_bootstrap_starts_no_workload() {
     assert!(result.status.success());
     let help = String::from_utf8(result.stdout).unwrap();
     assert!(help.contains("with it, opens registration, fenced launch"));
-    assert!(help.contains("There is no execution CLI yet; init and check never start workloads."));
+    assert!(help.contains("install copies a package into a protected release"));
+    assert!(help.contains("init and check never start workloads."));
 }
 
 #[cfg(target_os = "macos")]

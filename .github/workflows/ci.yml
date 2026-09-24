@@ -53,6 +53,11 @@ jobs:
         # Hosted runners' work capacity cannot fit one Cargo job (1 CPU and
         # 2 GiB), so real-build cases are recorded not run there; refusals still run.
         run: python3 scripts/qualify.py dg1-cargo --allow-incomplete --output target/qualification/dg1-cargo
+      - name: Native installation functional checks
+        if: runner.os == 'macOS'
+        # Transient launchd jobs need the user's gui domain; a runner without
+        # one records the launchd case not run, and the summary shows incomplete.
+        run: python3 scripts/qualify.py dg1-bootstrap --allow-incomplete --output target/qualification/dg1-bootstrap
       - name: Preserve qualification evidence
         if: always()
         uses: actions/upload-artifact@v6
@@ -67,9 +72,9 @@ jobs:
           import json, os
           from pathlib import Path
           with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as out:
-              for name in ['ci', 'dg1-authority', 'dg1-auth', 'dg1-probes', 'dg1-scopes', 'dg1-launch', 'dg1-reconcile', 'dg1-cli', 'dg1-cargo']:
+              for name in ['ci', 'dg1-authority', 'dg1-auth', 'dg1-probes', 'dg1-scopes', 'dg1-launch', 'dg1-reconcile', 'dg1-cli', 'dg1-cargo', 'dg1-bootstrap']:
                   path = Path('target/qualification') / name / 'report.json'
                   status = json.loads(path.read_text())['status'] if path.exists() else 'not_run'
                   out.write(name + ': ' + status + '\n\n')
-              out.write('Contract regression, service/UDS, native host evidence, native scope, launch helper, reconciliation, command-line owner and Cargo adapter functional checks only; native suites run on macOS. Self-use and foreground SLO qualification are not run.\n')
+              out.write('Contract regression, service/UDS, native host evidence, native scope, launch helper, reconciliation, command-line owner, Cargo adapter and installation functional checks only; native suites run on macOS. Self-use and foreground SLO qualification are not run.\n')
           PY

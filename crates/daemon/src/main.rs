@@ -2,6 +2,7 @@ use devguard_contract::{Error, ErrorCode, Result};
 use devguard_core::AuthorityStorage;
 use devguard_daemon::{
     config::{self, HostConfig},
+    install::{self, InstallOptions, Launchctl},
     paths::AuthorityPaths,
     server::Server,
 };
@@ -18,17 +19,60 @@ extern "C" fn stop_signal(_: libc::c_int) {
 fn run() -> Result<()> {
     let args: Vec<_> = std::env::args().skip(1).collect();
     if args == ["--help"] || args == ["help"] {
-        println!("devguardd paths | init | check | serve\nNormal authority paths come from the OS account. No path or test-budget override is accepted.\nserve observes native boot, process and host pressure evidence and, with it, opens registration, fenced launch through devguard-launch and reconciliation. There is no execution CLI yet; init and check never start workloads.");
+        println!("devguardd paths | init | check | serve | status | install --package DIR | version --json\nNormal authority paths come from the OS account. No path or test-budget override is accepted.\nserve observes native boot, process and host pressure evidence and, with it, opens registration, fenced launch through devguard-launch and reconciliation; `devguard` runs commands through it. install copies a package into a protected release and starts it as the current user's LaunchAgent; it must run from that package and refuses while an authority or the agent exists. status reports the installed service. init and check never start workloads.");
         return Ok(());
     }
-    if args.len() != 1 || !matches!(args[0].as_str(), "paths" | "init" | "check" | "serve") {
+    let command = args.first().map(String::as_str).unwrap_or_default();
+    let valid = match command {
+        "paths" | "init" | "check" | "serve" | "status" => args.len() == 1,
+        "install" => args.len() == 3 && args[1] == "--package",
+        "version" => args.len() == 2 && args[1] == "--json",
+        _ => false,
+    };
+    if !valid {
         return Err(Error::new(
             ErrorCode::InvalidRequest,
-            "expected paths, init, check or serve; no alternate authority arguments are supported",
+            "expected paths, init, check, serve, status, install --package DIR or version --json; no alternate authority arguments are supported",
         ));
     }
+    if command == "version" {
+        println!(
+            "{}",
+            serde_json::to_string(&install::compiled())
+                .map_err(|_| Error::new(ErrorCode::InvalidRequest, "version encoding failed"))?
+        );
+        return Ok(());
+    }
     let paths = AuthorityPaths::current_user()?;
-    match args[0].as_str() {
+    match command {
+        "install" => {
+            let report = install::install(
+                &paths,
+                std::path::Path::new(&args[2]),
+                &Launchctl::new(paths.uid()),
+                &InstallOptions::canonical(&paths),
+            )?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&report)
+                    .map_err(|_| Error::new(ErrorCode::InvalidRequest, "report encoding failed"))?
+            );
+        }
+        "status" => {
+            let report = install::status(
+                &paths,
+                &Launchctl::new(paths.uid()),
+                &InstallOptions::canonical(&paths),
+            )?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&report)
+                    .map_err(|_| Error::new(ErrorCode::InvalidRequest, "report encoding failed"))?
+            );
+            if !report.healthy {
+                std::process::exit(1);
+            }
+        }
         "paths" => println!(
             "{}",
             serde_json::to_string(&paths)

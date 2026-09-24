@@ -10,6 +10,7 @@ pub use authority::{
     Authority, AuthorityStorage, InstanceRecord, LaunchDecision, Principal, Registration,
     RunDecision, TrustedPeer,
 };
+pub use journal::JOURNAL_SCHEMA;
 pub use policy::{ConsumerDefinition, ConsumerRole, Policy};
 pub use pressure::{
     DiskObservation, MemoryPressure, PressureController, PressureSample, PressureState,

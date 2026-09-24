@@ -2,7 +2,7 @@
 
 DevGuard centralizes resource admission for development workloads while preserving the resources needed to inspect and stop them.
 
-The repository implements **DG-0 contracts and a durable authority core**, with DG-1 now in progress. C01 supplies canonical paths/bootstrap/storage checks; C02 supplies authenticated, bounded local communication with a small client and private credential-FD transfer; C03 supplies the native macOS boot clock, process identity and host pressure evidence that activate the service's journal; C04 supplies cooperative QoS/nice application with readback and observed process-group scope evidence; C05 supplies registration over the wire and the fenced `devguard-launch` helper; C06 supplies reconciliation, and with native evidence the service opens all three; C07 supplies the `devguard` command-line owner with doctor diagnostics, receipts and explicit bounded waits; C08 supplies the Cargo adapters, which fit compiler jobs to the reservation and share one jobserver. PR and post-merge main delivery evidence is tracked separately from implementation. Linux cgroups are not yet available. Use the operating guide for actual command availability; the design also contains future interfaces.
+The repository implements **DG-0 contracts and a durable authority core**, with DG-1 now in progress. C01 supplies canonical paths/bootstrap/storage checks; C02 supplies authenticated, bounded local communication with a small client and private credential-FD transfer; C03 supplies the native macOS boot clock, process identity and host pressure evidence that activate the service's journal; C04 supplies cooperative QoS/nice application with readback and observed process-group scope evidence; C05 supplies registration over the wire and the fenced `devguard-launch` helper; C06 supplies reconciliation, and with native evidence the service opens all three; C07 supplies the `devguard` command-line owner with doctor diagnostics, receipts and explicit bounded waits; C08 supplies the Cargo adapters, which fit compiler jobs to the reservation and share one jobserver; C09 installs a packaged release as the current user's LaunchAgent, selected only after launchd is verified to run it. PR and post-merge main delivery evidence is tracked separately from implementation. Linux cgroups are not yet available. Use the operating guide for actual command availability; the design also contains future interfaces.
 
 - [Authoritative design reference](docs/design.md) · [Korean translation](docs/ko/design.md)
 - [Historical approved design (Korean, immutable)](docs/design.ko.md)
@@ -26,11 +26,12 @@ python3 scripts/qualify.py dg1-launch --offline   # macOS only
 python3 scripts/qualify.py dg1-reconcile --offline   # macOS only
 python3 scripts/qualify.py dg1-cli --offline   # macOS only
 python3 scripts/qualify.py dg1-cargo --offline   # macOS only
+python3 scripts/qualify.py dg1-bootstrap --offline   # macOS only
 ```
 
 Omit `--offline` when the locked crates have not been downloaded. Builds and tests use one Cargo job and one test thread by default. Results, source fingerprints and logs are written under `target/qualification/`. A newer compiler can be used with `--allow-toolchain-mismatch` for a supplemental check, which never counts as qualification for 1.95.0.
 
-DG-0 tests use an explicitly fake OS backend. Their passing reports establish accounting, persistence and state-transition contracts. The additional C01–C08 suites check actual local storage, peer observations, credential transport, native macOS host evidence, cooperative scope evidence, the launch helper, reconciliation, the command-line owner and the Cargo adapters within bounded fixtures. They do not qualify Linux enforcement, browser responsiveness or self-governed execution; these remain `not_run`.
+DG-0 tests use an explicitly fake OS backend. Their passing reports establish accounting, persistence and state-transition contracts. The additional C01–C09 suites check actual local storage, peer observations, credential transport, native macOS host evidence, cooperative scope evidence, the launch helper, reconciliation, the command-line owner, the Cargo adapters and installation within bounded fixtures. They do not qualify Linux enforcement, browser responsiveness or self-governed execution; these remain `not_run`.
 
 ## Repository boundaries
 

@@ -4,7 +4,7 @@
 
 아래 ID·제목·PR 묶음은 **예정 값**이다. 실제 SHA나 GitHub PR 번호가 아니다. 모듈 경로는 구현 전까지 예정 책임을 나타낸다. 현재 daemon/client crate는 존재하며 launcher·platform-macos·cli·adapters는 후속 책임이다. crate 추가는 해당 PR에서 명시적 의존 allowlist와 전체 그래프 검증을 함께 확장하고 검사를 제거하지 않는다. 실제 상태는 ledger가 소유한다.
 
-구현된 C01은 정상 경로·명시 bootstrap·배타 journal 검사를 제공한다. C02는 foreground devguardd serve, 제한된 인증 UDS 통신, OS UID/PID 관측, 엄격한 client 호환성과 private 자격 FD 전달을 추가한다. C03은 `devguard-macos`의 boot 시계, native PID/start 정체성, 호스트 용량과 serve에서 journal을 활성화하는 2초 압력 sampler를 추가한다. C04는 협조적 QoS/nice 적용과 readback, 이탈·추적 상실이 고정되는 관측 process group scope, 정체성을 확인한 종료를 추가한다. C05는 wire 등록과 fenced `devguard-launch` helper를 추가한다. Grant마다 claim된 helper는 하나이며, READY와 exec 전에 scope binding과 authorization을 거치고, transcript와 exec 실패 보고를 분리하며, payload descriptor를 정리한다. C06은 서비스 reconciler를 추가한다. 관측된 scope 종료, helper가 없다는 owner 보고, 이전 boot에서만 회수하며, reap 전 owner 관측, scope 종료, instance 폐기, 재시작 전후의 Suspect 회계를 제공한다. Native 증거가 있으면 서비스는 등록·launch·대조를 연다. C07은 `devguard` 명령행 owner를 추가한다. 명시적이고 제한된 대기, terminal·signal 전달, reap 전 관측, receipt, doctor 진단을 갖춘 관리 실행을 제공하며, 관리되지 않는 대체 실행은 없다. C08은 Cargo adapter를 추가한다. Compiler job을 예약에 맞춰 조정하거나 거절하며, pipeline과 중첩 Cargo 실행이 jobserver 하나를 공유하게 한다. PR과 병합 후 main 전달 증거는 별도로 추적한다. [운영 문서](../../operations.md)를 참조한다.
+구현된 C01은 정상 경로·명시 bootstrap·배타 journal 검사를 제공한다. C02는 foreground devguardd serve, 제한된 인증 UDS 통신, OS UID/PID 관측, 엄격한 client 호환성과 private 자격 FD 전달을 추가한다. C03은 `devguard-macos`의 boot 시계, native PID/start 정체성, 호스트 용량과 serve에서 journal을 활성화하는 2초 압력 sampler를 추가한다. C04는 협조적 QoS/nice 적용과 readback, 이탈·추적 상실이 고정되는 관측 process group scope, 정체성을 확인한 종료를 추가한다. C05는 wire 등록과 fenced `devguard-launch` helper를 추가한다. Grant마다 claim된 helper는 하나이며, READY와 exec 전에 scope binding과 authorization을 거치고, transcript와 exec 실패 보고를 분리하며, payload descriptor를 정리한다. C06은 서비스 reconciler를 추가한다. 관측된 scope 종료, helper가 없다는 owner 보고, 이전 boot에서만 회수하며, reap 전 owner 관측, scope 종료, instance 폐기, 재시작 전후의 Suspect 회계를 제공한다. Native 증거가 있으면 서비스는 등록·launch·대조를 연다. C07은 `devguard` 명령행 owner를 추가한다. 명시적이고 제한된 대기, terminal·signal 전달, reap 전 관측, receipt, doctor 진단을 갖춘 관리 실행을 제공하며, 관리되지 않는 대체 실행은 없다. C08은 Cargo adapter를 추가한다. Compiler job을 예약에 맞춰 조정하거나 거절하며, pipeline과 중첩 Cargo 실행이 jobserver 하나를 공유하게 한다. C09는 패키지로 만든 release를 현재 사용자 LaunchAgent로 설치한다. hash와 컴파일된 호환성을 담은 manifest, 변경 불가능한 release·복구 사본을 두며, launchd가 그 release의 바이너리를 실행한다고 검증한 뒤에만 선택한다. PR과 병합 후 main 전달 증거는 별도로 추적한다. [운영 문서](../../operations.md)를 참조한다.
 
 ## PR 순서와 활성화 경계
 
@@ -17,7 +17,7 @@
 | DG1-P5 | DG1-C09, DG1-C10, DG1-C11 | DG1-P4 | 설치·후보·독립 복구를 묶어 자기 적용 활성화 |
 | DG1-P6 | DG1-C12 | DG1-P5 | 기능 기준 artifact와 SLO 안정 artifact를 구분해 승격 |
 
-공통 현재 명령 python3 scripts/validate.py --offline은 Rust 1.95.0 계약 회귀를 확인하며 fake backend로 native 동작을 입증하지 않는다. C01 authority, C02 인증·transport, C03 native probe, C04 native scope, C05 native launch, C06 native 대조, C07 CLI, C08 Cargo suite는 현재 제공한다. 아래에서 예정이라고 명시한 나머지 명령은 미제공이며 각 PR에서 fixture·실행 case 수·log·정리를 함께 구현하고 제공 상태를 갱신한다. 이름만 있는 테스트나 0개 실행을 통과로 처리하지 않는다. 공통 toolchain·증거·SLO 규칙은 상위 검증 문서에 있다.
+공통 현재 명령 python3 scripts/validate.py --offline은 Rust 1.95.0 계약 회귀를 확인하며 fake backend로 native 동작을 입증하지 않는다. C01 authority, C02 인증·transport, C03 native probe, C04 native scope, C05 native launch, C06 native 대조, C07 CLI, C08 Cargo, C09 설치 suite는 현재 제공한다. 아래에서 예정이라고 명시한 나머지 명령은 미제공이며 각 PR에서 fixture·실행 case 수·log·정리를 함께 구현하고 제공 상태를 갱신한다. 이름만 있는 테스트나 0개 실행을 통과로 처리하지 않는다. 공통 toolchain·증거·SLO 규칙은 상위 검증 문서에 있다.
 
 P1은 runtime을 닫아 두고 P2는 실제 probe, P3는 launch·안전 정리, P4는 개발 진입점, P5는 설치·부모 예산·repair, P6는 측정·승격을 제공한다. C08까지 foreground daemon과 최소 단일 Cargo job·test thread bootstrap을 사용한다. P4 bundle은 삭제할 build 경로 밖에 보존한다. C10에서 부모 예산을 포함한 artifact를 먼저 기능 시험·동결한 직후 제한된 실제 자기 적용을 시작하며 SLO qualification은 C12에서 확립한다.
 
@@ -133,7 +133,7 @@ P1은 runtime을 닫아 두고 P2는 실제 probe, P3는 launch·안전 정리, 
 - 대상/산출물: artifact manifest/hash·daemon/helper 호환 정보, 예정 installer/service 시작·상태 확인, immutable 복구 사본.
 - 불변 조건: 후보가 기준 artifact 덮어쓰기 금지; bootstrap 기준은 기능 시험만 통과한 상태로 표시; 정상 authority는 하나.
 - 시험: 정상 최초 설치/재시작; hash mismatch·부분 설치·지원되지 않는 host; 동시 시작/설치 경쟁.
-- 검증 명령: 현재 공통 회귀 + 예정 `python3 scripts/qualify.py dg1-bootstrap`.
+- 검증 명령: 현재 공통 회귀 + **제공** `python3 scripts/qualify.py dg1-bootstrap --offline` (macOS 전용이며 다른 플랫폼은 `not_run`으로 기록한다). launchd gui domain이 없는 session은 launchd 경우를 `not_run`으로 기록한다.
 - 완료 증거: 실제 실행 binary hash와 manifest 일치, 서비스 PID/endpoint, 기능 기준 artifact의 한정된 검증 범위.
 - rollback: 서비스 시작 전 검증 실패 시 이전 보존 사본 선택; 활성 journal을 과거 snapshot으로 교체하지 않는다.
 - 인계: DG1-C10에 보호된 설치·복구 artifact를 제공한다. C09 artifact가 새 C10 상위 lease 기능을 이미 지원한다고 가정하지 않는다. P5 전체 전 일상 자기 적용으로 홍보하지 않는다.

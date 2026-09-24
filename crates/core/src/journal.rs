@@ -7,6 +7,10 @@ use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 use std::time::Duration;
 
+/// The only journal schema this build reads and writes. A release manifest
+/// states it, so an incompatible downgrade can be refused before a switch.
+pub const JOURNAL_SCHEMA: &str = "1";
+
 pub(crate) struct Journal {
     connection: Connection,
 }
@@ -41,9 +45,9 @@ impl Journal {
                 )
             })?;
         let connection = Self::connection(path)?;
-        connection.execute_batch("BEGIN IMMEDIATE;
+        connection.execute_batch(&format!("BEGIN IMMEDIATE;
             CREATE TABLE metadata (name TEXT PRIMARY KEY, value TEXT NOT NULL);
-            INSERT INTO metadata VALUES ('schema', '1');
+            INSERT INTO metadata VALUES ('schema', '{JOURNAL_SCHEMA}');
             CREATE TABLE instances (
                 consumer TEXT NOT NULL, generation TEXT NOT NULL, instance TEXT NOT NULL,
                 identity TEXT NOT NULL, state TEXT NOT NULL CHECK (state IN ('active','suspect','retired')),
@@ -58,7 +62,7 @@ impl Journal {
             CREATE TABLE retired_generations (
                 consumer TEXT NOT NULL, generation TEXT NOT NULL,
                 PRIMARY KEY (consumer, generation));
-            COMMIT;").map_err(db_error)?;
+            COMMIT;")).map_err(db_error)?;
         Ok(())
     }
 
@@ -95,7 +99,7 @@ impl Journal {
                 r.get(0)
             })
             .map_err(db_error)?;
-        if schema != "1" {
+        if schema != JOURNAL_SCHEMA {
             return Err(Error::new(
                 ErrorCode::JournalInvalid,
                 "unsupported journal schema",

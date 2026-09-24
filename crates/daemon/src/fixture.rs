@@ -242,6 +242,43 @@ impl TestAuthority {
     }
 }
 
+/// Serve the fixture authority under `base` in this process until SIGTERM or
+/// SIGINT, as `devguardd serve` serves the canonical one. Tests run it as the
+/// program of a service, under launchd or a fake manager.
+pub fn serve_until_terminated(base: &Path) -> Result<()> {
+    static STOP: AtomicBool = AtomicBool::new(false);
+    extern "C" fn stop(_: libc::c_int) {
+        STOP.store(true, Ordering::Relaxed);
+    }
+    let server = Server::open_with(
+        &AuthorityPaths::fixture(base),
+        Options {
+            probe: Some(Box::new(HealthyProbe)),
+            reconcile_paused: None,
+        },
+    )?;
+    // SAFETY: the handler only stores to a lock-free atomic.
+    unsafe {
+        libc::signal(libc::SIGTERM, stop as *const () as libc::sighandler_t);
+        libc::signal(libc::SIGINT, stop as *const () as libc::sighandler_t);
+    }
+    let flag = Arc::new(AtomicBool::new(false));
+    let watched = flag.clone();
+    let watcher = std::thread::spawn(move || {
+        while !watched.load(Ordering::Relaxed) {
+            if STOP.load(Ordering::Relaxed) {
+                watched.store(true, Ordering::Relaxed);
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    });
+    let result = server.run(flag.clone());
+    flag.store(true, Ordering::Relaxed);
+    let _ = watcher.join();
+    result
+}
+
 impl Drop for TestAuthority {
     fn drop(&mut self) {
         let _ = self.shutdown();

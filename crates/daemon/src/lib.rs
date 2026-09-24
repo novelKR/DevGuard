@@ -2,5 +2,6 @@
 pub mod config;
 #[cfg(any(test, feature = "test-fixtures"))]
 pub mod fixture;
+pub mod install;
 pub mod paths;
 pub mod server;

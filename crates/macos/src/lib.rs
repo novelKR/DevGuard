@@ -18,7 +18,7 @@ mod table;
 pub use backend::NativeBackend;
 pub use clock::BootClock;
 pub use host::{HostCapacity, HostProbe, HostReading, NativeProbe, VolumeReading};
-pub use process::process_identity;
+pub use process::{executable_path, process_identity};
 pub use root::{become_scope_root, exec_with_workload_qos};
 pub use sampler::{SampleReceipt, Sampler, SamplerOutcome, SAMPLE_INTERVAL_MS, WINDOW_MS};
 pub use scope::{

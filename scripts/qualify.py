@@ -82,6 +82,12 @@ SUITES = {
           "nested-cargo", "inherited-jobserver", "inherited-pipe-jobserver", "stale-jobserver",
           "concurrent-consumers", "pipeline-cancelled"]),
     ],
+    "dg1-bootstrap": [
+        ("install-logic", ["-p", "devguard-daemon", "--lib", "install::tests"]),
+        ("native-install", ["-p", "devguard-daemon", "--test", "install"],
+         ["install-verified", "install-reuse", "install-refusals", "install-preconditions",
+          "install-unverified", "install-concurrent", "launchd-lifecycle"]),
+    ],
     "dg1-reconcile": [
         ("reconcile-contract", ["-p", "devguard-core", "--test", "authority_contract", "reconcile_"]),
         ("launcher-evidence", ["-p", "devguard-macos", "--lib", "backend::tests"]),
@@ -110,12 +116,13 @@ SCOPES = {
     "dg1-launch": "native macOS launch helper through an isolated authority: one claimed helper per grant, and scope binding and authorization before READY and exec",
     "dg1-cli": "the devguard command-line owner against isolated authorities with the real launch helper: preserved argv, directory, environment and exit status, signal forwarding and terminal job control, observation before reap, refusals, bounded waits, projects, the instance pool and doctor diagnostics",
     "dg1-cargo": "the Cargo adapters through the devguard owner against isolated authorities with real Cargo builds: jobs fitted to the reservation, clamping and refusals, one jobserver shared by a pipeline and by nested Cargo, inherited and stale jobservers, concurrent consumers and cancellation; Cargo jobs are compilation parallelism, not a cap on test threads or measured memory",
+    "dg1-bootstrap": "installation of a release as the current user's LaunchAgent against isolated authorities: package validation, immutable release and recovery copies, verification that launchd runs the release's own binary before it is selected, refusals, concurrent installers, and under launchd itself a crash restart, a SIGTERM stop and a fail-closed start that is not restarted; functional artifacts only, not SLO qualification",
     "dg1-reconcile": "native macOS reconciliation through isolated authorities: prepared cancellation and expiry, owner reports that no helper exists, releases only on scope termination, sticky escape and tracking loss, scope termination signals, dead owners, and a daemon crash with restart",
 }
 # Suites that start real workloads through the launch helper (in fixtures).
 LAUNCHING = {"dg1-launch", "dg1-reconcile", "dg1-cli", "dg1-cargo"}
 # Native suites observe the actual host; elsewhere they are not run, never passed.
-NATIVE = {"dg1-probes", "dg1-scopes", "dg1-launch", "dg1-reconcile", "dg1-cli", "dg1-cargo"}
+NATIVE = {"dg1-probes", "dg1-scopes", "dg1-launch", "dg1-reconcile", "dg1-cli", "dg1-cargo", "dg1-bootstrap"}
 
 
 def host_facts():

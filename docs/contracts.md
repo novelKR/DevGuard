@@ -1,6 +1,6 @@
 # Implemented authority contract
 
-This document describes the implemented DG-0 authority, C01/C02 service, storage and transport behavior, C03 native macOS host evidence, C04 cooperative policy and scope evidence, the C05 fenced launch helper, C06 reconciliation, the C07 command-line owner and the C08 Cargo adapters. PR and post-merge main delivery evidence is tracked separately from implementation. [Operations](operations.md) lists actual command availability. With native host evidence the service opens registration, launch and reconciliation; CodeSpace integration remains unimplemented. [Korean translation](ko/contracts.md).
+This document describes the implemented DG-0 authority, C01/C02 service, storage and transport behavior, C03 native macOS host evidence, C04 cooperative policy and scope evidence, the C05 fenced launch helper, C06 reconciliation, the C07 command-line owner, the C08 Cargo adapters and C09 installation as the current user's LaunchAgent. PR and post-merge main delivery evidence is tracked separately from implementation. [Operations](operations.md) lists actual command availability. With native host evidence the service opens registration, launch and reconciliation; CodeSpace integration remains unimplemented. [Korean translation](ko/contracts.md).
 
 ## Authority and transport boundaries
 
@@ -145,6 +145,48 @@ DG1-C08 adds the Cargo adapters (`devguard-cargo`), which fit Cargo's compiler p
 - **Fallback.** Both modes set `CARGO_BUILD_JOBS` to the reservation's jobs N, replacing any value the caller set. Cargo uses it only when it opens no jobserver and neither its command line nor `--config` gives jobs, so it bounds a Cargo that could not open the pool, without the warning an explicit `-j` causes under a valid jobserver. The receipt lists it among the variables set.
 - **Inherited jobservers.** A jobserver the CLI inherited through `CARGO_MAKEFLAGS`, `MAKEFLAGS` or `MFLAGS` is checked the way Cargo will read it: the first variable present must name an open, inheritable pipe pair or a FIFO the user owns. A valid one is preserved and bounds parallelism in both modes, as the approved design requires, and the receipt states that its size cannot be observed; no second pool is created. Under it, direct mode inserts no jobs value, because Cargo would only warn that it ignores one, but an explicit value is still clamped. A descriptor-pair jobserver reaches only programs that keep inherited descriptors open. In pipeline mode, a Cargo started by a program that closes them, such as Python's `subprocess` by default, falls back to `CARGO_BUILD_JOBS`, and the receipt says so. A stale one, such as closed descriptors, is removed from the environment together with the job counts that came with it, so Cargo does not silently fall back to its own pool.
 - **Nested Cargo.** Cargo passes its jobserver to build scripts, so a nested Cargo shares the outer pool rather than creating another.
+
+## Installation and the current-user service
+
+DG1-C09 installs a packaged release as the current user's LaunchAgent. The service still runs the same foreground `devguardd serve`; it is not a privileged daemon, and a worktree `target` binary is never the installed service.
+
+- **Package.** `scripts/package.py` requires a clean tree and Rust 1.95.0. It builds `devguardd`, `devguard` and `devguard-launch` in one release build, labelled bootstrap until C10, and writes `devguard-release-manifest/v1` with:
+  - a release id: `<version>-<commit7>-<artifact digest>`;
+  - the source commit, tree and qualification tree digest;
+  - the build command and toolchain;
+  - each binary's SHA-256 and size;
+  - the build's compiled compatibility, which `devguardd version --json` prints: package version, wire version, protocol, capabilities, journal schema and configuration schema.
+
+  A package is a functional artifact (`scope: functional`, `slo_qualified: false`); only C12 qualifies a release.
+- **Validation.**
+  - A package or installed release holds exactly `MANIFEST.json` and `bin/` with the three binaries. They must be regular executable files, not symlinks, whose sizes and hashes match the manifest.
+  - The manifest's compatibility must equal the installer's own build.
+  - The installer must run from the package: its own executable must hash to the manifest's `devguardd`. Binaries from different builds are therefore never mixed.
+- **Install.** `devguardd install --package DIR` refuses while:
+  - an authority serves the canonical endpoint or holds the lock;
+  - the agent is loaded or its plist exists;
+  - the authority state is absent. It never creates, repairs or rewrites the journal.
+
+  It copies the release into a private sibling, syncs it and makes it read-only: directories and binaries 0500, the manifest 0400. Only then does it rename the copy to `releases/<id>`, so a partial copy never has the final name. An existing release is reused only when its manifest is byte-identical; a different release never overwrites it. Finally it writes `~/Library/LaunchAgents/io.github.novelkr.devguard.plist` (0644) and bootstraps it into the user's `gui/<uid>` domain.
+- **Agent.**
+  - The program is the release's `devguardd serve`, and `RunAtLoad` starts it at load and login.
+  - `KeepAlive {Crashed: true}` restarts it only after a crash, after a 10-second throttle.
+  - A clean exit leaves it stopped. That includes launchd's SIGTERM and a fail-closed exit, such as a missing or corrupt journal or a second authority refused by the lock.
+  - Output goes to `~/Library/Logs/DevGuard/devguardd.log`; rotation is manual.
+- **Verification before selection.** Within 15 seconds the installer must observe:
+  - the service launchd reports, with the same PID as the endpoint's handshake;
+  - that PID's executable image (`proc_pidpath`) being the release's `devguardd`, with the manifest's hash.
+
+  Only then does it record `releases/selection.json` (0600: current and last known good, with a history) and keep an immutable recovery copy under `recovery/<id>`. If verification fails, the job is booted out and the plist removed; nothing is selected.
+- **Status.** `devguardd status` changes nothing. It reports:
+  - the selection and the launchd state;
+  - whether the plist is exactly the one this build renders for the current release;
+  - the running PID, executable and hash against the manifest;
+  - the releases and recovery copies.
+
+  It exits 0 only when the service runs the verified current release.
+- **Restart.** A restarted service reopens and reconciles the existing journal, as any start does. A missing or corrupt journal fails closed and stays down.
+- **Limits.** Replacing the installed release is an upgrade (C11); C09 refuses it. There is no uninstall command. `launchctl bootout gui/<uid>/io.github.novelkr.devguard` and removing the plist stop the service and keep every release, recovery copy, the selection and the journal.
 
 ## Durable admission and launch
 
