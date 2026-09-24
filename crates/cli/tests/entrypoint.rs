@@ -18,6 +18,7 @@ fn help_and_version_describe_the_managed_contract() {
     for needle in [
         "devguard exec",
         "devguard doctor",
+        "devguard test-candidate",
         "never run unmanaged",
         "no path or authority override",
     ] {
@@ -41,6 +42,24 @@ fn malformed_invocations_start_nothing_and_exit_125() {
         &["exec", "--wait", "forever", "--", "true"],
         &["doctor", "--require", "kernel"],
         &["serve"],
+        &["exec", "--lease", "dev-cli/g/lease-1", "--", "true"],
+        &[
+            "exec",
+            "--lease",
+            "dev-cli/g/lease-1",
+            "--lease-token-fd",
+            "200",
+            "--",
+            "true",
+        ],
+        &["test-candidate"],
+        &[
+            "test-candidate",
+            "--candidate",
+            "/nonexistent",
+            "--report",
+            "/nonexistent/r",
+        ],
     ] {
         let output = devguard(args);
         assert_eq!(output.status.code(), Some(125), "{args:?}");

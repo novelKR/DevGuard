@@ -7,8 +7,8 @@ pub mod peer;
 pub mod protocol;
 
 use devguard_contract::{
-    AdmissionRequest, AttemptKey, AttemptRecord, Compatibility, Error, ErrorCode, InstanceIdentity,
-    Result, Secret,
+    AdmissionRequest, AttemptKey, AttemptRecord, Budget, Compatibility, Error, ErrorCode,
+    InstanceIdentity, LeaseView, Result, Secret,
 };
 use protocol::*;
 use std::os::unix::net::UnixStream;
@@ -130,6 +130,49 @@ impl Client {
             permit,
         })? {
             Response::LaunchAuthorized(authorization) => Ok(authorization),
+            _ => Err(unavailable()),
+        }
+    }
+    /// Reserve a parent lease for this registered owner. Only the first
+    /// response carries the token; a replay returns the lease without it.
+    pub fn admit_lease(
+        &mut self,
+        key: AttemptKey,
+        budget: Budget,
+        ttl_ms: Option<u64>,
+    ) -> Result<LeaseGranted> {
+        match self.call(Request::AdmitLease {
+            key,
+            budget,
+            ttl_ms,
+        })? {
+            Response::LeaseGranted(granted) => Ok(granted),
+            _ => Err(unavailable()),
+        }
+    }
+    /// Admit a child under a lease, presenting its token.
+    pub fn admit_child(
+        &mut self,
+        lease: AttemptKey,
+        token: Secret,
+        request: AdmissionRequest,
+    ) -> Result<AttemptRecord> {
+        self.attempt(Request::AdmitChild {
+            lease,
+            token,
+            request,
+        })
+    }
+    pub fn end_lease(&mut self, key: AttemptKey) -> Result<LeaseView> {
+        match self.call(Request::EndLease { key })? {
+            Response::Lease(view) => Ok(view),
+            _ => Err(unavailable()),
+        }
+    }
+    /// A lease holder's view, in a session that makes no other request.
+    pub fn lease_status(&mut self, key: AttemptKey, token: Secret) -> Result<LeaseView> {
+        match self.call(Request::LeaseStatus { key, token })? {
+            Response::Lease(view) => Ok(view),
             _ => Err(unavailable()),
         }
     }

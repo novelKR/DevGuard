@@ -11,6 +11,20 @@ use std::time::Duration;
 /// states it, so an incompatible downgrade can be refused before a switch.
 pub const JOURNAL_SCHEMA: &str = "1";
 
+/// Parent leases and their children. They are additive to schema 1: a reader
+/// without them sees every child as an ordinary charged attempt, which only
+/// over-counts, and does not hold a lease's unused remainder.
+const LEASE_TABLES: &str = "
+    CREATE TABLE IF NOT EXISTS leases (
+        consumer TEXT NOT NULL, generation TEXT NOT NULL, lease TEXT NOT NULL,
+        charged INTEGER NOT NULL CHECK (charged IN (0,1)), record TEXT NOT NULL,
+        token_hash TEXT NOT NULL,
+        PRIMARY KEY (consumer, generation, lease));
+    CREATE TABLE IF NOT EXISTS lease_children (
+        consumer TEXT NOT NULL, generation TEXT NOT NULL, attempt TEXT NOT NULL,
+        lease TEXT NOT NULL,
+        PRIMARY KEY (consumer, generation, attempt));";
+
 pub(crate) struct Journal {
     connection: Connection,
 }
@@ -62,6 +76,7 @@ impl Journal {
             CREATE TABLE retired_generations (
                 consumer TEXT NOT NULL, generation TEXT NOT NULL,
                 PRIMARY KEY (consumer, generation));
+            {LEASE_TABLES}
             COMMIT;")).map_err(db_error)?;
         Ok(())
     }
@@ -280,14 +295,207 @@ pub(crate) fn expire_prepared(tx: &Transaction<'_>, now: &ObservationTime) -> Re
     Ok(())
 }
 
+/// Budget charged against the host: every lease's whole budget, and every
+/// charged attempt that is not a lease child, whose budget its lease holds.
 pub(crate) fn committed(tx: &Transaction<'_>) -> Result<Budget> {
-    active(tx)?.iter().try_fold(Budget::ZERO, |sum, record| {
-        sum.checked_add(
-            record
-                .reservation
-                .as_ref()
-                .expect("validated reservation")
-                .quantities,
-        )
+    let children = child_keys(tx)?;
+    let attempts = active(tx)?
+        .iter()
+        .filter(|record| !children.contains(&record.key))
+        .try_fold(Budget::ZERO, |sum, record| {
+            sum.checked_add(
+                record
+                    .reservation
+                    .as_ref()
+                    .expect("validated reservation")
+                    .quantities,
+            )
+        })?;
+    active_leases(tx)?
+        .iter()
+        .try_fold(attempts, |sum, lease| sum.checked_add(lease.budget))
+}
+
+/// Create the lease tables in a journal written before them.
+pub(crate) fn ensure_lease_tables(tx: &Transaction<'_>) -> Result<()> {
+    tx.execute_batch(LEASE_TABLES).map_err(db_error)
+}
+
+fn lease_invalid() -> Error {
+    Error::new(
+        ErrorCode::JournalInvalid,
+        "journal lease record is inconsistent",
+    )
+}
+
+fn validate_lease(record: &LeaseRecord) -> Result<()> {
+    record.key.validate().map_err(|_| lease_invalid())?;
+    record
+        .budget
+        .validate_workload()
+        .map_err(|_| lease_invalid())?;
+    if (record.phase == LeasePhase::Active) != record.end_reason.is_none() {
+        return Err(lease_invalid());
+    }
+    Ok(())
+}
+
+/// A lease and the digest of its token.
+pub(crate) fn load_lease(
+    tx: &Transaction<'_>,
+    key: &AttemptKey,
+) -> Result<Option<(LeaseRecord, String)>> {
+    let row: Option<(String, bool, String)> = tx.query_row(
+        "SELECT record, charged, token_hash FROM leases WHERE consumer=?1 AND generation=?2 AND lease=?3",
+        params![key.consumer_id, key.consumer_generation, key.attempt_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+        .optional().map_err(db_error)?;
+    row.map(|(raw, charged, token_hash)| {
+        let record: LeaseRecord = decode(&raw)?;
+        if record.key != *key || record.charged() != charged {
+            return Err(lease_invalid());
+        }
+        validate_lease(&record)?;
+        Ok((record, token_hash))
     })
+    .transpose()
+}
+
+/// Insert a new lease with its token digest, or update an existing lease's record.
+pub(crate) fn save_lease(
+    tx: &Transaction<'_>,
+    record: &LeaseRecord,
+    token_hash: &str,
+) -> Result<()> {
+    validate_lease(record)?;
+    tx.execute("INSERT INTO leases(consumer,generation,lease,charged,record,token_hash) VALUES (?1,?2,?3,?4,?5,?6)
+        ON CONFLICT(consumer,generation,lease) DO UPDATE SET charged=excluded.charged,record=excluded.record",
+        params![record.key.consumer_id, record.key.consumer_generation, record.key.attempt_id, record.charged(), encode(record)?, token_hash])
+        .map_err(db_error)?;
+    Ok(())
+}
+
+/// Leases that still hold their budget.
+pub(crate) fn active_leases(tx: &Transaction<'_>) -> Result<Vec<LeaseRecord>> {
+    let mut statement = tx
+        .prepare("SELECT consumer,generation,lease,record FROM leases WHERE charged=1")
+        .map_err(db_error)?;
+    let mut rows = statement.query([]).map_err(db_error)?;
+    let mut records = Vec::new();
+    while let Some(row) = rows.next().map_err(db_error)? {
+        let record: LeaseRecord = decode(&row.get::<_, String>(3).map_err(db_error)?)?;
+        let key = AttemptKey {
+            consumer_id: row.get(0).map_err(db_error)?,
+            consumer_generation: row.get(1).map_err(db_error)?,
+            attempt_id: row.get(2).map_err(db_error)?,
+        };
+        if record.key != key || !record.charged() {
+            return Err(lease_invalid());
+        }
+        validate_lease(&record)?;
+        records.push(record);
+    }
+    Ok(records)
+}
+
+/// Check every lease record, as `validate_index` checks attempts.
+pub(crate) fn validate_leases(tx: &Transaction<'_>) -> Result<()> {
+    let mut statement = tx
+        .prepare("SELECT consumer,generation,lease,record,charged FROM leases")
+        .map_err(db_error)?;
+    let mut rows = statement.query([]).map_err(db_error)?;
+    while let Some(row) = rows.next().map_err(db_error)? {
+        let record: LeaseRecord = decode(&row.get::<_, String>(3).map_err(db_error)?)?;
+        let key = AttemptKey {
+            consumer_id: row.get(0).map_err(db_error)?,
+            consumer_generation: row.get(1).map_err(db_error)?,
+            attempt_id: row.get(2).map_err(db_error)?,
+        };
+        if record.key != key || record.charged() != row.get::<_, bool>(4).map_err(db_error)? {
+            return Err(lease_invalid());
+        }
+        validate_lease(&record)?;
+    }
+    Ok(())
+}
+
+/// Record `child` as admitted under `lease`; both share one consumer generation.
+pub(crate) fn link_child(
+    tx: &Transaction<'_>,
+    child: &AttemptKey,
+    lease: &AttemptKey,
+) -> Result<()> {
+    tx.execute(
+        "INSERT INTO lease_children(consumer,generation,attempt,lease) VALUES (?1,?2,?3,?4)",
+        params![
+            child.consumer_id,
+            child.consumer_generation,
+            child.attempt_id,
+            lease.attempt_id
+        ],
+    )
+    .map_err(db_error)?;
+    Ok(())
+}
+
+/// The lease a child was admitted under, if it is a child.
+pub(crate) fn child_lease(tx: &Transaction<'_>, child: &AttemptKey) -> Result<Option<AttemptKey>> {
+    let lease: Option<String> = tx
+        .query_row(
+            "SELECT lease FROM lease_children WHERE consumer=?1 AND generation=?2 AND attempt=?3",
+            params![
+                child.consumer_id,
+                child.consumer_generation,
+                child.attempt_id
+            ],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(db_error)?;
+    Ok(lease.map(|attempt_id| AttemptKey {
+        consumer_id: child.consumer_id.clone(),
+        consumer_generation: child.consumer_generation.clone(),
+        attempt_id,
+    }))
+}
+
+/// Every child admitted under `lease`, charged or not.
+pub(crate) fn lease_children(tx: &Transaction<'_>, lease: &AttemptKey) -> Result<Vec<AttemptKey>> {
+    let mut statement = tx
+        .prepare("SELECT attempt FROM lease_children WHERE consumer=?1 AND generation=?2 AND lease=?3 ORDER BY attempt")
+        .map_err(db_error)?;
+    let rows = statement
+        .query_map(
+            params![
+                lease.consumer_id,
+                lease.consumer_generation,
+                lease.attempt_id
+            ],
+            |r| r.get::<_, String>(0),
+        )
+        .map_err(db_error)?;
+    rows.map(|attempt_id| {
+        Ok(AttemptKey {
+            consumer_id: lease.consumer_id.clone(),
+            consumer_generation: lease.consumer_generation.clone(),
+            attempt_id: attempt_id.map_err(db_error)?,
+        })
+    })
+    .collect()
+}
+
+fn child_keys(tx: &Transaction<'_>) -> Result<std::collections::BTreeSet<AttemptKey>> {
+    let mut statement = tx
+        .prepare("SELECT consumer,generation,attempt FROM lease_children")
+        .map_err(db_error)?;
+    let rows = statement
+        .query_map([], |r| {
+            Ok(AttemptKey {
+                consumer_id: r.get(0)?,
+                consumer_generation: r.get(1)?,
+                attempt_id: r.get(2)?,
+            })
+        })
+        .map_err(db_error)?;
+    rows.collect::<std::result::Result<_, _>>()
+        .map_err(db_error)
 }

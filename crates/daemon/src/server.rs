@@ -1,8 +1,9 @@
 use crate::{config::HostConfig, paths::AuthorityPaths};
 use devguard_client::{connect::connect_timeout, framing, peer, protocol::*};
 use devguard_contract::{
-    validate_id, AppliedResources, AttemptKey, AttemptPhase, AttemptRecord, Capability, Error,
-    ErrorCode, InstanceIdentity, ProcessIdentity, Result, ScopeIdentity, Secret, PROTOCOL_VERSION,
+    validate_id, AppliedResources, AttemptKey, AttemptPhase, AttemptRecord, Budget, Capability,
+    Error, ErrorCode, InstanceIdentity, ProcessIdentity, Result, ScopeIdentity, Secret,
+    PROTOCOL_VERSION,
 };
 use devguard_core::{
     Authority, AuthorityStorage, Backend as _, Clock, ConsumerRole, PressureState, Principal,
@@ -44,6 +45,16 @@ pub(crate) struct Options {
     /// Lets an isolated fixture pause reconciler passes, so a test can tell an
     /// owner's own observation apart from the background pass.
     pub reconcile_paused: Option<Arc<AtomicBool>>,
+    /// A candidate authority bounded by a parent lease.
+    pub candidate: Option<CandidateMode>,
+}
+
+/// A candidate's leased capacity and its status reason. A candidate states
+/// no fenced launch and no parent leases: its workloads run as children of
+/// its parent lease, through the parent's launcher.
+pub(crate) struct CandidateMode {
+    pub capacity: Budget,
+    pub reason: String,
 }
 
 /// Exclusive storage, activated with actual host evidence when it is available.
@@ -68,19 +79,21 @@ pub struct Server {
     status: ServiceStatus,
     evidence: Evidence,
     launcher: Option<Launcher>,
+    /// A candidate states no fenced launch or parent lease and refuses both.
+    candidate: bool,
 }
 
 /// Service receipts are JSON lines on stderr; they never include credentials.
 /// A failing stderr is ignored rather than allowed to panic a service thread.
 #[cfg(not(test))]
-fn receipt(value: serde_json::Value) {
+pub(crate) fn receipt(value: serde_json::Value) {
     use std::io::Write;
     let _ = writeln!(std::io::stderr().lock(), "{value}");
 }
 
 /// Unit tests keep receipts in the harness's captured output.
 #[cfg(test)]
-fn receipt(value: serde_json::Value) {
+pub(crate) fn receipt(value: serde_json::Value) {
     eprintln!("{value}");
 }
 
@@ -101,7 +114,8 @@ fn activate(
     config: &HostConfig,
     paths: &AuthorityPaths,
     substitute: Option<Box<dyn HostProbe>>,
-) -> Result<(Evidence, &'static str)> {
+    candidate: Option<&CandidateMode>,
+) -> Result<(Evidence, String)> {
     let host = match NativeHost::open() {
         Ok(host) => host,
         Err(error) => {
@@ -111,7 +125,7 @@ fn activate(
             } else {
                 FAILED_REASON
             };
-            return Ok((Evidence::Closed { _storage: storage }, reason));
+            return Ok((Evidence::Closed { _storage: storage }, reason.into()));
         }
     };
     let mut volumes = vec![paths.state()];
@@ -122,19 +136,27 @@ fn activate(
             Ok(probe) => Box::new(probe),
             Err(error) => {
                 receipt(json!({"event": "native_host_unavailable", "error": error}));
-                return Ok((Evidence::Closed { _storage: storage }, FAILED_REASON));
+                return Ok((Evidence::Closed { _storage: storage }, FAILED_REASON.into()));
             }
         },
     };
-    let policy = config.policy(host.capacity(), paths.uid())?;
+    // A candidate's policy capacity is its parent lease, never the host's.
+    let policy = match candidate {
+        Some(candidate) => config.candidate_policy(candidate.capacity, paths.uid())?,
+        None => config.policy(host.capacity(), paths.uid())?,
+    };
     let work_capacity = policy.work_capacity()?;
     let authority = Authority::from_storage(storage, policy, host.backend(), host.clock())?;
+    let capacity = match candidate {
+        Some(candidate) => json!({"source": "parent_lease", "budget": candidate.capacity}),
+        None => json!({"source": "host", "observed": host.capacity()}),
+    };
     receipt(json!({
         "event": "native_host",
         "boot_id": host.clock().boot_id(),
         "clock": "CLOCK_MONOTONIC_RAW milliseconds since boot",
         "started_at": host.clock().now(),
-        "capacity": host.capacity(),
+        "capacity": capacity,
         "work_capacity": work_capacity,
         "volumes": volumes,
         "sample_interval_ms": SAMPLE_INTERVAL_MS,
@@ -146,7 +168,10 @@ fn activate(
             backend: host.backend(),
             probe: Some(probe),
         },
-        LAUNCH_REASON,
+        candidate.map_or_else(
+            || LAUNCH_REASON.to_string(),
+            |candidate| candidate.reason.clone(),
+        ),
     ))
 }
 
@@ -268,6 +293,11 @@ fn poisoned() -> Error {
     unavailable("authority state is unavailable")
 }
 
+/// Capabilities stated only to clients that require them.
+pub(crate) fn echoed_capabilities() -> BTreeSet<Capability> {
+    BTreeSet::from([Capability::ParentLease])
+}
+
 /// The capabilities of a service with registration and fenced launch open.
 pub(crate) fn launch_capabilities() -> BTreeSet<Capability> {
     BTreeSet::from([
@@ -277,6 +307,20 @@ pub(crate) fn launch_capabilities() -> BTreeSet<Capability> {
         Capability::StaticControlReservations,
         Capability::MacosCooperative,
     ])
+}
+
+/// The capabilities of a candidate: admission without launch.
+pub(crate) fn candidate_capabilities() -> BTreeSet<Capability> {
+    let mut capabilities = launch_capabilities();
+    capabilities.remove(&Capability::FencedLaunch);
+    capabilities
+}
+
+fn candidate_refusal() -> Error {
+    Error::new(
+        ErrorCode::ResourcePolicyUnsupported,
+        "a candidate authority launches nothing and holds no parent leases; its workloads run as children of its parent lease",
+    )
 }
 
 /// A consumer's authenticated credential, kept only to register its instance.
@@ -558,7 +602,26 @@ impl Launcher {
                 receipt(json!({"event": "reconcile_failed", "key": record.key, "error": error}));
             }
         }
+        self.reconcile_leases()?;
         self.reconcile_instances()
+    }
+
+    /// Fence leases whose owner has ended or whose deadline passed, and
+    /// release them once their children have settled.
+    fn reconcile_leases(&self) -> Result<()> {
+        let leases = self.authority()?.leases()?;
+        for lease in leases {
+            let owner_running = self.running(&lease.owner.process);
+            let reconciled = self
+                .authority()?
+                .reconcile_lease(&lease.key, owner_running)?;
+            if reconciled.phase != lease.phase {
+                receipt(json!({"event": "lease_reconciled", "lease": reconciled.key,
+                               "from": lease.phase, "phase": reconciled.phase,
+                               "end_reason": reconciled.end_reason}));
+            }
+        }
+        Ok(())
     }
 
     /// Settle every registered instance whose process is gone: retired when it
@@ -712,7 +775,14 @@ impl Server {
         paths.validate_existing()?;
         let config = HostConfig::load(paths)?;
         let storage = AuthorityStorage::open(&paths.journal())?;
-        let (evidence, reason) = activate(storage, &config, paths, options.probe)?;
+        let (evidence, reason) = activate(
+            storage,
+            &config,
+            paths,
+            options.probe,
+            options.candidate.as_ref(),
+        )?;
+        let candidate = options.candidate.is_some();
         // Registration and launch open only with native evidence, together
         // with the reconciler that run() starts.
         let launcher = match &evidence {
@@ -778,8 +848,8 @@ impl Server {
         let status = ServiceStatus {
             storage_validated: true,
             registration_ready: launcher.is_some(),
-            execution_ready: launcher.is_some(),
-            reason: reason.into(),
+            execution_ready: launcher.is_some() && !candidate,
+            reason,
             configuration_fingerprint: config.fingerprint()?,
         };
         Ok(Self {
@@ -791,6 +861,7 @@ impl Server {
             status,
             evidence,
             launcher,
+            candidate,
         })
     }
 
@@ -868,10 +939,12 @@ impl Server {
                     let status = self.status.clone();
                     let launcher = self.launcher.clone();
                     let stop = stop.clone();
+                    let candidate = self.candidate;
                     if let Ok(worker) = std::thread::Builder::new()
                         .name("devguard-session".into())
                         .spawn(move || {
-                            let _ = session(stream, uid, &config, &status, launcher, &stop);
+                            let _ =
+                                session(stream, uid, &config, &status, launcher, candidate, &stop);
                         })
                     {
                         workers.push(worker);
@@ -982,6 +1055,8 @@ struct Session {
     principal: Option<Principal>,
     /// A helper session presents one grant and makes no other request.
     helper: bool,
+    /// A lease holder presents a lease token and asks only for its status.
+    lease_holder: bool,
 }
 
 struct Context<'a> {
@@ -990,6 +1065,7 @@ struct Context<'a> {
     config: &'a HostConfig,
     status: &'a ServiceStatus,
     launcher: Option<&'a Launcher>,
+    candidate: bool,
 }
 
 fn session(
@@ -998,6 +1074,7 @@ fn session(
     config: &HostConfig,
     status: &ServiceStatus,
     launcher: Option<Launcher>,
+    candidate: bool,
     stop: &AtomicBool,
 ) -> Result<()> {
     // Framing uses poll and per-call nonblocking I/O with an absolute deadline;
@@ -1012,6 +1089,7 @@ fn session(
         config,
         status,
         launcher: launcher.as_ref(),
+        candidate,
     };
     let timeout = Duration::from_millis(FRAME_DEADLINE_MS);
     let mut state = Session::default();
@@ -1072,6 +1150,25 @@ fn handle(session: &mut Session, request: Request, context: &Context<'_>) -> Res
             "a helper session makes no other request",
         ));
     }
+    if session.lease_holder && !matches!(request, Request::LeaseStatus { .. }) {
+        return Err(Error::new(
+            ErrorCode::Unauthorized,
+            "a lease-holder session only asks for its lease's status",
+        ));
+    }
+    if context.candidate
+        && matches!(
+            request,
+            Request::BeginLaunch { .. }
+                | Request::Launch { .. }
+                | Request::AdmitLease { .. }
+                | Request::AdmitChild { .. }
+                | Request::EndLease { .. }
+                | Request::LeaseStatus { .. }
+        )
+    {
+        return Err(candidate_refusal());
+    }
     match request {
         Request::Hello { compatibility } => {
             if session.greeted {
@@ -1080,10 +1177,21 @@ fn handle(session: &mut Session, request: Request, context: &Context<'_>) -> Res
                     "session already negotiated",
                 ));
             }
-            let capabilities = if context.launcher.is_some() {
-                launch_capabilities()
-            } else {
+            // A capability added after protocol 1 is stated only to a client
+            // that requires it, so an older client never receives a value it
+            // cannot decode.
+            let capabilities = if context.launcher.is_none() {
                 BTreeSet::new()
+            } else if context.candidate {
+                candidate_capabilities()
+            } else {
+                let mut capabilities = launch_capabilities();
+                capabilities.extend(
+                    echoed_capabilities()
+                        .intersection(&compatibility.required)
+                        .copied(),
+                );
+                capabilities
             };
             compatibility.check(PROTOCOL_VERSION, &capabilities)?;
             session.greeted = true;
@@ -1211,6 +1319,59 @@ fn handle(session: &mut Session, request: Request, context: &Context<'_>) -> Res
                 instance_id,
                 permit,
             )?))
+        }
+        Request::AdmitLease {
+            key,
+            budget,
+            ttl_ms,
+        } => {
+            let (launcher, principal) = registered(session, context)?;
+            let grant = launcher
+                .authority()?
+                .admit_lease(principal, &key, budget, ttl_ms)?;
+            // The token is returned to its owner only; receipts never hold it.
+            receipt(json!({"event": "lease_admitted", "lease": grant.lease,
+                           "token_issued": grant.token.is_some()}));
+            Ok(Response::LeaseGranted(LeaseGranted {
+                lease: grant.lease,
+                token: grant.token,
+            }))
+        }
+        Request::AdmitChild {
+            lease,
+            token,
+            request,
+        } => {
+            let (launcher, principal) = registered(session, context)?;
+            let record = launcher
+                .authority()?
+                .admit_child(principal, &lease, &token, request)?;
+            receipt(
+                json!({"event": "admission", "key": record.key, "lease": lease,
+                           "phase": record.phase, "denial": record.denial,
+                           "quantities": record.reservation.as_ref().map(|r| r.quantities)}),
+            );
+            Ok(Response::Attempt(record))
+        }
+        Request::EndLease { key } => {
+            let (launcher, principal) = registered(session, context)?;
+            let view = launcher.authority()?.end_lease(principal, &key)?;
+            receipt(json!({"event": "lease_ended", "lease": view.lease,
+                           "remaining": view.remaining, "children": view.children}));
+            Ok(Response::Lease(view))
+        }
+        Request::LeaseStatus { key, token } => {
+            // A lease holder is not a caller: it presents only the token.
+            if !session.greeted || session.role.is_some() {
+                return Err(unauthorized());
+            }
+            session.lease_holder = true;
+            let launcher = context
+                .launcher
+                .ok_or_else(|| unavailable("parent leases are not open"))?;
+            Ok(Response::Lease(
+                launcher.authority()?.lease_status(&key, &token)?,
+            ))
         }
     }
 }
@@ -1549,6 +1710,217 @@ mod tests {
         ))));
     }
 
+    /// Parent leases over the wire: a capability stated only to clients that
+    /// require it, children admitted against the lease, token-only holder
+    /// sessions and release by the reconciler.
+    #[cfg(target_os = "macos")]
+    mod lease {
+        use super::*;
+        use crate::fixture::{TestAuthority, CONSUMER};
+        use devguard_contract::{
+            AdmissionRequest, AttemptKey, AttemptPhase, Budget, Capability, Compatibility,
+            LeasePhase, ResourceIntent, ResourceLevels, Secret,
+        };
+
+        struct Open {
+            authority: TestAuthority,
+            _directory: tempfile::TempDir,
+        }
+
+        fn open() -> Open {
+            let directory = tempfile::Builder::new()
+                .prefix("dg-l-")
+                .tempdir_in("/private/tmp")
+                .unwrap();
+            let authority = TestAuthority::start(directory.path()).unwrap();
+            authority
+                .wait_until_admitting(Duration::from_secs(10))
+                .unwrap();
+            Open {
+                authority,
+                _directory: directory,
+            }
+        }
+
+        fn connect(open: &Open, required: &[Capability]) -> Client {
+            Client::connect(
+                &open.authority.socket(),
+                open.authority.uid(),
+                Compatibility {
+                    minimum_protocol: 1,
+                    maximum_protocol: 1,
+                    required: required.iter().copied().collect(),
+                },
+            )
+            .unwrap()
+        }
+
+        fn owner(open: &Open, instance: &str) -> Client {
+            let mut client = connect(
+                open,
+                &[Capability::DurableAdmission, Capability::ParentLease],
+            );
+            client
+                .authenticate(open.authority.consumer().unwrap())
+                .unwrap();
+            client.register(instance.into()).unwrap();
+            client
+        }
+
+        fn holder(open: &Open) -> Client {
+            connect(open, &[Capability::ParentLease])
+        }
+
+        fn key(open: &Open, id: &str) -> AttemptKey {
+            AttemptKey {
+                consumer_id: CONSUMER.into(),
+                consumer_generation: open.authority.generation(),
+                attempt_id: id.into(),
+            }
+        }
+
+        /// Fits a 3-CPU host's 500 mCPU of work capacity, even halved.
+        fn lease_budget() -> Budget {
+            Budget {
+                cpu_milli: 200,
+                memory_bytes: 128 * 1024 * 1024,
+                tasks: 8,
+            }
+        }
+
+        fn child(open: &Open, id: &str) -> AdmissionRequest {
+            AdmissionRequest {
+                key: key(open, id),
+                execution_digest: devguard_contract::digest_bytes(b"lease child"),
+                intent: ResourceIntent {
+                    profile: "interactive".into(),
+                    requested: Budget {
+                        cpu_milli: 100,
+                        memory_bytes: 64 * 1024 * 1024,
+                        tasks: 4,
+                    },
+                    minimum: ResourceLevels::MACOS,
+                },
+            }
+        }
+
+        #[test]
+        fn lease_parent_lease_is_stated_only_to_clients_that_require_it() {
+            let open = open();
+            let plain = connect(
+                &open,
+                &[Capability::DurableAdmission, Capability::FencedLaunch],
+            );
+            assert!(!plain.hello.capabilities.contains(&Capability::ParentLease));
+            assert!(plain.hello.capabilities.contains(&Capability::FencedLaunch));
+            let asking = connect(&open, &[Capability::ParentLease]);
+            assert!(asking.hello.capabilities.contains(&Capability::ParentLease));
+        }
+
+        #[test]
+        fn lease_children_draw_on_the_lease_and_the_reconciler_releases_it() {
+            let open = open();
+            let mut owner = owner(&open, "lease-owner");
+            let lease = key(&open, "lease-1");
+            let granted = owner
+                .admit_lease(lease.clone(), lease_budget(), None)
+                .unwrap();
+            assert_eq!(granted.lease.phase, LeasePhase::Active);
+            let token = granted.token.unwrap();
+            assert!(owner
+                .admit_lease(lease.clone(), lease_budget(), None)
+                .unwrap()
+                .token
+                .is_none());
+            for id in ["child-1", "child-2"] {
+                let record = owner
+                    .admit_child(lease.clone(), token.clone(), child(&open, id))
+                    .unwrap();
+                assert_eq!(record.phase, AttemptPhase::Prepared, "{id}");
+            }
+            // The two children fill the lease; a third exceeds it.
+            let third = owner
+                .admit_child(lease.clone(), token.clone(), child(&open, "child-3"))
+                .unwrap();
+            assert_eq!(third.denial, Some(ErrorCode::ResourceUnavailable));
+            assert_eq!(open.authority.committed().unwrap(), lease_budget());
+            let view = holder(&open)
+                .lease_status(lease.clone(), token.clone())
+                .unwrap();
+            assert_eq!(view.remaining, Budget::ZERO);
+            assert_eq!(view.children.len(), 3);
+            // Ended: fenced, and released by the reconciler once the
+            // children are settled.
+            let ended = owner.end_lease(lease.clone()).unwrap();
+            assert_eq!(ended.lease.phase, LeasePhase::Ending);
+            let fenced = owner
+                .admit_child(lease.clone(), token.clone(), child(&open, "child-4"))
+                .unwrap();
+            assert_eq!(fenced.denial, Some(ErrorCode::InvalidTransition));
+            for id in ["child-1", "child-2"] {
+                assert_eq!(
+                    owner.cancel(key(&open, id)).unwrap().phase,
+                    AttemptPhase::Cancelled
+                );
+            }
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            loop {
+                let view = holder(&open)
+                    .lease_status(lease.clone(), token.clone())
+                    .unwrap();
+                if view.lease.phase == LeasePhase::Released {
+                    break;
+                }
+                assert!(std::time::Instant::now() < deadline, "{view:?}");
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            assert_eq!(open.authority.committed().unwrap(), Budget::ZERO);
+        }
+
+        #[test]
+        fn lease_a_holder_presents_only_the_token_and_makes_no_other_request() {
+            let open = open();
+            let mut owner = owner(&open, "lease-owner");
+            let lease = key(&open, "lease-1");
+            let token = owner
+                .admit_lease(lease.clone(), lease_budget(), None)
+                .unwrap()
+                .token
+                .unwrap();
+            let wrong = Secret::new("d".repeat(64)).unwrap();
+            assert_eq!(
+                holder(&open)
+                    .lease_status(lease.clone(), wrong)
+                    .unwrap_err()
+                    .code,
+                ErrorCode::Unauthorized
+            );
+            // A caller cannot turn its session into a lease holder's.
+            let mut caller = connect(&open, &[Capability::ParentLease]);
+            caller
+                .authenticate(open.authority.consumer().unwrap())
+                .unwrap();
+            assert_eq!(
+                caller
+                    .lease_status(lease.clone(), token.clone())
+                    .unwrap_err()
+                    .code,
+                ErrorCode::Unauthorized
+            );
+            // A holder session asks only for its lease's status.
+            let mut holder = holder(&open);
+            holder.lease_status(lease.clone(), token.clone()).unwrap();
+            assert_eq!(
+                holder
+                    .authenticate(open.authority.consumer().unwrap())
+                    .unwrap_err()
+                    .code,
+                ErrorCode::Unauthorized
+            );
+            owner.end_lease(lease).unwrap();
+        }
+    }
+
     /// Sessions of a service with registration and fenced launch open.
     #[cfg(target_os = "macos")]
     mod launch {
@@ -1874,7 +2246,7 @@ mod tests {
                 let paths = AuthorityPaths::fixture(directory.path());
                 let config = config::initialize(&paths).unwrap();
                 let storage = AuthorityStorage::open(&paths.journal()).unwrap();
-                let (evidence, reason) = activate(storage, &config, &paths, None).unwrap();
+                let (evidence, reason) = activate(storage, &config, &paths, None, None).unwrap();
                 assert_eq!(reason, LAUNCH_REASON);
                 let Evidence::Native {
                     authority, clock, ..

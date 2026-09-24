@@ -21,6 +21,8 @@ use std::time::{Duration, Instant};
 pub const CLI_CHILD: &str = "DEVGUARD_TEST_CLI";
 /// Configuration for the workload role.
 pub const PROBE: &str = "DEVGUARD_TEST_PROBE";
+/// Configuration for the candidate authority role.
+pub const CANDIDATE: &str = "DEVGUARD_TEST_CANDIDATE";
 pub const MIB: u64 = 1024 * 1024;
 pub const EXIT_LIMIT: Duration = Duration::from_secs(30);
 
@@ -130,14 +132,50 @@ pub fn cli_with_helper(
     args: &[String],
     configure: impl FnOnce(&mut Command),
 ) -> Child {
+    let mut command = cli_command_with_helper(base, helper, args);
+    configure(&mut command);
+    command.spawn().unwrap()
+}
+
+/// The CLI role's command for `args` against `base`'s fixture authority,
+/// not yet started.
+pub fn cli_command(base: &Path, args: &[String]) -> Command {
+    cli_command_with_helper(base, &helper(), args)
+}
+
+fn cli_command_with_helper(base: &Path, helper: &Path, args: &[String]) -> Command {
     let mut command = Command::new(exe());
     command.args(probe_args("cli_child"));
     command.env(
         CLI_CHILD,
         json!({"base": base, "helper": helper, "args": args}).to_string(),
     );
-    configure(&mut command);
-    command.spawn().unwrap()
+    command
+}
+
+/// The candidate authority role: serve a candidate of the fixture authority
+/// under `base`, as `devguardd candidate` serves one of the canonical
+/// authority, and end as it would.
+pub fn candidate_child() {
+    let Some(config) = std::env::var_os(CANDIDATE) else {
+        return;
+    };
+    let config: Value = serde_json::from_str(&config.to_string_lossy()).unwrap();
+    let base = PathBuf::from(config["base"].as_str().unwrap());
+    let spec = devguard_daemon::candidate::CandidateSpec {
+        id: config["id"].as_str().unwrap().into(),
+        lease: devguard_daemon::candidate::parse_key(config["lease"].as_str().unwrap()).unwrap(),
+        capacity: devguard_daemon::candidate::parse_budget(config["capacity"].as_str().unwrap())
+            .unwrap(),
+    };
+    let fd = config["token_fd"].as_i64().unwrap() as i32;
+    match devguard_daemon::fixture::candidate_until_terminated(&base, spec, fd) {
+        Ok(devguard_daemon::candidate::Closure::Unconfirmed { error }) | Err(error) => {
+            eprintln!("candidate: {error}");
+            std::process::exit(1)
+        }
+        Ok(_) => std::process::exit(0),
+    }
 }
 
 pub fn cli(fixture: &Fixture, args: &[String], configure: impl FnOnce(&mut Command)) -> Child {

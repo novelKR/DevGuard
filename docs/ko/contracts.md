@@ -1,6 +1,6 @@
 # 구현된 authority 계약
 
-이 문서는 구현된 DG-0 authority, C01/C02 서비스·저장소·transport 동작, C03 native macOS 호스트 증거, C04 협조적 정책·scope 증거, C05 fenced launch helper, C06 대조, C07 명령행 owner, C08 Cargo adapter, 현재 사용자 LaunchAgent로의 C09 설치를 설명한다. PR과 병합 후 main 전달 증거는 구현과 별도로 추적한다. 실제 제공 명령은 [운영 문서](operations.md)에 있다. Native 호스트 증거가 있으면 서비스는 등록·launch·대조를 열며, CodeSpace 결합은 아직 구현하지 않았다. [영문 정본](../contracts.md).
+이 문서는 구현된 DG-0 authority, C01/C02 서비스·저장소·transport 동작, C03 native macOS 호스트 증거, C04 협조적 정책·scope 증거, C05 fenced launch helper, C06 대조, C07 명령행 owner, C08 Cargo adapter, 현재 사용자 LaunchAgent로의 C09 설치, C10 부모 lease와 후보 authority를 설명한다. PR과 병합 후 main 전달 증거는 구현과 별도로 추적한다. 실제 제공 명령은 [운영 문서](operations.md)에 있다. Native 호스트 증거가 있으면 서비스는 등록·launch·대조를 열며, CodeSpace 결합은 아직 구현하지 않았다. [영문 정본](../contracts.md).
 
 ## Authority와 transport 경계
 
@@ -8,9 +8,9 @@ Core는 Rust 라이브러리다. Authority::register는 TrustedPeer를 받고, �
 
 DG-0는 가짜 peer·backend로 라이브러리 등록 경계를 검증한다. C02는 실제 로컬 UDS 인증과 작은 client를 제공하지만 native 등록은 활성화하지 않는다. 서버는 OS socket 자격으로 peer UID/PID를 관측하고, client는 handshake의 authority UID/PID와 자기 정체성을 독립적으로 대조한다. 호출자가 선언한 peer 정체성을 신뢰하지 않는다. C03은 native boot/start 정체성을 추가하므로, OS가 관측한 peer UID/PID와 kernel start 정체성을 결합하면 완전한 신뢰 등록 관측이 된다. Native 시험은 이 경로를 프로세스 안에서 검증한다. Native 호스트 증거가 있으면 서비스는 wire 등록과 아래의 fenced launch helper를 대조와 함께 연다. 다른 플랫폼이거나 macOS 관측이 실패해 그 증거가 없으면 workload/control-service 등록은 ResourceControlUnavailable을 반환한다. 인증만으로 Principal·instance 슬롯·lease·호스트 예산을 발급하지 않는다. 관리 자격으로는 등록할 수 없다.
 
-Handshake는 contract 호환성과 wire version 1을 확인한다. Native 증거가 있는 서비스는 내구성 admission, fenced launch, 자원별 증거, 정적 제어 예약, macOS 협조적 제어를 광고하며, 증거가 없으면 아무것도 광고하지 않는다. Consumer generation과 자격 digest가 workload/control-service 역할을 결정하며 별도 관리 digest는 명시적으로 공개한 관리 역할에만 사용한다. 모든 consumer·관리 digest는 서로 달라야 한다. Caller 자격, 일회성 helper permit과 관리 작업은 별도 경계이며 helper 자격 variant를 caller 인증으로 받지 않는다. 이는 협조적인 운영 계정 모델이며 악의적인 동일 UID 프로세스를 격리하지 않는다.
+Handshake는 contract 호환성과 wire version 1을 확인한다. Native 증거가 있는 서비스는 내구성 admission, fenced launch, 자원별 증거, 정적 제어 예약, macOS 협조적 제어를 광고하며, 증거가 없으면 아무것도 광고하지 않는다. 부모 lease(C10)는 이를 요구한 client에게만 알린다. Consumer generation과 자격 digest가 workload/control-service 역할을 결정하며 별도 관리 digest는 명시적으로 공개한 관리 역할에만 사용한다. 모든 consumer·관리 digest는 서로 달라야 한다. Caller 자격, 일회성 helper permit과 관리 작업은 별도 경계이며 helper 자격 variant를 caller 인증으로 받지 않는다. 이는 협조적인 운영 계정 모델이며 악의적인 동일 UID 프로세스를 격리하지 않는다.
 
-Authority는 journal 부모 디렉터리에 no-follow 배타 잠금을 보유한다. 같은 디렉터리의 모든 journal은 그 잠금을 공유한다. 잠금은 O_NONBLOCK으로 열고 열린 descriptor가 현재 UID 소유의 private 일반 파일이며 링크가 정확히 하나인지 명시 초기화 때도 확인한다. FIFO·링크된 파일은 잠금 대신 사용할 수 없다. C01은 caller HOME·XDG가 아니라 OS 계정으로 정상 경로를 결정하고 state·socket override를 거절한다. 프로젝트 설정에는 authority 자격이나 호스트 용량을 둘 수 없다. 운영 후보 경로는 C10의 부모 lease 경계가 제공될 때까지 사용할 수 없다.
+Authority는 journal 부모 디렉터리에 no-follow 배타 잠금을 보유한다. 같은 디렉터리의 모든 journal은 그 잠금을 공유한다. 잠금은 O_NONBLOCK으로 열고 열린 descriptor가 현재 UID 소유의 private 일반 파일이며 링크가 정확히 하나인지 명시 초기화 때도 확인한다. FIFO·링크된 파일은 잠금 대신 사용할 수 없다. C01은 caller HOME·XDG가 아니라 OS 계정으로 정상 경로를 결정하고 state·socket override를 거절한다. 프로젝트 설정에는 authority 자격이나 호스트 용량을 둘 수 없다. 후보 경로는 부모 lease 아래에만 있다(C10). `devguardd candidate`는 이를 계정 자신의 authority에서 정하며 다른 경로는 받지 않는다.
 
 AuthorityStorage는 boot clock을 만들거나 attempt를 복구하거나 capability를 부여하지 않고 journal의 배타 열기·검사만 수행한다. Authority::from_storage는 실제 Backend·Clock으로 활성화하며 복구 transaction 안에서 회계 인덱스를 다시 검증한다. 기존 Authority::open도 같은 경로로 기존 복구 동작을 유지한다. 명시 bootstrap과 일반 open은 별개이며 누락·손상·미래 schema를 자동 수리하지 않는다.
 
@@ -131,7 +131,7 @@ DG1-C07은 관리 실행의 명령행 owner인 `devguard`를 추가한다. 명�
 - **종료값.** CLI는 workload의 종료값으로 끝나거나 같은 signal로 끝난다. Signal로 스스로 끝나기 전에 자신의 core file 상한을 0으로 설정하므로 core dump는 workload만 남길 수 있다. 아무것도 시작하지 않았으면 `env`·`timeout`처럼 125로 끝나며, helper의 126·127은 그대로 전달한다.
 - **Receipt.** `--receipt PATH`는 admission 전에 새 private 파일을 만들고 `devguard-exec-receipt/v1`을 기록한다. 결과(`completed`·`exec_failed`·`not_started`·`uncertain`), 명령, adapter 보고, 예산과 그 출처, 프로젝트, authority, 예약과 lease ID를 포함한 모든 attempt, 비교에 쓴 작업 용량을 포함한 대기, helper phase, 종료값, reap 전후의 관측, 받은 signal·전달한 signal·무시 상태로 상속한 signal을 담는다. Adapter가 설정하거나 제거한 변수는 이름만 기록하고 상속된 값은 기록하지 않으며, permit과 호출자 자격은 담지 않는다.
 - **Doctor.** `devguard doctor`는 경로, 설정, helper, 서비스의 정체성·capability·상태를 보고하고, 선택적으로 등록과 프로젝트도 확인한다. 관리 실행을 사용할 수 있는지와 관리되지 않는 대체 실행이 없다는 점을 밝힌다. `--require admission,registration,macos-cooperative`를 주면 요구 사항이 하나라도 충족되지 않을 때 1로 끝난다.
-- **중첩 실행.** Workload가 `devguard exec`를 다시 실행하면 자체 예약과 scope를 가진 별도의 관리 실행이 시작된다. 이 실행은 바깥 scope에 과금되지 않고 바깥 scope에 포함되지도 않는다. 중첩 작업을 부모 예산 안으로 제한하는 것은 C10의 부모 예산 기능이다.
+- **중첩 실행.** Workload가 `devguard exec`를 다시 실행하면 자체 예약과 scope를 가진 별도의 관리 실행이 시작된다. 이 실행은 바깥 scope에 과금되지 않고 바깥 scope에 포함되지도 않는다. 중첩 작업을 부모 예산 안으로 제한하려면 명시적인 부모 lease(`--lease`, C10)가 필요하다.
 - **Adapter.** C07은 admission과 분리된 adapter 인터페이스를 정의한다. Adapter는 실행될 예약에 맞춰 인자와 환경을 바꿀 수 있으며 무엇을 했는지 보고한다. Generic adapter는 아무것도 바꾸지 않는다. Cargo adapter는 아래에서 설명한다.
 
 ## Cargo adapter
@@ -188,6 +188,41 @@ DG1-C09는 패키지로 만든 release를 현재 사용자의 LaunchAgent로 설
 - **재시작.** 다시 시작한 서비스는 다른 시작과 마찬가지로 기존 journal을 다시 열어 대조한다. Journal이 없거나 손상되었으면 닫힌 채 멈춰 있다.
 - **범위.** 설치된 release를 교체하는 것은 upgrade(C11)이며 C09는 이를 거절한다. 제거 명령은 없다. `launchctl bootout gui/<uid>/io.github.novelkr.devguard`를 실행하고 plist를 지우면 서비스가 멈추며, 모든 release·복구 사본·선택·journal은 보존된다.
 
+## 부모 lease와 후보 authority
+
+DG1-C10은 안정 authority가 호스트 예산을 두 번 발행하지 않고, 제한된 예산 하나인 부모 lease를 후보 build 검증에 빌려주게 한다.
+
+- **Capability.** 서비스는 handshake에서 `parent_lease`를 요구한 client에게만 이를 알린다. 따라서 이전 client는 decode할 수 없는 capability를 받지 않는다. Client는 이 capability를 확인한 뒤에만 lease 요청을 보낸다.
+- **Lease.** 등록된 workload owner가 `AdmitLease {key, budget, ttl}`를 요청한다.
+  - Lease는 다른 요청과 마찬가지로 현재 압력에서의 호스트 용량에 대해 admission된다. 전체 예산은 해제될 때까지 과금된다.
+  - 첫 응답에만 일회성 64자 token이 들어 있다. 재요청은 token 없이 lease만 돌려준다. Journal은 token의 digest만 보관하며 receipt에는 token이 들어가지 않는다.
+- **자식.** Lease와 같은 consumer·generation의 등록된 instance가 `AdmitChild {lease, token, request}`를 보내면, lease의 남은 예산에 대해 일반 attempt를 admission한다. 남은 예산은 lease 예산에서 과금 중인 자식들의 예약을 뺀 값이다.
+  - 호스트 용량과 압력은 다시 확인하지 않으므로 살아 있는 lease가 줄어들지 않는다.
+  - Token이 틀리거나 lease를 모르면 `Unauthorized`이다. 남은 예산보다 큰 자식은 `ResourceUnavailable`로 거절하고, 더 이상 active가 아닌 lease는 모든 자식을 `InvalidTransition`으로 거절한다.
+  - Admission된 자식은 안정 `devguard-launch`를 거쳐 다른 attempt와 똑같이 launch·대조·해제된다. 해제된 예산은 호스트가 아니라 lease로 돌아간다.
+- **종료.** Lease는 Active, Ending, Released 순으로 진행한다.
+  - Owner가 끝내거나(`EndLease`), owner 프로세스가 끝났거나 이전 boot의 것이거나, 기한이 지나면 Ending이 된다. Ending lease는 자식을 admission하지 않는다.
+  - 과금 중인 자식이 하나도 없으면 Released가 되고 예산은 호스트로 돌아간다. Suspect 자식은 lease를 과금 상태로 유지한다. Reconciler는 매 pass마다 lease를 정리한다.
+- **보유자.** `LeaseStatus {key, token}`은 별도 session이다. Token만 제시하고 caller로 인증되지 않으며 다른 요청을 할 수 없다. Lease의 phase·예산·남은 예산·기한·자식을 보고한다.
+- **Journal.** `leases`와 `lease_children` table은 없을 때 추가하며 journal schema는 1로 유지한다. 과금 용량은 해제되지 않은 모든 lease의 예산과, lease 자식이 아닌 과금 attempt의 예약을 더한 값이다. 해제되지 않은 lease를 가진 generation은 폐기할 수 없다. 이런 journal을 여는 C09 artifact는 새 table을 무시한다. 자식은 일반 attempt로 계산하고, lease의 쓰지 않은 남은 예산은 보유하지 않는다.
+- **후보 authority.** `devguardd candidate --id ID --lease CONSUMER/GENERATION/ATTEMPT --capacity MILLICPU,BYTES,TASKS --token-fd N`은 전체 용량이 계정 authority의 부모 lease인 격리 authority를 제공한다.
+  - 상속한 descriptor N에서 lease token을 읽고 닫는다. Token이 없으면 아무것에도 연결하지 않고 아무것도 만들지 않는다.
+  - 보유자로서 부모에게 lease 상태를 묻는다. Lease는 active이고 용량을 담을 수 있어야 한다. 후보 daemon 자신의 예약(250 mCPU, 128 MiB와 bootstrap system task)을 넘지 않는 용량은 아무것도 만들기 전에 거절한다.
+  - 상태·설정·자격·socket·cache는 authority root와 runtime 디렉터리의 `candidates/<id>` 아래에 두며, 아직 없어야 한다. 모든 후보는 새 상태에서 시작한다. 정상 상태·자격·release·복구 사본은 열지 않는다.
+  - 정책은 lease 용량을 쓰며 호스트 headroom은 없다. 호스트 용량은 쓰지 않는다. 호스트 압력은 다른 authority와 같이 sample한다.
+  - 내구성 admission, 자원별 증거, 정적 제어 예약, macOS 협조적 제어를 광고하지만 fenced launch와 부모 lease는 광고하지 않는다. Launch·helper·lease 요청은 `ResourcePolicyUnsupported`로 거절한다. Status는 등록 준비, 실행 미준비를 보고하며, 이유에 후보와 그 lease를 적는다.
+  - 매초 lease를 확인하고 lease가 더 이상 active가 아니면 즉시 닫는다. 부모가 token을 거절하거나 5초 동안 lease를 확인하지 못하면 닫힌 채 끝난다.
+  - 부모는 후보를 lease 자식으로 admission할 때 그 용량을 과금하므로, 후보의 admission은 lease를 넘을 수 없다.
+- **CLI의 lease 자식.** `devguard exec --lease CONSUMER/GENERATION/ATTEMPT --lease-token-fd N`은 명령을 그 lease의 자식으로 admission한다. Descriptor N에서 token을 먼저 읽고 닫으므로 workload는 이를 상속하지 않는다. 부모 lease capability를 요구하고, receipt에 lease를 기록하며, 대기는 호스트 용량 대신 lease 예산과 비교한다.
+- **Test-candidate.** `devguard test-candidate --candidate DIR --report DIR [--cpu MILLICPU] [--memory SIZE] [--tasks N] [--ttl DURATION] [--wait DURATION]`는 안정 authority의 lease 하나 안에서 후보 tree를 검증한다.
+  1. Lease를 admission한다. 기본값은 CPU 2개, 4 GiB, task 96개이며 기한은 2시간이다. `--wait`를 주면 용량이나 압력으로 거절되는 동안 다시 요청한다.
+  2. 각 workload를 `devguard exec --lease`로 lease 자식으로 실행한다. 순서는 tree의 daemon·CLI·helper `cargo build`, 시험이 process group이나 session을 만들지 않고 호스트 용량을 관측하지 않는 crate(contract, core, client, Cargo adapter)의 `cargo test`, 그리고 CPU 1개·1 GiB·task 64개를 쓰는 tree 자신의 `devguardd candidate`이다.
+  3. 바깥에서 후보 endpoint를 점검한다. Capability와 status, 용량 안의 admission, 거절되는 launch, 취소, 용량을 넘는 요청의 거절, 거절되는 중첩 lease를 확인한다.
+  4. Lease를 끝내고 후보가 닫히고 lease가 해제될 때까지 기다린 뒤 후보 영역을 지운다. Lease, 각 자식의 receipt와 예약, 모든 점검을 담은 `report.json`을 쓰며, 모두 통과했을 때만 0으로 끝난다.
+
+  실패하면 먼저 lease를 끝낸다. 실행 중인 자식은 끝까지 실행되고, 모두 정리되면 lease가 해제된다. 명령 자체가 kill되면 owner 규칙에 따라 lease가 끝난다.
+- **범위.** 자체 process group이나 session을 만드는 workload는 lease 자식의 scope를 벗어나 협조적 macOS 모델에서 Suspect로 남는다. 따라서 native launch·CLI·terminal·scope suite는 lease 자식이 아니라 bootstrap과 CI qualification 실행으로 남는다. 후보는 admission만 검증하며 후보의 workload는 후보를 거쳐 실행되지 않는다. 설치된 부모 아래의 실제 자기 적용에는 부모 lease를 광고하는 release가 필요하다. 호스트 메모리 압력으로 서비스가 Critical인 동안에는 lease를 admission하지 않는다.
+
 ## 내구성 admission과 launch
 
 Journal schema는 1이다. 초기화는 명시적으로 새 파일만 만든다. 누락·손상·미지원 schema·불일치 journal은 fail-closed다. SQLite는 WAL, FULL synchronous와 immediate transaction을 사용한다. 시작 시 모든 저장 record와 회계 index를 대조한다.
@@ -220,7 +255,7 @@ Journal은 instance의 등록 정책을 기록한다. Active/suspect instance가
 
 ## 후속 마일스톤의 책임
 
-- 남은 DG-1: bounded 자기 적용, update·repair, 측정한 macOS SLO.
+- 남은 DG-1: 설치된 C10 부모 아래의 실제 자기 적용, update·repair, 측정한 macOS SLO.
 - CS-RG: Runner 슬롯·전송 lane, 승인 migration, client pin, 상태 결합과 회귀 qualification.
 - DG-LINUX: 실제 cgroup 계층·controller·ancestor와 sandbox·proxy 포함.
 - DG-CACHE·DG-ADAPTERS: 등록 cache 회수와 추가 도구 제어.

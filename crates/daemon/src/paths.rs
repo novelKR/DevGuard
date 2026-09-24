@@ -107,6 +107,40 @@ impl AuthorityPaths {
     pub fn logs(&self) -> PathBuf {
         self.home.join("Library/Logs/DevGuard")
     }
+    /// The area of candidate authorities, apart from the normal state,
+    /// releases and recovery copies.
+    pub fn candidates(&self) -> PathBuf {
+        self.root.join("candidates")
+    }
+    pub fn candidate_runtime(&self) -> PathBuf {
+        self.runtime.join("candidates")
+    }
+
+    /// Isolated paths for candidate `id` under this authority: its own state,
+    /// configuration, credentials, socket and cache. `id` is short and plain,
+    /// so the socket path stays within the Unix-domain socket limit.
+    pub fn candidate(&self, id: &str) -> Result<Self> {
+        if id.is_empty()
+            || id.len() > 32
+            || !id
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+        {
+            return Err(Error::new(
+                ErrorCode::InvalidRequest,
+                "a candidate id is 1 to 32 lowercase letters, digits or '-'",
+            ));
+        }
+        let root = self.candidates().join(id);
+        Ok(Self {
+            uid: self.uid,
+            home: self.home.clone(),
+            config_directory: root.join("config"),
+            root,
+            runtime: self.candidate_runtime().join(id),
+            cache: self.cache.join("candidates").join(id),
+        })
+    }
     pub fn runtime(&self) -> &Path {
         &self.runtime
     }

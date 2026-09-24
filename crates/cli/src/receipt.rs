@@ -78,6 +78,10 @@ pub struct WaitSummary {
     pub work_capacity: Option<Budget>,
     /// Why the capacity could not be checked; the authority still decides.
     pub work_capacity_unknown: Option<String>,
+    /// The budget of the parent lease a lease child's wait was checked
+    /// against, instead of the host's capacity.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lease_budget: Option<Budget>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -120,6 +124,9 @@ pub struct ExecReceipt {
     pub budget: Option<BudgetSummary>,
     pub project: Option<ProjectSummary>,
     pub authority: Option<AuthoritySummary>,
+    /// The parent lease each attempt was admitted under, for a lease child.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lease: Option<AttemptKey>,
     pub attempts: Vec<AttemptEntry>,
     pub wait: WaitSummary,
     pub launch: Option<LaunchSummary>,
@@ -156,6 +163,7 @@ impl ExecReceipt {
             budget: None,
             project: None,
             authority: None,
+            lease: None,
             attempts: Vec::new(),
             wait: WaitSummary::default(),
             launch: None,

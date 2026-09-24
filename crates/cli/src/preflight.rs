@@ -324,6 +324,8 @@ mod tests {
             memory_bytes: memory,
             tasks,
             receipt: None,
+            lease: None,
+            lease_token_fd: None,
             program: "true".into(),
             args: Vec::new(),
         }

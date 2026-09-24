@@ -35,6 +35,7 @@ python3 scripts/qualify.py dg1-reconcile --offline
 python3 scripts/qualify.py dg1-cli --offline
 python3 scripts/qualify.py dg1-cargo --offline
 python3 scripts/qualify.py dg1-bootstrap --offline
+python3 scripts/qualify.py dg1-self-use --offline
 git diff --check
 ```
 
@@ -76,7 +77,7 @@ V-DOC-DG는 scripts/check_docs.py와 수동 의미 검토로 영어/한국어 ha
 
 ## 향후 suite와 장애 주입 계약
 
-scripts/qualify.py dg1-authority --offline은 C01 설정·저장소, scripts/qualify.py dg1-auth --offline은 C02 인증·transport, scripts/qualify.py dg1-probes --offline은 C03 native 증거, scripts/qualify.py dg1-scopes --offline은 C04 정책·scope 증거, scripts/qualify.py dg1-launch --offline은 C05 launch helper, scripts/qualify.py dg1-reconcile --offline은 C06 대조, scripts/qualify.py dg1-cli --offline은 C07 명령행 owner, scripts/qualify.py dg1-cargo --offline은 C08 Cargo adapter, scripts/qualify.py dg1-bootstrap --offline은 C09 설치 검증을 제공한다. 그 밖의 DevGuard suite와 CodeSpace scripts/qualify-devguard.py는 해당 작업에서 제공할 예정 인터페이스다. 각 구현 PR이 실제 CLI·case inventory·nonzero case assertion·timeout·log 수집·격리 cleanup을 구현하고 제공 명령을 갱신해야 한다. macOS/Ubuntu CI는 전체 validator와 이식 가능한 두 기능 suite를 실행하고 각각의 report·log를 보존한다. Native suite는 macOS CI에서만 실행하고 그 밖의 환경에서는 `not_run`으로 기록한다. 증거를 제공할 수 없는 플랫폼에서 통과로 처리하지 않는다. 각 native 단계는 만들어야 할 raw receipt를 선언한다. 어떤 경우를 `not_run`으로 기록한 receipt가 있으면 suite는 `passed`가 아니라 `incomplete`가 된다.
+scripts/qualify.py dg1-authority --offline은 C01 설정·저장소, scripts/qualify.py dg1-auth --offline은 C02 인증·transport, scripts/qualify.py dg1-probes --offline은 C03 native 증거, scripts/qualify.py dg1-scopes --offline은 C04 정책·scope 증거, scripts/qualify.py dg1-launch --offline은 C05 launch helper, scripts/qualify.py dg1-reconcile --offline은 C06 대조, scripts/qualify.py dg1-cli --offline은 C07 명령행 owner, scripts/qualify.py dg1-cargo --offline은 C08 Cargo adapter, scripts/qualify.py dg1-bootstrap --offline은 C09 설치, scripts/qualify.py dg1-self-use --offline은 C10 부모 lease와 후보 authority 검증을 제공한다. 그 밖의 DevGuard suite와 CodeSpace scripts/qualify-devguard.py는 해당 작업에서 제공할 예정 인터페이스다. 각 구현 PR이 실제 CLI·case inventory·nonzero case assertion·timeout·log 수집·격리 cleanup을 구현하고 제공 명령을 갱신해야 한다. macOS/Ubuntu CI는 전체 validator와 이식 가능한 두 기능 suite를 실행하고 각각의 report·log를 보존한다. Native suite는 macOS CI에서만 실행하고 그 밖의 환경에서는 `not_run`으로 기록한다. 증거를 제공할 수 없는 플랫폼에서 통과로 처리하지 않는다. 각 native 단계는 만들어야 할 raw receipt를 선언한다. 어떤 경우를 `not_run`으로 기록한 receipt가 있으면 suite는 `passed`가 아니라 `incomplete`가 된다.
 
 C03 증거는 다음 파일에 기록한다.
 - **Raw receipt** (보고서의 `raw/` 디렉터리): 단위를 포함한 boot ID·시계 읽기, 호스트 용량, zombie·reap·거부 관측을 포함한 반복 프로세스 정체성, 계산된 비율을 포함한 native 압력 읽기, 마지막 sample 이후 admission이 닫히기까지 측정한 시간, 주입한 실패부터 Critical까지 걸린 서비스 loop 시간과 멈춘 probe에 대한 서비스 loop의 동작.
@@ -123,6 +124,12 @@ C09 증거는 다음을 포함한다.
 - **실제 프로세스**: 각 패키지의 `devguardd`로 복사한 시험 바이너리가 격리된 fixture authority를 제공한다. Fake manager는 launchd와 같은 방식으로 이를 시작한다. Native 경우는 launchd 자체를 사용한다. 고유한 임시 label과 시험 디렉터리 아래의 plist를 쓰며, `~/Library/LaunchAgents`는 쓰지 않고, 모든 경로에서 bootout한다.
 - **단위 시험**: `launchctl print` parsing, escape와 crash 전용 재시작을 포함한 plist 생성, release id 규칙, 이 build에 컴파일된 호환성.
 - **실제 설치**: 사용자 확인이 필요한 qualification 호스트의 설치는 패키지 manifest, status 보고, 실행 중인 바이너리 hash와 함께 C09 완료 증거로 기록한다.
+
+C10 증거는 다음을 포함한다.
+- **Raw receipt**: workload와 후보 authority를 자식으로 실행하고 해제로 예산을 돌려준 lease, 그리고 제공 전에 죽은 후보에 대한 `test-candidate` 보고, lease 안·밖·종료 뒤의 lease 자식과 위조 token을 쓴 자식. 실행이 남긴 파일에 caller 자격이 없고, lease 자식의 receipt에 lease token이 없는지 확인한다.
+- **실제 프로세스**: 시험 바이너리를 `devguard exec --lease` owner, 실제 `devguard-launch` 아래의 workload, 격리 fixture 부모의 lease를 쓰는 후보 authority로 다시 실행한다. `test-candidate` orchestrator는 lease owner로서 시험 프로세스 안에서 실행한다.
+- **단위·서비스 시험**: core lease 계약(과금, 남은 예산, token, 재요청, 종료·owner 소실·기한에 의한 fence, Suspect 자식, 재시작, 폐기, 새 table이 없는 journal), 요구한 client에게만 알리는 capability, token만 쓰는 보유자 session, 후보 session과 그 거절, 엄격한 lease wire fixture, 인자 parsing, 후보 tree로 만드는 plan.
+- **실제 자기 적용**: 동결해 설치한 C10 부모 아래에서 작업 tree로 실행한 `test-candidate`는 그 release에 대한 사용자 확인이 필요하며, 보고·receipt·부모 hash와 함께 C10 완료 증거로 기록한다. 호스트 메모리 압력이 admission을 허용해야 한다.
 
 C02 증거는 양쪽 실제 OS socket UID/PID 관측, 분리된 consumer·관리 자격, helper-role 인증 거절, 현재·미래 wire fixture의 엄격한 decoding, 64 KiB frame, 세션 32개 제한, idle 대기를 포함한 frame별 절대 250 ms 기한, 부분·느린·마지막 응답과 private 자격 FD 전달을 포함한다. 전용 subprocess helper는 후속 exec 전 FD 닫기를 관측하고 argv·환경·debug·출력의 secret 누출을 확인한다. Parent test가 helper를 실행하며 별도의 ignored test를 독립 qualification 성공으로 세지 않는다. 0개가 아닌 parent case 수와 프로세스 정리를 함께 기록한다.
 

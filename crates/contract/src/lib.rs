@@ -526,6 +526,65 @@ pub enum Capability {
     StaticControlReservations,
     MacosCooperative,
     LinuxCgroupV2,
+    /// Bounded parent leases whose children are admitted against the lease,
+    /// not the host. A service states it only to a client that requires it,
+    /// so a client that cannot decode it never receives it.
+    ParentLease,
+}
+
+/// A parent lease's phase. An Ending lease admits no new child and is released
+/// once every child is settled.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LeasePhase {
+    Active,
+    Ending,
+    Released,
+}
+
+/// Why a lease stopped admitting children.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LeaseEndReason {
+    /// Its owner ended it.
+    Ended,
+    /// Its owner process ended, or belonged to an earlier boot.
+    OwnerGone,
+    /// Its deadline passed.
+    Expired,
+}
+
+/// A bounded budget reserved from the host, from which child executions are
+/// admitted. The budget stays charged until the lease is released.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LeaseRecord {
+    pub key: AttemptKey,
+    pub owner: InstanceIdentity,
+    pub policy_revision: String,
+    pub budget: Budget,
+    pub phase: LeasePhase,
+    pub created_at: ObservationTime,
+    /// Monotonic milliseconds in `created_at`'s boot after which no child is admitted.
+    pub deadline_ms: Option<u64>,
+    pub end_reason: Option<LeaseEndReason>,
+}
+
+impl LeaseRecord {
+    /// A lease holds its whole budget until it is released.
+    pub fn charged(&self) -> bool {
+        self.phase != LeasePhase::Released
+    }
+}
+
+/// A lease as its holders see it: its record, the budget its charged children
+/// leave, and every child admitted under it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LeaseView {
+    pub lease: LeaseRecord,
+    pub remaining: Budget,
+    pub children: Vec<AttemptKey>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

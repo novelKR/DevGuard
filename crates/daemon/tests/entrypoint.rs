@@ -20,6 +20,42 @@ fn alternate_authority_and_unparented_candidate_arguments_are_rejected() {
 }
 
 #[test]
+fn a_candidate_needs_its_lease_token_descriptor_and_names_no_other_authority() {
+    let run = |extra: &[&str]| {
+        let mut arguments = vec![
+            "candidate",
+            "--id",
+            "c-entrypoint",
+            "--lease",
+            "dev-cli/g/lease-1",
+            "--capacity",
+            "1000,1073741824,64",
+            // Far above anything a test harness holds open.
+            "--token-fd",
+            "200",
+        ];
+        arguments.extend_from_slice(extra);
+        Command::new(env!("CARGO_BIN_EXE_devguardd"))
+            .args(arguments)
+            .output()
+            .unwrap()
+    };
+    let named = run(&["--socket", "/tmp/second.sock"]);
+    assert!(!named.status.success());
+    assert!(String::from_utf8(named.stderr)
+        .unwrap()
+        .contains("no alternate authority arguments"));
+    // Without the inherited token nothing is contacted or created.
+    let untokened = run(&[]);
+    assert!(!untokened.status.success());
+    if cfg!(target_os = "macos") {
+        assert!(String::from_utf8(untokened.stderr)
+            .unwrap()
+            .contains("private credential FD"));
+    }
+}
+
+#[test]
 fn help_states_what_serve_opens_and_that_bootstrap_starts_no_workload() {
     let result = Command::new(env!("CARGO_BIN_EXE_devguardd"))
         .arg("--help")
@@ -30,6 +66,7 @@ fn help_states_what_serve_opens_and_that_bootstrap_starts_no_workload() {
     assert!(help.contains("with it, opens registration, fenced launch"));
     assert!(help.contains("install copies a package into a protected release"));
     assert!(help.contains("init and check never start workloads."));
+    assert!(help.contains("candidate serves an isolated candidate authority"));
 }
 
 #[cfg(target_os = "macos")]

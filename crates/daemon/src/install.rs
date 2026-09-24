@@ -63,7 +63,10 @@ pub fn compiled() -> BuildCompatibility {
         package_version: env!("CARGO_PKG_VERSION").into(),
         wire_version: WIRE_VERSION,
         protocol: PROTOCOL_VERSION,
-        capabilities: crate::server::launch_capabilities(),
+        capabilities: crate::server::launch_capabilities()
+            .union(&crate::server::echoed_capabilities())
+            .copied()
+            .collect(),
         journal_schema: devguard_core::JOURNAL_SCHEMA.into(),
         config_schema: crate::config::CONFIG_SCHEMA,
     }

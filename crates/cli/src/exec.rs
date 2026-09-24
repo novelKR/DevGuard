@@ -7,7 +7,7 @@
 //! known not to have started, and only while an explicit `--wait` lasts.
 
 use crate::args::ExecArgs;
-use crate::authority::{Endpoint, Service};
+use crate::authority::{Endpoint, LeaseHold, Service};
 use crate::preflight::{self, Preflight, Refusal};
 use crate::receipt::{
     AttemptEntry, AuthoritySummary, BudgetSummary, ExecReceipt, ExecResult, Exit, LaunchSummary,
@@ -558,6 +558,13 @@ fn lossy(values: &[OsString]) -> Vec<String> {
 
 /// Run `devguard exec` against the authority at `paths` with `helper`.
 pub fn run(args: ExecArgs, paths: &AuthorityPaths, helper: &Path) -> Exit {
+    // A lease token's descriptor is consumed first and closed on every path,
+    // so the executable never inherits it.
+    let token = args.lease_token_fd.map(|fd| {
+        // SAFETY: the caller passed this descriptor to the CLI for the lease
+        // token only; nothing else in this process owns it.
+        unsafe { devguard_client::credential::take_inherited(fd) }
+    });
     let receipt_file = match &args.receipt {
         Some(path) => match ReceiptFile::create(path) {
             Ok(file) => Some(file),
@@ -577,10 +584,20 @@ pub fn run(args: ExecArgs, paths: &AuthorityPaths, helper: &Path) -> Exit {
     };
     run.receipt.wait.requested_ms = args.wait.map(|wait| wait.as_millis() as u64);
     run.receipt.command.args = lossy(&args.args);
+    run.receipt.lease = args.lease.clone();
+    let lease = match (args.lease.clone(), token) {
+        (Some(key), Some(Ok(token))) => Ok(Some(LeaseHold { key, token })),
+        (_, Some(Err(error))) => Err(error),
+        _ => Ok(None),
+    };
     let signals = Signals::install();
-    let exit = match &signals {
-        Ok(signals) => execute(&mut run, &args, paths, helper, signals),
-        Err(error) => run.not_started(format!("cannot install signal forwarding: {error}")),
+    let exit = match (&signals, lease) {
+        (Ok(signals), Ok(lease)) => execute(&mut run, &args, lease, paths, helper, signals),
+        (_, Err(error)) => run.not_started(format!(
+            "cannot read the lease token: {}",
+            error_text(&error)
+        )),
+        (Err(error), _) => run.not_started(format!("cannot install signal forwarding: {error}")),
     };
     if let Ok(signals) = &signals {
         run.receipt.signals.received = signals.received();
@@ -603,6 +620,7 @@ pub fn run(args: ExecArgs, paths: &AuthorityPaths, helper: &Path) -> Exit {
 fn execute(
     run: &mut Run,
     args: &ExecArgs,
+    lease: Option<LeaseHold>,
     paths: &AuthorityPaths,
     helper: &Path,
     signals: &Signals,
@@ -610,12 +628,13 @@ fn execute(
     if !helper.is_absolute() || !helper.is_file() {
         return run.not_started(format!("the launch helper {} is missing", helper.display()));
     }
-    let endpoint = match Endpoint::open(paths) {
+    let mut endpoint = match Endpoint::open(paths) {
         Ok(endpoint) => endpoint,
         Err(error) => {
             return run.not_started(format!("cannot use the authority: {}", error_text(&error)))
         }
     };
+    endpoint.lease = lease;
     let environment: BTreeMap<OsString, OsString> = std::env::vars_os().collect();
     let mut pre = match preflight::prepare(args, &endpoint.config, &environment) {
         Ok(pre) => pre,
@@ -656,7 +675,25 @@ fn execute(
             capabilities: Default::default(),
         },
     });
-    if args.wait.is_some() {
+    if let (Some(_), Some(lease)) = (args.wait, &endpoint.lease) {
+        // A lease child is admitted against its lease, never the host: a
+        // request larger than the lease can never be admitted.
+        match endpoint.lease_status(&lease.key, &lease.token) {
+            Ok(view) => {
+                run.receipt.wait.lease_budget = Some(view.lease.budget);
+                if !pre.intent.requested.fits(view.lease.budget) {
+                    let budget = view.lease.budget;
+                    return run.not_started(format!(
+                        "the request exceeds its parent lease's budget of {} mCPU, {} bytes and {} tasks, so no wait can admit it",
+                        budget.cpu_milli, budget.memory_bytes, budget.tasks
+                    ));
+                }
+            }
+            Err(error) => {
+                run.receipt.wait.work_capacity_unknown = Some(error_text(&error));
+            }
+        }
+    } else if args.wait.is_some() {
         // A wait cannot make room the host does not have: refuse at once
         // rather than leave a denied attempt behind every backoff.
         match endpoint.config.observed_work_capacity(endpoint.uid) {

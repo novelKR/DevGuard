@@ -33,6 +33,11 @@ impl CredentialHandoff {
         Ok(Self(unsafe { OwnedFd::from_raw_fd(fd) }))
     }
 
+    /// The descriptor number the child will inherit, for its arguments.
+    pub fn descriptor(&self) -> RawFd {
+        self.0.as_raw_fd()
+    }
+
     /// Command owns the carrier until dropped. Only its child clears close-on-exec.
     pub fn attach(self, command: &mut Command) -> RawFd {
         let raw = self.0.as_raw_fd();

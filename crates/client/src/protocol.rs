@@ -1,6 +1,6 @@
 use devguard_contract::{
-    AdmissionRequest, AttemptKey, AttemptRecord, Capability, Compatibility, Error, ErrorCode,
-    InstanceIdentity, Secret,
+    AdmissionRequest, AttemptKey, AttemptRecord, Budget, Capability, Compatibility, Error,
+    ErrorCode, InstanceIdentity, LeaseRecord, LeaseView, Secret,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -108,6 +108,39 @@ pub enum Request {
         instance_id: String,
         permit: Secret,
     },
+    /// Reserve a parent lease of `budget` from host capacity for the
+    /// registered owner, fenced after `ttl_ms` if given. Sent only after the
+    /// service echoed the `parent_lease` capability.
+    AdmitLease {
+        key: AttemptKey,
+        budget: Budget,
+        ttl_ms: Option<u64>,
+    },
+    /// Admit a child execution under a lease, presenting its token. The child
+    /// is then an ordinary attempt of the registered instance.
+    AdmitChild {
+        lease: AttemptKey,
+        token: Secret,
+        request: AdmissionRequest,
+    },
+    /// End an owned lease: no new child, released once every child settles.
+    EndLease {
+        key: AttemptKey,
+    },
+    /// A lease holder's view, authorized by the token alone. Like a helper,
+    /// a lease holder is not a caller: the session can make no other request.
+    LeaseStatus {
+        key: AttemptKey,
+        token: Secret,
+    },
+}
+
+/// A new lease with its token, returned once.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LeaseGranted {
+    pub lease: LeaseRecord,
+    pub token: Option<Secret>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -231,5 +264,7 @@ pub enum Response {
     LaunchGranted(LaunchGrant),
     LaunchAuthorized(LaunchAuthorization),
     Terminated(Termination),
+    LeaseGranted(LeaseGranted),
+    Lease(LeaseView),
     Error(WireError),
 }

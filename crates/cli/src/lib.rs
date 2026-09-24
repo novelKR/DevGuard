@@ -10,6 +10,7 @@
 pub mod adapter;
 pub mod args;
 pub mod authority;
+pub mod candidate;
 pub mod doctor;
 pub mod exec;
 pub mod preflight;
@@ -25,16 +26,24 @@ use std::path::PathBuf;
 
 pub const USAGE: &str = "\
 devguard exec [--project ID] [--adapter auto|generic|cargo|cargo-pipeline] [--wait DURATION]
-              [--cpu MILLICPU] [--memory SIZE] [--tasks N] [--receipt PATH] -- PROGRAM [ARGS...]
+              [--cpu MILLICPU] [--memory SIZE] [--tasks N] [--receipt PATH]
+              [--lease CONSUMER/GENERATION/ATTEMPT --lease-token-fd N] -- PROGRAM [ARGS...]
 devguard doctor [--require admission,registration,macos-cooperative] [--project ID]
+devguard test-candidate --candidate DIR --report DIR [--cpu MILLICPU] [--memory SIZE] [--tasks N]
+              [--ttl DURATION] [--wait DURATION]
 devguard --help | --version
 
 exec admits the command at the central authority, starts it through devguard-launch under
 the reserved budget and reports its own exit. A command is never run unmanaged: when it
 cannot be admitted or started, nothing runs and devguard exits 125. --wait retries a
-refused admission until the given time (ms, s, m or h) has passed. Durations and sizes are
-whole numbers; sizes take KiB, MiB or GiB. The authority comes from the operating account;
-there is no path or authority override.";
+refused admission until the given time (ms, s, m or h) has passed. With --lease the command
+is a child of that parent lease, admitted against its remainder with the token read from
+descriptor N. Durations and sizes are whole numbers; sizes take KiB, MiB or GiB. The
+authority comes from the operating account; there is no path or authority override.
+
+test-candidate admits one parent lease and runs a candidate tree's build, its applicable
+tests and its own candidate authority as children of it, checks the candidate's admission,
+ends the lease and writes report.json in the new report directory.";
 
 /// Run the command line `args` (without the program name). `locate` supplies
 /// the authority paths and the launch helper, and is consulted only by
@@ -71,6 +80,13 @@ pub fn run(
             Err(error) => {
                 eprintln!("devguard: {}", error.message);
                 Exit::Code(1)
+            }
+        },
+        args::Command::TestCandidate(candidate) => match locate() {
+            Ok((paths, _)) => candidate::run_args(&candidate, &paths),
+            Err(error) => {
+                eprintln!("devguard: {}; nothing was started", error.message);
+                Exit::Code(exec::NOT_STARTED)
             }
         },
     }

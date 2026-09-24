@@ -4,7 +4,7 @@
 
 아래 ID·제목·PR 묶음은 **예정 값**이다. 실제 SHA나 GitHub PR 번호가 아니다. 모듈 경로는 구현 전까지 예정 책임을 나타낸다. 현재 daemon/client crate는 존재하며 launcher·platform-macos·cli·adapters는 후속 책임이다. crate 추가는 해당 PR에서 명시적 의존 allowlist와 전체 그래프 검증을 함께 확장하고 검사를 제거하지 않는다. 실제 상태는 ledger가 소유한다.
 
-구현된 C01은 정상 경로·명시 bootstrap·배타 journal 검사를 제공한다. C02는 foreground devguardd serve, 제한된 인증 UDS 통신, OS UID/PID 관측, 엄격한 client 호환성과 private 자격 FD 전달을 추가한다. C03은 `devguard-macos`의 boot 시계, native PID/start 정체성, 호스트 용량과 serve에서 journal을 활성화하는 2초 압력 sampler를 추가한다. C04는 협조적 QoS/nice 적용과 readback, 이탈·추적 상실이 고정되는 관측 process group scope, 정체성을 확인한 종료를 추가한다. C05는 wire 등록과 fenced `devguard-launch` helper를 추가한다. Grant마다 claim된 helper는 하나이며, READY와 exec 전에 scope binding과 authorization을 거치고, transcript와 exec 실패 보고를 분리하며, payload descriptor를 정리한다. C06은 서비스 reconciler를 추가한다. 관측된 scope 종료, helper가 없다는 owner 보고, 이전 boot에서만 회수하며, reap 전 owner 관측, scope 종료, instance 폐기, 재시작 전후의 Suspect 회계를 제공한다. Native 증거가 있으면 서비스는 등록·launch·대조를 연다. C07은 `devguard` 명령행 owner를 추가한다. 명시적이고 제한된 대기, terminal·signal 전달, reap 전 관측, receipt, doctor 진단을 갖춘 관리 실행을 제공하며, 관리되지 않는 대체 실행은 없다. C08은 Cargo adapter를 추가한다. Compiler job을 예약에 맞춰 조정하거나 거절하며, pipeline과 중첩 Cargo 실행이 jobserver 하나를 공유하게 한다. C09는 패키지로 만든 release를 현재 사용자 LaunchAgent로 설치한다. hash와 컴파일된 호환성을 담은 manifest, 변경 불가능한 release·복구 사본을 두며, launchd가 그 release의 바이너리를 실행한다고 검증한 뒤에만 선택한다. PR과 병합 후 main 전달 증거는 별도로 추적한다. [운영 문서](../../operations.md)를 참조한다.
+구현된 C01은 정상 경로·명시 bootstrap·배타 journal 검사를 제공한다. C02는 foreground devguardd serve, 제한된 인증 UDS 통신, OS UID/PID 관측, 엄격한 client 호환성과 private 자격 FD 전달을 추가한다. C03은 `devguard-macos`의 boot 시계, native PID/start 정체성, 호스트 용량과 serve에서 journal을 활성화하는 2초 압력 sampler를 추가한다. C04는 협조적 QoS/nice 적용과 readback, 이탈·추적 상실이 고정되는 관측 process group scope, 정체성을 확인한 종료를 추가한다. C05는 wire 등록과 fenced `devguard-launch` helper를 추가한다. Grant마다 claim된 helper는 하나이며, READY와 exec 전에 scope binding과 authorization을 거치고, transcript와 exec 실패 보고를 분리하며, payload descriptor를 정리한다. C06은 서비스 reconciler를 추가한다. 관측된 scope 종료, helper가 없다는 owner 보고, 이전 boot에서만 회수하며, reap 전 owner 관측, scope 종료, instance 폐기, 재시작 전후의 Suspect 회계를 제공한다. Native 증거가 있으면 서비스는 등록·launch·대조를 연다. C07은 `devguard` 명령행 owner를 추가한다. 명시적이고 제한된 대기, terminal·signal 전달, reap 전 관측, receipt, doctor 진단을 갖춘 관리 실행을 제공하며, 관리되지 않는 대체 실행은 없다. C08은 Cargo adapter를 추가한다. Compiler job을 예약에 맞춰 조정하거나 거절하며, pipeline과 중첩 Cargo 실행이 jobserver 하나를 공유하게 한다. C09는 패키지로 만든 release를 현재 사용자 LaunchAgent로 설치한다. hash와 컴파일된 호환성을 담은 manifest, 변경 불가능한 release·복구 사본을 두며, launchd가 그 release의 바이너리를 실행한다고 검증한 뒤에만 선택한다. C10은 부모 lease와 후보 authority를 추가한다. Lease는 호스트에 한 번 과금되고, 자식은 lease의 남은 예산에 대해서만 admission되며 lease가 끝나면 fence된다. 후보 authority는 lease로 제한되며 launch 없이 admission만 한다. `devguard test-candidate`는 후보 tree의 build·시험·authority를 lease 하나의 자식으로 실행한다. PR과 병합 후 main 전달 증거는 별도로 추적한다. [운영 문서](../../operations.md)를 참조한다.
 
 ## PR 순서와 활성화 경계
 
@@ -17,7 +17,7 @@
 | DG1-P5 | DG1-C09, DG1-C10, DG1-C11 | DG1-P4 | 설치·후보·독립 복구를 묶어 자기 적용 활성화 |
 | DG1-P6 | DG1-C12 | DG1-P5 | 기능 기준 artifact와 SLO 안정 artifact를 구분해 승격 |
 
-공통 현재 명령 python3 scripts/validate.py --offline은 Rust 1.95.0 계약 회귀를 확인하며 fake backend로 native 동작을 입증하지 않는다. C01 authority, C02 인증·transport, C03 native probe, C04 native scope, C05 native launch, C06 native 대조, C07 CLI, C08 Cargo, C09 설치 suite는 현재 제공한다. 아래에서 예정이라고 명시한 나머지 명령은 미제공이며 각 PR에서 fixture·실행 case 수·log·정리를 함께 구현하고 제공 상태를 갱신한다. 이름만 있는 테스트나 0개 실행을 통과로 처리하지 않는다. 공통 toolchain·증거·SLO 규칙은 상위 검증 문서에 있다.
+공통 현재 명령 python3 scripts/validate.py --offline은 Rust 1.95.0 계약 회귀를 확인하며 fake backend로 native 동작을 입증하지 않는다. C01 authority, C02 인증·transport, C03 native probe, C04 native scope, C05 native launch, C06 native 대조, C07 CLI, C08 Cargo, C09 설치, C10 부모 lease suite는 현재 제공한다. 아래에서 예정이라고 명시한 나머지 명령은 미제공이며 각 PR에서 fixture·실행 case 수·log·정리를 함께 구현하고 제공 상태를 갱신한다. 이름만 있는 테스트나 0개 실행을 통과로 처리하지 않는다. 공통 toolchain·증거·SLO 규칙은 상위 검증 문서에 있다.
 
 P1은 runtime을 닫아 두고 P2는 실제 probe, P3는 launch·안전 정리, P4는 개발 진입점, P5는 설치·부모 예산·repair, P6는 측정·승격을 제공한다. C08까지 foreground daemon과 최소 단일 Cargo job·test thread bootstrap을 사용한다. P4 bundle은 삭제할 build 경로 밖에 보존한다. C10에서 부모 예산을 포함한 artifact를 먼저 기능 시험·동결한 직후 제한된 실제 자기 적용을 시작하며 SLO qualification은 C12에서 확립한다.
 
@@ -146,7 +146,7 @@ P1은 runtime을 닫아 두고 P2는 실제 probe, P3는 launch·안전 정리, 
 - 대상/산출물: 예정 bounded-test mode, 부모 capability 검증, 후보/자식 workload 합산과 fixture runner.
 - 불변 조건: 후보 CPU·memory·tasks 합계는 상위 budget 이하; 정상 journal 접근 불가; parent 소실/만료 시 신규 grant 금지.
 - 시험: 정상 후보 build/test; 초과 요청·가짜 parent·후보 정책 오류; 후보 crash와 부모 cancel·늦은 자식 시작 경쟁.
-- 검증 명령: 현재 공통 회귀 + 예정 `python3 scripts/qualify.py dg1-self-use`.
+- 검증 명령: 현재 공통 회귀 + **제공** `python3 scripts/qualify.py dg1-self-use --offline` (macOS 전용이며 다른 플랫폼은 `not_run`으로 기록한다). 격리 fixture 부모로 실행하며, 동결한 설치 부모 아래의 실제 자기 적용은 완료 증거로 따로 기록한다.
 - 완료 증거: 상위/하위 attempt 관계와 합계, 두 번째 full-host authority 거절, 실제 자식 scope 관측과 기준 artifact 보존.
 - rollback: 부모가 후보 scope를 정리·대조; 후보 자신의 admission이나 정상 journal 재초기화에 의존하지 않는다.
 - 인계: C10 기능 checkpoint 직후 실제 후보를 부모로 실행하고 이후 해당 build/test를 부모로 관리하며 admission/launch/대조 receipt를 보존한다. DG1-C11에 부모 경유 drain·독립 repair와 실패 증거를 전달한다.
