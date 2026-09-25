@@ -6,7 +6,7 @@
   "critical_path": ["DG-0", "DG-1", "CS-RG", "P1-RECOVERY"],
   "milestones": [
     {"id": "DG-0", "owner": "DevGuard", "requires": [], "design_status": "accepted", "implementation_status": "implemented", "qualification": "report-required", "report_command": "python3 scripts/validate.py", "planning_document": "docs/planning/milestones/DG-0.md"},
-    {"id": "DG-1", "owner": "DevGuard", "requires": ["DG-0"], "design_status": "accepted", "implementation_status": "in-progress", "qualification": "not-run", "planning_document": "docs/planning/milestones/DG-1.md"},
+    {"id": "DG-1", "owner": "DevGuard", "requires": ["DG-0"], "design_status": "accepted", "implementation_status": "implemented", "qualification": "macos-qualified", "qualified_release": "0.1.0-5daee5d-b3fa569e", "planning_document": "docs/planning/milestones/DG-1.md"},
     {"id": "CS-RG", "owner": "CodeSpace", "requires": ["DG-1"], "design_status": "accepted", "implementation_status": "not-started", "qualification": "not-run", "planning_document": "docs/planning/milestones/CS-RG.md"},
     {"id": "P1-RECOVERY", "owner": "CodeSpace", "requires": ["CS-RG"], "design_status": "accepted", "implementation_status": "not-started", "qualification": "not-run", "planning_document": "docs/planning/milestones/P1-RECOVERY.md"},
     {"id": "DG-LINUX", "owner": "DevGuard + CodeSpace", "requires": ["CS-RG"], "design_status": "accepted", "implementation_status": "not-started", "qualification": "not-run", "required_for_product_completion": true, "planning_document": "docs/planning/milestones/DG-LINUX.md"},

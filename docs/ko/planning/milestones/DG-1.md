@@ -1,6 +1,6 @@
 # DG-1 — macOS 개발 적용과 자기 적용
 
-소유 저장소: DevGuard. 현재 구현 상태: `in-progress` / qualification `not-run`. 진입: DG-0 정확한 source의 계약 검증. 종료: 실제 macOS 실행·회수, generic/Cargo 소비, 상위 예산 안의 후보 시험, 독립 복구, 개발·foreground SLO를 통과한 artifact/정책/환경 조합 확보.
+소유 저장소: DevGuard. 현재 구현 상태: `implemented`(C01–C12) / qualification: 측정한 호스트와 정책에서 release `0.1.0-5daee5d-b3fa569e`에 대해 macOS `qualified`, Linux `not-run`. 진입: DG-0 정확한 source의 계약 검증. 종료: 실제 macOS 실행·회수, generic/Cargo 소비, 상위 예산 안의 후보 시험, 독립 복구, 개발·foreground SLO를 통과한 artifact/정책/환경 조합 확보.
 
 아래 ID·제목·PR 묶음은 **예정 값**이다. 실제 SHA나 GitHub PR 번호가 아니다. 모듈 경로는 구현 전까지 예정 책임을 나타낸다. 현재 daemon/client crate는 존재하며 launcher·platform-macos·cli·adapters는 후속 책임이다. crate 추가는 해당 PR에서 명시적 의존 allowlist와 전체 그래프 검증을 함께 확장하고 검사를 제거하지 않는다. 실제 상태는 ledger가 소유한다.
 
@@ -179,6 +179,7 @@ P1은 runtime을 닫아 두고 P2는 실제 probe, P3는 launch·안전 정리, 
 - 불변 조건: idle 10분/부하 최소 30분/3회, cold/warm 분리; DG-1 종료가 CS-RG 구현에 의존하지 않음. 미구현 MCP 결합 SLO는 여기서 합격시키지 않는다.
 - 시험: generic/Cargo 동시 소비 정상; daemon/probe/후보 실패; 부하 중 취소·재시작·late helper; foreground와 standalone 조회/종료 지연 측정.
 - 검증 명령: 현재 공통 회귀 + **제공** `python3 scripts/qualify.py dg1-macos --offline`. macOS 전용이며 다른 플랫폼은 `not_run`으로 기록한다. SLO가 아니라 harness를 검사한다. SLO protocol 자체는 **제공** `python3 scripts/measure.py macos --release ID ...`이다. 따로 비워 둔 시간에 대상 호스트의 설치 release에 대해 실행하며, 그 판정과 승격은 완료 증거로 기록한다. 실제 CodeSpace 결합은 CSRG-C08에서 수행한다.
+- 결과: 2026-09-25~26에 harness `72c4220`으로 실행한 protocol-2가 release `0.1.0-5daee5d-b3fa569e`를 측정했다. 두 조합 모두 세 반복을 통과했다. 입력부터 다음 paint까지 p99는 최대 56 ms, 상태 p99는 최대 47 ms, 종료 확인 p99는 최대 67 ms였다. Frame 정지는 없었고, 부하 실행 1,408회는 연결 유실·불확실한 실행·중복 launch 없이 모두 성공했다. `measure.py promote`는 서비스가 그 release를 실행함을 확인한 뒤 qualification을 기록했다. 첫 실행 protocol-1은 harness 자신의 증거 기록 때문에 실패했으며, 분석과 함께 보존한다.
 - 완료 증거: source/artifact/policy/host 조합, 유효 baseline, 모든 원시 표본·p99·실패/거절/peak/처리량, 자기 적용 제한과 통과 범위.
 - rollback: 기준 artifact로 신규 개발 진입을 전환하고 실패한 조합 승격을 취소; 보존된 증거는 삭제하지 않는다.
 - 인계: CSRG-C01은 이 qualification 조합에서 pin 후보를 선정한다. DG-CACHE/DG-ADAPTERS도 이 결과 이후 시작하며 구현 완료와 플랫폼 자격은 별도 기록한다.

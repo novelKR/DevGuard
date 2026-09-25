@@ -9,7 +9,7 @@ Preserve the approved [design SLOs](../design.md#verification-and-promotion). De
 | V-DOC-DG | DevGuard docs/metadata | Original checksum/license, English/Korean hashes, IDs/DAG/links, 46 units/23 groups, required fields | Documentation checker and review |
 | V-DG0 | Contract/core | Rust 1.95.0 fmt/Clippy, 44-test baseline, full dependency graph and source fingerprint | Existing validator |
 | V-DG1-FUNCTION | Real auth/probe/launch/reconcile/CLI/operations | DG1-C01–C11 normal/failure/race cases and functional artifacts | C01 authority, C02 local authentication/transport, C03 native probes and C04 native scopes available; later scopes supplied with each group |
-| V-DG1-SLO | Standalone daemon/CLI, development and self-use | DG1-C12 control and foreground measurements | Harness available (`dg1-macos`, `scripts/measure.py macos`); measurement on the target host pending; no CS-RG prerequisite |
+| V-DG1-SLO | Standalone daemon/CLI, development and self-use | DG1-C12 control and foreground measurements | Qualified on the target host for release `0.1.0-5daee5d-b3fa569e` (protocol-2: cold and warm, three repetitions each, all passed; promoted); no CS-RG prerequisite |
 | V-CS-DOC | CodeSpace bilingual registry/site | Reviewed hashes, existing tests, pinned build, integrity and visual review | Existing commands |
 | V-CS-UPSTREAM | Existing Codex integration | Pin/policy/format/dependencies/adapter/PTY/filesystem/platform gates | Existing; actual platforms required |
 | V-CS-RG | Integrated CodeSpace | CSRG-C07/C08 parity, approvals, replay and saturation SLO | Future |

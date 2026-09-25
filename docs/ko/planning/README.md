@@ -36,7 +36,7 @@ DG-1은 독립 CLI/daemon·개발 workload·자기 적용을 검증한다. CS-RG
 | 마일스톤 | 소유 | 예정 작업 commit 수 | 예정 PR 묶음 수 | 현재 구현 |
 | --- | --- | --- | --- | --- |
 | [DG-0](milestones/DG-0.md) | DevGuard | 실제 초기 commit 1개에 대한 이행 기록 | 과거 PR 재구성 없음 | 계약·fake backend 구현 |
-| [DG-1](milestones/DG-1.md) | DevGuard | 12 | 6 | 진행 중: C01 설정·저장소와 C02 인증 transport; 실행 닫힘 |
+| [DG-1](milestones/DG-1.md) | DevGuard | 12 | 6 | 구현(C01–C12); release `0.1.0-5daee5d-b3fa569e`에 대해 macOS SLO qualified |
 | [CS-RG](milestones/CS-RG.md) | CodeSpace | 8 | 4 | 미착수 |
 | [P1-RECOVERY](milestones/P1-RECOVERY.md) | CodeSpace | 6 | 3 | 미착수 |
 | [DG-LINUX](milestones/DG-LINUX.md) | DevGuard + CodeSpace | 6 | 3 | 미착수; 전체 제품 필수 |

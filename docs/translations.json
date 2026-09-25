@@ -14,8 +14,8 @@
       "id": "planning-readme",
       "source": "docs/planning/README.md",
       "translation": "docs/ko/planning/README.md",
-      "reviewed_source_sha256": "55673426697bd5c51c4d2793c4f932a681b12b2335173afa59e24c7cc133524b",
-      "reviewed_translation_sha256": "2fdaeb35ac1ae945180956fe0138bb18bbe8ed06ed86fbc5ff41546236e16c58"
+      "reviewed_source_sha256": "6635c436c2113b2968d1c1b9e9fb99515657797b14f6e858765b419cdc8b9586",
+      "reviewed_translation_sha256": "353c04e02ecf40e8211122d4e9f2a28aa633289a56335f54e0f1a101b2fa6a20"
     },
     {
       "id": "planning-codespace-integration",
@@ -56,8 +56,8 @@
       "id": "planning-milestones-dg-1",
       "source": "docs/planning/milestones/DG-1.md",
       "translation": "docs/ko/planning/milestones/DG-1.md",
-      "reviewed_source_sha256": "d46581814563f7486fc5bf3e164d4ae19343235ef3fca502c04ccd6a9d04a55f",
-      "reviewed_translation_sha256": "ed2e2bb85ca1a094ac0acb27a1fd1647007803a71cbe8d269e80e6d2fe9157bf"
+      "reviewed_source_sha256": "10de8d6b2d7a23b8f4ccd934456ef538ac8693b394d54b8bd946eace7028daf6",
+      "reviewed_translation_sha256": "46d250ef90658382b38ef578d6f057b0a9c2aa1a3804b27674e8b7cf027257a9"
     },
     {
       "id": "planning-milestones-dg-adapters",
@@ -98,8 +98,8 @@
       "id": "planning-verification",
       "source": "docs/planning/verification.md",
       "translation": "docs/ko/planning/verification.md",
-      "reviewed_source_sha256": "41e5cb71a2f91be18776ea1e82527a2041a775327d50e0fe494fde2d68a6edbf",
-      "reviewed_translation_sha256": "ced531f12cea1d7db5f9ea21057ae2d80fbcf8aa123d0d418e18c4ce7a5fbf90"
+      "reviewed_source_sha256": "589c32a9912342cfac0241052988a23521a52c2535f83ab32b8a1eeac6ed4dd3",
+      "reviewed_translation_sha256": "6781e0273b043b0636ece372fc5fe79e533ce65642b67ed9596bee274216c7c7"
     },
     {
       "id": "operations",

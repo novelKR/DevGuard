@@ -9,7 +9,7 @@
 | V-DOC-DG | 이번 DevGuard 문서/메타데이터 | checksum·license·ID·DAG·링크·46작업/23묶음·필수 항목·상태 보존 | 문서 검토 및 아래 재현 검사 가능 |
 | V-DG0 | contract/core, DevGuard | Rust1.95.0 fmt/clippy·44개 계약·의존 graph·source fingerprint | 기존 validator 제공 |
 | V-DG1-FUNCTION | 실제 auth/probe/launch/reconcile/CLI/운영 | DG1-C01~C11 정상·실패·경쟁 및 기능 artifact | C01 authority·C02 로컬 인증/transport·C03 native probe·C04 native scope 제공; 후속 범위는 각 묶음에서 제공 |
-| V-DG1-SLO | 독립 CLI/daemon·개발·self-use | DG1-C12 개발/foreground 및 standalone control 측정 | Harness 제공(`dg1-macos`, `scripts/measure.py macos`); 대상 호스트 측정 대기; CS-RG 기능을 선행 요구하지 않음 |
+| V-DG1-SLO | 독립 CLI/daemon·개발·self-use | DG1-C12 개발/foreground 및 standalone control 측정 | 대상 호스트에서 release `0.1.0-5daee5d-b3fa569e`에 대해 qualified(protocol-2: cold·warm 각 세 반복 모두 통과, 승격); CS-RG 기능을 선행 요구하지 않음 |
 | V-CS-DOC | CodeSpace 한·영 registry/site | paired hash·기존 docs tests·고정 환경 build·integrity·화면 검토 | 기존 명령 제공 |
 | V-CS-UPSTREAM | CodeSpace 기존 Codex qualification | pin/policy/format/dependency/adapter/PTY/filesystem/platform gates | 기존 제공, 실제 platform별 수행 |
 | V-CS-RG | CodeSpace 결합 | CSRG-C07/C08의 모드 동등성·승인·replay·관제 포화 SLO | 미구현 |
