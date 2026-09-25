@@ -153,6 +153,7 @@ C12 증거는 다음을 포함한다.
   - 더는 실행 중이 아닌 target에 대한 상태 응답
   - 유효하지 않은 종료와 연결 유실
   - 소비자별 부하, receipt, 유효성과 서비스 확인
+  - 증거 기록 스레드. 디스크가 느려도 표본 스레드는 늦어지지 않고, 기록하지 못한 줄은 모두 세며, 끝나지 않는 기록 스레드는 오류다. Stage에 둔 바이너리의 hash, 각 위치의 디스크, warm 실행의 시각 갱신도 시험한다.
   - 순서를 지킨 구간·반복·조합·실행 판정
   - 승격이 기대는 재계산. 바뀐 보고, rehearsal, 부분 계획, 다시 계산되지 않는 통과는 거절한다.
 - **측정**: 사용자가 확인한 시간에 qualification 호스트의 설치 release에 대해 `scripts/measure.py macos`를 실행한다. Source·artifact·정책·환경·harness hash를 담은 run header를 기록한다. 반복마다 원시 표본·receipt·보고를 보존하고, 모든 판정을 담은 요약을 쓴다. Rehearsal이나 headless 실행은 inconclusive로 기록한다. Qualified 실행만 승격하며, 승격 기록은 서비스가 그 release를 실행한다는 검증과 함께 보존한다.

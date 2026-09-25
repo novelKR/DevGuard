@@ -149,6 +149,7 @@ C12 evidence covers:
   - status answers about a target that no longer runs;
   - terminations that were not effective, and connection losses;
   - per-consumer load, receipts, validity and service checks;
+  - the evidence writers: a slow disk never delays a sampling thread, every line that cannot be written is counted, and a writer that does not finish is an error; the staged binary's hash, each location's disk and the warm touch;
   - the interval, repetition, combination and run verdicts in their order;
   - the recomputation promotion relies on, which refuses changed reports, rehearsals, partial plans and passes that do not recompute.
 - **Measurement**: `scripts/measure.py macos` against the installed release on the qualification host, in a window the user confirms. It records the run header with source, artifact, policy, environment and harness hashes. For each repetition it keeps the raw samples, receipts and report, and it writes the summary with every verdict. A rehearsal or a headless run is recorded as inconclusive. Only a qualified run is promoted, and the promotion record is kept with the verification that the service runs that release.

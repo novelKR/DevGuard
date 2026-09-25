@@ -98,8 +98,8 @@
       "id": "planning-verification",
       "source": "docs/planning/verification.md",
       "translation": "docs/ko/planning/verification.md",
-      "reviewed_source_sha256": "98cdb6d0208bae7fb6b7506c0c0d02e339db0427755d8920b53986c04b166eb6",
-      "reviewed_translation_sha256": "f98291b7a0d0832b3382d707e24ea37ea3d3c4e8ba0bb8a058f23a645a6637f7"
+      "reviewed_source_sha256": "41e5cb71a2f91be18776ea1e82527a2041a775327d50e0fe494fde2d68a6edbf",
+      "reviewed_translation_sha256": "ced531f12cea1d7db5f9ea21057ae2d80fbcf8aa123d0d418e18c4ce7a5fbf90"
     },
     {
       "id": "operations",
