@@ -16,15 +16,16 @@ devguard-qualify control --helper PATH --duration-s N --out FILE
               [--status-interval-ms N] [--terminate-period-s N] [--admission-wait-s N]
 devguard-qualify work cpu --threads N --seconds N
 devguard-qualify work memory --mib N --seconds N
-devguard-qualify work io --dir DIR --mib N
-devguard-qualify work output --mib N
+devguard-qualify work io --dir DIR --mib N [--seconds N]
+devguard-qualify work output --mib N [--seconds N]
 devguard-qualify work slow-reader
 
 control registers as a dev-cli owner of the canonical authority, keeps one target running for
 status calls and starts a fresh target for each termination, all through the given
-devguard-launch, and writes one JSON sample per line to the new file FILE. SIGINT or SIGTERM
-ends sampling early; the probe still settles its targets. work runs one bounded workload and
-prints what it did.";
+devguard-launch, and writes one JSON sample per line to the new file FILE. SIGINT, SIGTERM or SIGHUP
+ends sampling early, as does the loss of the probe's parent; the probe still settles its targets,
+which live at most ten minutes beyond the sampling. work runs one bounded workload and prints
+what it did.";
 
 static STOP: AtomicBool = AtomicBool::new(false);
 
@@ -127,9 +128,12 @@ fn probe(args: &[String]) -> Result<String, String> {
         .open(required(&flags, "--out")?)
         .map_err(|error| format!("cannot create the sample file: {error}"))?;
     // SAFETY: the handler only stores to an atomic, which is async-signal-safe.
+    // A closed terminal (SIGHUP) stops sampling like SIGINT and SIGTERM, so
+    // the probe still settles its targets.
     unsafe {
-        libc::signal(libc::SIGINT, stop as *const () as libc::sighandler_t);
-        libc::signal(libc::SIGTERM, stop as *const () as libc::sighandler_t);
+        for signal in [libc::SIGINT, libc::SIGTERM, libc::SIGHUP] {
+            libc::signal(signal, stop as *const () as libc::sighandler_t);
+        }
     }
     let paths = AuthorityPaths::current_user().map_err(|error| error.message)?;
     let mut out = BufWriter::new(out);
@@ -155,15 +159,19 @@ fn workload(args: &[String]) -> Result<String, String> {
             json!({"work": "memory", "mib": mib, "passes": work::memory(mib, seconds)})
         }
         Some("io") => {
-            let flags = parse(rest, &["--dir", "--mib"])?;
+            let flags = parse(rest, &["--dir", "--mib", "--seconds"])?;
             let directory = PathBuf::from(required(&flags, "--dir")?);
             let mib = number(&flags, "--mib", None)? as usize;
-            json!({"work": "io", "bytes_verified": work::io(&directory, mib).map_err(io_error)?})
+            let seconds = Duration::from_secs(number(&flags, "--seconds", Some(0))?);
+            let verified = work::io_paced(&directory, mib, seconds).map_err(io_error)?;
+            json!({"work": "io", "bytes_verified": verified})
         }
         Some("output") => {
-            let flags = parse(rest, &["--mib"])?;
+            let flags = parse(rest, &["--mib", "--seconds"])?;
             let mib = number(&flags, "--mib", None)? as usize;
-            let written = work::output(mib, &mut std::io::stdout().lock()).map_err(io_error)?;
+            let seconds = Duration::from_secs(number(&flags, "--seconds", Some(0))?);
+            let written =
+                work::output(mib, seconds, &mut std::io::stdout().lock()).map_err(io_error)?;
             // Standard output is the payload, so the summary goes to standard error.
             eprintln!("{}", json!({"work": "output", "bytes": written}));
             return Ok(String::new());

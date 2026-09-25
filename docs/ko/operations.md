@@ -2,7 +2,7 @@
 
 [English](../operations.md) | [한국어](operations.md)
 
-C01은 명시 bootstrap·고정 저장소를, C02는 인증된 로컬 transport를, C03은 native macOS boot·프로세스·호스트 압력 증거를, C04는 협조적 정책 readback과 scope 증거를, C05는 fenced launch helper를, C06은 대조를, C07은 `devguard` 명령행 owner를, C08은 Cargo adapter를, C09는 패키지로 만든 release를 현재 사용자 LaunchAgent로 설치하는 기능을, C10은 부모 lease와 후보 authority를, C11은 upgrade와 repair를, C12는 SLO 판정 harness를 제공한다. PR과 병합 후 main 전달 증거는 구현과 별도로 추적한다. devguardd serve는 이 증거로 journal을 활성화하는 foreground 서비스를 실행하고 wire 등록·fenced launch·대조를 연다. `devguard exec`는 이 서비스를 통해 명령을 실행하고, `devguard doctor`는 이를 진단한다. 정상 authority는 현재 macOS만 지원하며 Linux CI는 이식 가능한 계약과 제한된 fixture를 검사한다. DG-LINUX 제어 자격을 부여하지 않는다.
+C01은 명시 bootstrap·고정 저장소를, C02는 인증된 로컬 transport를, C03은 native macOS boot·프로세스·호스트 압력 증거를, C04는 협조적 정책 readback과 scope 증거를, C05는 fenced launch helper를, C06은 대조를, C07은 `devguard` 명령행 owner를, C08은 Cargo adapter를, C09는 패키지로 만든 release를 현재 사용자 LaunchAgent로 설치하는 기능을, C10은 부모 lease와 후보 authority를, C11은 upgrade와 repair를, C12는 SLO qualification harness를 제공한다. PR과 병합 후 main 전달 증거는 구현과 별도로 추적한다. devguardd serve는 이 증거로 journal을 활성화하는 foreground 서비스를 실행하고 wire 등록·fenced launch·대조를 연다. `devguard exec`는 이 서비스를 통해 명령을 실행하고, `devguard doctor`는 이를 진단한다. 정상 authority는 현재 macOS만 지원하며 Linux CI는 이식 가능한 계약과 제한된 fixture를 검사한다. DG-LINUX 제어 자격을 부여하지 않는다.
 
 ## 제공 명령
 
@@ -72,16 +72,21 @@ target/package/<release-id>/bin/devguardd stage --package target/package/<releas
 SLO protocol은 설치된 release를 그 호스트에서 측정한다(C12):
 
 ```sh
-cargo build --release --locked -p devguard-qualify
+"$HOME/Library/Application Support/DevGuard/releases/<release-id>/bin/devguard" exec --adapter cargo --wait 10m -- cargo build --release --locked -p devguard-qualify
 python3 scripts/measure.py macos --release <release-id> --qualify-bin target/release/devguard-qualify --out <새 증거 디렉터리> --work <새 작업 디렉터리> [--rehearsal]
 python3 scripts/measure.py promote --summary <증거 디렉터리>/summary.json
 ```
 
-`measure.py macos`에는 다음이 필요하다. 서비스가 건강하고 그 release를 실행해야 한다. Cargo 부하를 위해 Rust 1.95.0이 `PATH` 맨 앞에 있어야 한다. `/Applications`에 Google Chrome이 있고 다른 Chrome은 실행 중이지 않아야 한다. 실행 내내 호스트를 비워 두어야 한다. 약 다섯 시간이 걸린다. 두 조합을 세 번씩 반복하며, 각 반복은 idle 10분과 최소 30분의 부하다. 실행하면 fixture 창을 열어 앞으로 가져온다. macOS가 이를 허용하지 않으면 창을 한 번 click한다. 그 뒤에는 호스트를 쓰지 않는다. 다른 application이 전면에 오거나, 화면이 잠기거나, visibility가 바뀌면 그 구간은 `inconclusive`가 된다.
-- **산출물.** 원시 표본, receipt, 반복마다의 `report.json`은 `--out` 아래에 둔다. Source, Cargo target, 브라우저 profile은 `--work` 아래에 두며, 실행 뒤 지워도 된다. `summary.json`은 조합별 판정과 전체 판정을 담는다.
-- **종료 상태.** 모든 반복이 통과했을 때만 0으로 끝나고, 하나라도 실패하면 1, inconclusive면 2, 중단되면 130이다. 중단되면 시작한 모든 owner와 probe를 정리한다.
-- **Rehearsal.** `--rehearsal`은 harness를 입증하려고 조합마다 짧은 반복을 한 번 실행하며, 언제나 inconclusive다.
-- **승격.** `promote`는 qualified 실행에 대해서만 release의 판정 기록을 쓰고, 서비스가 여전히 그 release를 실행하는지 검증한다. [계약](contracts.md#slo-판정-c12)을 참고한다.
+`measure.py macos`는 다음이 모두 성립해야 시작한다.
+- 서비스가 그 release를 실행하고, `devguard doctor`가 요구를 만족하며, 과금된 것이 없다.
+- Cargo 부하를 위해 Rust 1.95.0이 `PATH` 맨 앞에 있다.
+- `/Applications`에 Google Chrome이 있고 다른 Chrome은 실행 중이지 않다.
+
+실행 내내 호스트를 비워 두어야 한다. 약 다섯 시간이 걸린다. 두 조합을 세 번씩 반복하며, 각 반복은 idle 10분과 최소 30분의 부하다. 실행 전체에 fixture 창 하나를 유지하며 그 창을 앞으로 가져온다. macOS가 이를 허용하지 않으면 창을 한 번 click한다. 그 뒤에는 호스트를 쓰지 않는다. 다른 application이 전면에 오거나, 화면이 잠기거나, visibility가 바뀌면 그 구간은 `inconclusive`가 된다. 방해 금지 모드를 켜 두면 알림이 focus를 가져가지 않는다.
+- **산출물.** 원시 표본, receipt, 반복마다의 `report.json`은 `--out` 아래에 둔다. Source, Cargo target, 브라우저 profile은 `--work` 아래에 두며, 실행 뒤 지워도 된다. `summary.json`은 조합별 판정과 전체 판정, 목표별 상태(측정함, 해당 없음, 실행하지 않음)를 담는다.
+- **종료 상태.** 실행이 qualified일 때만 0으로 끝나고, 반복이 실패하면 1, inconclusive면 2, 중단되면 130, harness 자체가 실패하면 3이다. 중단이나 실패가 일어나면 시작한 모든 owner, probe, 브라우저에 중지를 요청하며, 각 owner는 자기 scope를 정리한다.
+- **Rehearsal.** `--rehearsal`은 harness를 입증하려고 조합마다 짧은 반복을 한 번 실행하며, 언제나 inconclusive다. `--headless`는 전면을 차지하지 않고 입증한다.
+- **승격.** `promote`는 보존한 보고로 판정을 다시 계산한다. 정책·호스트·release가 바뀌지 않았고 서비스가 여전히 그 release를 실행하는 qualified 실행에 대해서만 release의 qualification 기록을 쓴다. [계약](contracts.md#slo-qualification-c12)을 참고한다.
 
 `devguard exec [--project ID] [--adapter auto|generic|cargo|cargo-pipeline] [--wait DURATION] [--cpu MILLICPU] [--memory SIZE] [--tasks N] [--receipt PATH] [--lease CONSUMER/GENERATION/ATTEMPT --lease-token-fd N] -- PROGRAM [ARGS...]`는 명령을 admission하고 `devguard-launch`로 시작한 뒤 끝날 때까지 기다린다. 프로그램과 인자는 `--` 뒤에 두며 shell은 사용하지 않는다. 명령의 종료값으로 끝나거나 그 signal로 끝나며, 아무것도 시작하지 않았으면 125로 끝난다. `--wait`가 없으면 거절 즉시 끝나고, `--wait`가 있으면 용량·압력 거절을 기한까지 다시 시도하며, 호스트의 작업 용량보다 큰 요청은 즉시 거절한다. `--receipt`는 private JSON receipt를 기록한다. `--lease`는 명령을 그 부모 lease의 자식으로 만들며, descriptor N에서 읽은 token으로 lease의 남은 예산에 대해 admission한다. `devguard doctor`는 JSON 진단을 출력하며, `--require admission,registration,macos-cooperative`를 주면 요구 사항이 하나라도 충족되지 않을 때 실패한다. [계약 문서](contracts.md#명령행-owner)를 참조한다.
 
@@ -280,8 +285,18 @@ launchd gui domain이 없는 session에서는 launchd 경우를 `not_run`으로 
 
 `dg1-macos`도 macOS에서만 실행하며 먼저 `devguard-launch`를 build한다. SLO 자체가 아니라 SLO protocol의 harness를 검사한다.
 - 제한된 작업 부하
-- 격리 authority에 대한 제어 probe: 자기 소유로 실행 중인 target의 상태 표본, 확인된 뒤 scope 종료로 해제되는 종료, 중지되어도 target을 정리하는 경우, admit되지 않아 아무것도 과금하지 않는 target
-- Protocol의 nearest-rank 백분위수, 누락 표본, 유효성, 판정 규칙
+- 격리 authority에 대한 제어 probe:
+  - 자기 소유로 실행 중인 target의 상태 표본
+  - scope 종료로 해제되는 유효한 종료
+  - 표본 채취 전이나 도중에 중지되어도 모든 target을 정리하는 경우
+  - admit되지 않아 아무것도 과금하지 않는 target
+  - READY 전에 끝나 grant를 정리하도록 보고되는 helper
+- Probe의 놓친 slot 계산
+- Protocol의 규칙:
+  - 누락 표본을 포함한 nearest-rank 백분위수
+  - 유효한 종료와 소비자별 부하
+  - receipt, 유효성, 판정의 순서
+  - 승격이 기대는 재계산
 - Headless Chrome으로 관측한 전경 fixture. 표본은 도착하지만 결코 유효한 관측이 아니다
 
 Chrome이 없으면 fixture case를 `not_run`으로 기록하고 suite는 `incomplete`를 보고한다. SLO protocol 자체는 `measure.py macos`이며, 따로 비워 둔 시간에 대상 호스트에서만 실행한다.

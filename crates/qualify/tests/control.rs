@@ -104,6 +104,7 @@ fn the_probe_measures_status_and_termination_on_its_own_targets() {
         assert_eq!(termination["outcome"], "acknowledged", "{termination}");
         assert!(termination["signalled"].as_u64().unwrap() >= 1);
         assert_eq!(termination["complete"], true);
+        assert_eq!(termination["killed_by_probe"], false, "{termination}");
         assert_eq!(termination["phase"], json!(AttemptPhase::Released));
         assert_eq!(termination["release_reason"], "scope_terminated");
         let ack = termination["ack_ms"].as_f64().unwrap();
@@ -118,6 +119,8 @@ fn the_probe_measures_status_and_termination_on_its_own_targets() {
         .all(|admission| admission["outcome"] == "admitted"));
     let target = of(&samples, "status_target");
     assert_eq!(target.len(), 1);
+    assert_eq!(target[0]["outcome"], "settled");
+    assert_eq!(target[0]["killed_by_probe"], false);
     assert_eq!(target[0]["phase"], json!(AttemptPhase::Released));
     assert_eq!(summary["status_target_released"], true);
     nothing_charged(&authority);
@@ -186,5 +189,63 @@ fn a_target_that_is_never_admitted_starts_no_probe_and_charges_nothing() {
     record(
         "control-refused",
         json!({"error": error.message, "admission": admissions[0]}),
+    );
+}
+
+#[test]
+fn a_stop_in_the_middle_of_sampling_settles_every_target() {
+    let (authority, _directory) = authority();
+    let mut options = fast();
+    options.duration = Duration::from_secs(60);
+    let stop = AtomicBool::new(false);
+    let started = Instant::now();
+    let mut out = Vec::new();
+    let summary = std::thread::scope(|scope| {
+        scope.spawn(|| {
+            std::thread::sleep(Duration::from_millis(2500));
+            stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        });
+        run(authority.paths(), &helper(), &options, &mut out, &stop).unwrap()
+    });
+    assert!(started.elapsed() < Duration::from_secs(40));
+    let samples = samples(out);
+    assert!(!of(&samples, "status").is_empty());
+    assert!(!of(&samples, "terminate").is_empty());
+    assert_eq!(summary["status_target_released"], true);
+    assert_eq!(summary["stopped_early"], true);
+    nothing_charged(&authority);
+    record(
+        "control-stopped-mid-run",
+        json!({"summary": summary, "statuses": of(&samples, "status").len(),
+               "terminations": of(&samples, "terminate").len()}),
+    );
+}
+
+#[test]
+fn a_helper_that_ends_before_ready_is_reported_and_charges_nothing() {
+    let (authority, _directory) = authority();
+    let mut out = Vec::new();
+    // Not a launch helper: it exits at once without reporting READY.
+    let error = run(
+        authority.paths(),
+        std::path::Path::new("/usr/bin/false"),
+        &fast(),
+        &mut out,
+        &AtomicBool::new(false),
+    )
+    .unwrap_err();
+    let samples = samples(out);
+    let target = of(&samples, "status_target");
+    assert_eq!(target.len(), 1);
+    assert_eq!(target[0]["outcome"], "error");
+    assert_eq!(target[0]["stage"], "helper");
+    assert!(target[0]["message"]
+        .as_str()
+        .unwrap()
+        .contains("reported HelperExited"));
+    nothing_charged(&authority);
+    record(
+        "control-helper-exited",
+        json!({"error": error.message, "status_target": target[0]}),
     );
 }

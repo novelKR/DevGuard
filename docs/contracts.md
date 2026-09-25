@@ -256,62 +256,72 @@ DG1-C11 replaces and repairs the installed service without losing or duplicating
 
 ## SLO qualification (C12)
 
-DG1-C12 measures a release instead of inferring responsiveness from functional success. The harness is `devguard-qualify` (`crates/qualify`, never part of a release package) with `scripts/measure.py`. It measures the installed service's own release, its policy and its host; a worktree binary is never the measured artifact.
+DG1-C12 measures a release instead of inferring responsiveness from functional success. The harness is `devguard-qualify` (`crates/qualify`, never part of a release package) with `scripts/measure.py`. It measures the installed service's own release (or the recovery copy the service runs), its policy and its host; a worktree binary is never the measured artifact.
 
-- **Control probe.** `devguard-qualify control` registers as an ordinary `dev-cli` owner of the canonical authority, like `devguard`, with no path or authority override. It measures only attempts it owns: small `/bin/sleep` targets (50 mCPU, 16 MiB and 2 tasks). Each is admitted, committed and started through the measured release's `devguard-launch`, and observed before it is reaped.
-  - A status sample is a `Lookup` of its running target through a fresh registered session: connect, hello, authenticate, register, lookup. It takes one each second, the way the command-line owner makes every call.
-  - A termination sample starts a fresh target every 20 s and times `Terminate(SIGTERM)` until `Terminated`. The target's exit and the attempt's release are reported separately, because delivery of a signal is not release evidence.
-  - An admission refused for capacity or pressure is retried and recorded, but it is not a latency sample.
-  - SIGINT or SIGTERM ends sampling; the probe still settles every target it started.
-- **Foreground fixture.** The fixture is a fixed local page, `crates/qualify/fixture/foreground.html`, hashed in every report. It runs in Google Chrome with a fresh profile, driven over `--remote-debugging-pipe`: there is no listening port and no flag that changes scheduling or throttling.
-  - **Input.** The browser synthesizes it with `Input.dispatch*`: a key, a click or a wheel step every 500 ms ± 100 ms.
-  - **Input to next paint.** It runs from the event's timestamp to the next frame after the input's visible change, marked by a message posted from the next animation frame. It is raised to the browser's own Event Timing duration when the browser reports one. It excludes the operating system's input path before the browser.
+- **Control probe.** `devguard-qualify control` registers as an ordinary `dev-cli` owner of the canonical authority, like `devguard`, with no path or authority override. It measures only attempts it owns: small `/bin/sleep` targets (50 mCPU, 16 MiB and 2 tasks). Each target is admitted, committed and started through the measured release's `devguard-launch`, in the working directory its execution meaning names, and observed before it is reaped. A target lives at most ten minutes beyond the sampling, so an abruptly killed probe leaves no target behind for long.
+  - **Status.** A status sample is a `Lookup` of the running target through a fresh registered session: connect, hello, authenticate, register, lookup. The probe takes one each second, the way the command-line owner makes every call. An answer about a target that no longer runs is not a status sample.
+  - **Termination.** Every 20 s the probe starts a fresh target and times `Terminate(SIGTERM)` until `Terminated`. The sample is effective only if the service signalled the scope completely and the target then exited by itself. When the target does not exit, the probe stops its own child, marks the sample as forced, and does not count that release as evidence. The target's exit and the attempt's release are reported separately.
+  - **Failures to start.** A target that cannot be started is recorded with its stage and error, and the error is kept as a missing sample. A helper that ends before READY is reported as `HelperExited`, as the command-line owner does, so its grant is settled.
+  - **Admission.** An admission refused for capacity or pressure is retried and recorded, but a target that waits out its admission is not a sample.
+  - **Missed slots.** Every slot that passes while an earlier call is still in flight is recorded as missed.
+  - **Stopping.** SIGINT, SIGTERM, SIGHUP or the loss of its parent ends sampling; the probe still settles every target it started.
+- **Foreground fixture.** The fixture is a fixed local page, `crates/qualify/fixture/foreground.html`, hashed in every run and repetition report. It runs in one Google Chrome instance per run with a fresh profile, driven over `--remote-debugging-pipe`: there is no listening port and no flag that changes scheduling or throttling. Each repetition reloads the page.
+  - **Input.** The browser synthesizes it with `Input.dispatch*`: a key, a click or a wheel step in each slot of 500 ms ± 100 ms. A slot that passes while an earlier dispatch is still in flight is a missing sample.
+  - **Input to next paint.** It runs from the event's timestamp to the next frame after the input's visible change, marked by a message posted from the next animation frame. It is raised to the browser's own Event Timing duration when the browser reports one. The browser reports none for wheel input, so wheel samples rest on the page's estimate alone. The measure excludes the operating system's input path before the browser.
   - **Frame stall.** A gap of more than 500 ms between consecutive animation frames.
-- **Load.** Six consumers run concurrently through the measured release's `devguard exec --wait`, so admission, pressure and queueing are the service's own. Nothing bypasses admission, and every run's receipt is kept.
+  - **Late replies.** A drain whose reply comes late keeps that reply, so its data is not lost.
+  - **Crashes.** A crashed page or browser fails the interval.
+- **Load.** Six consumers run concurrently through the measured release's `devguard exec --wait`, so admission, pressure and queueing are the service's own. Every run's receipt is kept, and a run that ends at once without success is followed by a pause.
 
   | Consumer | Workload | Budget |
   | --- | --- | --- |
-  | Cargo | The release's own source (`--adapter cargo-pipeline`): a workspace build, then the core and contract tests | Cargo default |
-  | CPU | 2 threads | 2 CPU, 256 MiB, 8 tasks |
-  | Memory | 1.5 GiB touched and held | 250 mCPU, 2 GiB, 4 tasks |
-  | I/O | 512 MiB written, synced, read back and removed | 250 mCPU, 256 MiB, 4 tasks |
-  | Output pressure | 256 MiB to standard output | 250 mCPU, 128 MiB, 4 tasks |
-  | Slow input | Reads one line per 100 ms | 100 mCPU, 64 MiB, 4 tasks |
+  | Cargo | The release's own source (`--adapter cargo-pipeline`): a workspace build, then the core and contract tests, with one compiler job | 1 CPU, 2 GiB, 24 tasks |
+  | CPU | 1 thread | 1 CPU, 128 MiB, 4 tasks |
+  | Memory | 1 GiB touched and held | 100 mCPU, 1.25 GiB, 4 tasks |
+  | I/O | 256 MiB written, synced, read back and removed, then idle until 30 s have passed | 100 mCPU, 384 MiB, 4 tasks |
+  | Output pressure | 256 MiB to standard output over 30 s | 250 mCPU, 128 MiB, 4 tasks |
+  | Slow input | Reads one line per 100 ms, fed once the payload runs | 50 mCPU, 64 MiB, 4 tasks |
 
-  With the probe's targets, the concurrent budgets fit the local host's work capacity (5,500 mCPU, 11.75 GiB and 144 tasks).
+  Together with the probe's targets, the budgets total about 2,600 mCPU, 4 GiB and 48 tasks. That fits half the local host's work capacity (5,500 mCPU, 11.75 GiB and 144 tasks), which is the Constrained capacity. Memory warning therefore neither stops the load nor starves the probe's targets. Under Critical pressure nothing is admitted, and the interval is inconclusive.
 - **Protocol.**
-  - Two combinations: `cold`, where each Cargo build uses a fresh target directory, and `warm`, which reuses a target directory built before the repetition.
+  - There are two combinations. In `cold`, each Cargo build uses a fresh target directory of its own, which is removed after the interval. In `warm`, the Cargo builds reuse a target directory built before the repetition; a warm repetition whose build fails is not measured.
   - Each combination runs three repetitions: 10 minutes idle, then at least 30 minutes of load.
-  - Work started before the load deadline is observed to completion, and nothing starts after it.
+  - Work started before the load deadline is observed to completion, within 30 minutes. Nothing starts after the deadline.
+  - The run refuses to start while anything is charged. It refuses to start unless `devguard doctor` reports a ready service. It records the harness's source, its binary and the service's configuration fingerprint.
 - **Percentiles and missing samples.** p99 is nearest-rank over one interval's raw values.
-  - A missing sample ranks above every value: an input never handled or never painted, or a status call or termination without a reply.
+  - A missing sample ranks above every value. Missing samples include: an input skipped, never handled or never painted; a status call without a reply, about a target that no longer runs, or missed; and a termination with an error or a missed slot.
   - A missing input also counts as a response over one second.
 - **Validity.** An interval is a valid observation only if all of these hold:
   - the fixture runs headful and stays the frontmost application;
   - its page stays visible and focused, with no visibility or focus change;
   - the screen stays unlocked;
-  - the service runs the measured release throughout;
-  - every metric has at least 90% of its schedule (80% for terminations);
-  - admitted load ran for at least half of the load interval.
+  - validity samples cover 90% of the interval;
+  - the service runs the measured release, under the same process, at every check (one a minute);
+  - nothing else was charged when the interval began;
+  - the probe finished normally;
+  - the load completed within its limit.
 
-  `caffeinate` keeps the display awake. An invalid interval is `inconclusive`, never a pass.
-- **Verdicts.** An interval passes only if every target holds:
+  `caffeinate` keeps the display and the system awake. An invalid interval is `inconclusive`, never a pass.
+- **Verdicts.** An invalid interval is inconclusive. Otherwise an interval fails if any target is missed:
   - status: p99 ≤ 500 ms and no connection loss;
-  - termination acknowledgement: p99 ≤ 1 s, no connection loss, and every signalled target released;
+  - termination acknowledgement: p99 ≤ 1 s, no connection loss, every termination effective, and every effective target released;
   - input to next paint: p99 ≤ 100 ms and none over 1 s;
-  - frames: no stall;
-  - load: no uncertain execution, connection loss or duplicate launch;
-  - nothing left charged.
+  - frames: no stall, and no crash;
+  - load: no uncertain execution, connection loss or duplicate launch, checked against the journal;
+  - the harness's own attempts: all released within a minute.
 
-  A repetition passes only if both its idle baseline and its load pass; a failing idle baseline makes it inconclusive. A combination is qualified only when all three repetitions pass, and values are never pooled across repetitions. A rehearsal (shortened intervals) or a headless fixture is always inconclusive.
-- **Promotion.** `measure.py promote` accepts only a qualified summary of the full protocol whose run header and release manifest are unchanged, while the service still runs that release.
-  - It writes `qualifications/<release>.json` in the private state directory: a read-only `devguard-release-qualification/v1` record.
-  - The record names the release, its manifest and artifact hashes, the policy, the environment, the harness and plan, every repetition's verdict, and the evidence hashes.
-  - It then verifies that the service runs that release. The release manifest stays unchanged: `slo_qualified: false` describes the package, not the promotion.
+  With every target met, an interval is still inconclusive in two cases. The first is too few samples: under 90% of the schedule, or 80% for terminations whose targets were refused for pressure. The second is load that was not the declared load: every consumer needs a successful run and at least a quarter of the interval, and admitted load needs half of it. A repetition passes only if both its idle baseline and its load pass; a failing idle baseline makes it inconclusive. A combination is qualified only when all three repetitions pass, and values are never pooled across repetitions. A run is qualified only when both combinations are, for the full protocol, on the approved 8-logical-CPU, 16 GiB target. A rehearsal (shortened intervals) or a headless fixture is always inconclusive.
+- **Promotion.** `measure.py promote` recomputes the verdict from the preserved repetition reports, checking their hashes against the summary.
+  - It refuses unless the run is qualified.
+  - It also refuses if the release manifest changed, the service no longer runs the release, the policy differs from the measured one, or the host differs from the measured one. The policy is the host.toml hash, the configuration fingerprint and the capabilities; the host is its OS build, CPU, logical CPUs and memory.
+  - It writes `qualifications/<release>.json` in the private state directory: a read-only `devguard-release-qualification/v1` record. It is written through a temporary file and a link, which never replaces an existing record.
+  - The record names the release, its manifest and artifact hashes, the policy, the environment, the harness and plan, every repetition's verdict, the evidence hashes, and the verification that the service runs that release. The release manifest stays unchanged: `slo_qualified: false` describes the package, not the promotion.
+- **Interruption.** SIGINT, SIGTERM or SIGHUP, or a harness failure, stops new work. The harness then asks every live owner, probe and browser to stop, and each owner settles its scope. It exits 130 when interrupted and 3 when it failed, and nothing is promoted.
 - **Limits.**
   - This qualifies standalone control, development and bounded self-use on the measured host, artifact and policy only; another host or release needs its own measurement.
   - Passing the fixture does not guarantee every website.
-  - Linux enforcement and CodeSpace integration remain unqualified.
+  - Protected-data GC is not applicable in DG-1, and CodeSpace MCP, approvals and replay belong to CSRG-C08.
+  - Linux enforcement remains unqualified.
 
 ## Durable admission and launch
 

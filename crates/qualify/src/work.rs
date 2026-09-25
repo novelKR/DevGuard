@@ -77,6 +77,17 @@ pub fn io(directory: &Path, mib: usize) -> std::io::Result<u64> {
     Ok(verified)
 }
 
+/// Like `io`, then idle until `duration` has passed since it began, so a
+/// consumer's I/O stays at a bounded average rate.
+pub fn io_paced(directory: &Path, mib: usize, duration: Duration) -> std::io::Result<u64> {
+    let started = Instant::now();
+    let verified = io(directory, mib)?;
+    if let Some(rest) = duration.checked_sub(started.elapsed()) {
+        std::thread::sleep(rest);
+    }
+    Ok(verified)
+}
+
 fn block(index: usize) -> Vec<u8> {
     (0..MIB)
         .map(|offset| (offset.wrapping_mul(31) ^ index) as u8)
@@ -103,15 +114,25 @@ fn write_and_verify(path: &Path, mib: usize) -> std::io::Result<u64> {
     Ok(verified)
 }
 
-/// Write `mib` MiB of text lines to `out` as fast as it accepts them.
-/// Returns the bytes written.
-pub fn output(mib: usize, out: &mut impl Write) -> std::io::Result<u64> {
+/// Write `mib` MiB of text lines to `out`, spread evenly over `duration`
+/// (as fast as `out` accepts them when it is zero). Returns the bytes written.
+pub fn output(mib: usize, duration: Duration, out: &mut impl Write) -> std::io::Result<u64> {
     const LINE: &[u8] = b"devguard output pressure: 0123456789 abcdefghijklmnopqrstuvwxyz\n";
+    const CHUNK: u64 = 64 * 1024;
+    let started = Instant::now();
     let limit = (mib * MIB) as u64;
     let mut written = 0;
     while written < limit {
         out.write_all(LINE)?;
         written += LINE.len() as u64;
+        if written % CHUNK < LINE.len() as u64 {
+            out.flush()?;
+            // Keep to the average rate: wait until this share of the duration has passed.
+            let due = duration.mul_f64(written as f64 / limit as f64);
+            if let Some(rest) = due.checked_sub(started.elapsed()) {
+                std::thread::sleep(rest);
+            }
+        }
     }
     out.flush()?;
     Ok(written)
@@ -151,6 +172,18 @@ mod tests {
     }
 
     #[test]
+    fn paced_io_work_lasts_its_duration() {
+        let directory = tempfile::tempdir().unwrap();
+        let started = Instant::now();
+        assert_eq!(
+            io_paced(directory.path(), 1, Duration::from_millis(200)).unwrap(),
+            MIB as u64
+        );
+        assert!(started.elapsed() >= Duration::from_millis(200));
+        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 0);
+    }
+
+    #[test]
     fn io_work_refuses_a_missing_directory() {
         let directory = tempfile::tempdir().unwrap();
         assert!(io(&directory.path().join("missing"), 1).is_err());
@@ -159,9 +192,18 @@ mod tests {
     #[test]
     fn output_work_writes_at_least_the_requested_size() {
         let mut sink = Vec::new();
-        let written = output(1, &mut sink).unwrap();
+        let written = output(1, Duration::ZERO, &mut sink).unwrap();
         assert_eq!(written, sink.len() as u64);
         assert!(written >= MIB as u64);
+    }
+
+    #[test]
+    fn paced_output_work_spreads_over_its_duration() {
+        let mut sink = Vec::new();
+        let started = Instant::now();
+        output(1, Duration::from_millis(300), &mut sink).unwrap();
+        assert!(started.elapsed() >= Duration::from_millis(250));
+        assert!(sink.len() >= MIB);
     }
 
     #[test]

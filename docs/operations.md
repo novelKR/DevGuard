@@ -72,16 +72,21 @@ target/package/<release-id>/bin/devguardd stage --package target/package/<releas
 The SLO protocol measures the installed release on its host (C12):
 
 ```sh
-cargo build --release --locked -p devguard-qualify
+"$HOME/Library/Application Support/DevGuard/releases/<release-id>/bin/devguard" exec --adapter cargo --wait 10m -- cargo build --release --locked -p devguard-qualify
 python3 scripts/measure.py macos --release <release-id> --qualify-bin target/release/devguard-qualify --out <new evidence directory> --work <new work directory> [--rehearsal]
 python3 scripts/measure.py promote --summary <evidence directory>/summary.json
 ```
 
-`measure.py macos` needs the service healthy and running that release, Rust 1.95.0 first in `PATH` for the Cargo load, Google Chrome in `/Applications` with no other Chrome running, and the host set aside for the whole run. It takes about five hours: two combinations of three repetitions, each 10 minutes idle and at least 30 minutes of load. It opens the fixture window and brings it to the front; if macOS does not let it, click the window once. Afterwards, do not use the host: any other frontmost application, a locked screen or a visibility change makes that interval `inconclusive`.
-- **Output.** Raw samples, receipts and a `report.json` per repetition go under `--out`. Sources, Cargo targets and browser profiles go under `--work`, which can be removed afterwards. `summary.json` gives each combination's verdict and the overall one.
-- **Exit status.** It exits 0 only when every repetition passed, 1 if one failed, 2 if the run was inconclusive, and 130 if interrupted. An interruption settles every started owner and probe.
-- **Rehearsal.** `--rehearsal` runs one short repetition of each combination to prove the harness and is always inconclusive.
-- **Promotion.** `promote` writes the release's qualification record only for a qualified run, and verifies that the service still runs that release. See [contracts](contracts.md#slo-qualification-c12).
+`measure.py macos` refuses to start unless all of these hold:
+- the service runs that release, with `devguard doctor` satisfied and nothing charged;
+- Rust 1.95.0 is first in `PATH` for the Cargo load;
+- Google Chrome is in `/Applications`, and no other Chrome runs.
+
+The host must be set aside for the whole run. It takes about five hours: two combinations of three repetitions, each 10 minutes idle and at least 30 minutes of load. The run keeps one fixture window for the whole run and brings it to the front. If macOS does not let it, click the window once. Afterwards, do not use the host: any other frontmost application, a locked screen or a visibility change makes that interval `inconclusive`. Turning on Do Not Disturb keeps notifications from taking the focus.
+- **Output.** Raw samples, receipts and a `report.json` per repetition go under `--out`. Sources, Cargo targets and the browser profile go under `--work`, which can be removed afterwards. `summary.json` gives each combination's verdict, the overall one, and each target's status (measured, not applicable or not run).
+- **Exit status.** It exits 0 only when the run is qualified, 1 if a repetition failed, 2 if the run was inconclusive, 130 if interrupted and 3 if the harness itself failed. An interruption or a failure asks every started owner, probe and browser to stop, and each owner settles its scope.
+- **Rehearsal.** `--rehearsal` runs one short repetition of each combination to prove the harness and is always inconclusive; `--headless` proves it without taking the front.
+- **Promotion.** `promote` recomputes the verdict from the preserved reports. It writes the release's qualification record only for a qualified run whose policy, host and release are unchanged, while the service still runs that release. See [contracts](contracts.md#slo-qualification-c12).
 
 `devguard exec [--project ID] [--adapter auto|generic|cargo|cargo-pipeline] [--wait DURATION] [--cpu MILLICPU] [--memory SIZE] [--tasks N] [--receipt PATH] [--lease CONSUMER/GENERATION/ATTEMPT --lease-token-fd N] -- PROGRAM [ARGS...]` admits the command, starts it through `devguard-launch` and waits for it. The program and its arguments follow `--`, and no shell is used. It exits with the command's status or ends by its signal, and exits 125 when nothing was started. Without `--wait` a denial ends it at once; `--wait` retries capacity and pressure denials until the deadline, and refuses at once a request larger than the host's work capacity. `--receipt` writes a private JSON receipt. `--lease` makes the command a child of that parent lease, admitted against its remainder with the token read from descriptor N. `devguard doctor` prints a JSON diagnosis, and `--require admission,registration,macos-cooperative` makes it fail unless each requirement holds. See [contracts](contracts.md#command-line-owner).
 
@@ -282,8 +287,18 @@ A session without a launchd gui domain records the launchd case as `not_run`, an
 
 `dg1-macos` also runs only on macOS and builds `devguard-launch` first. It checks the SLO protocol's harness, never the SLO itself:
 - the bounded workloads
-- the control probe against isolated authorities: status samples of its own running target, terminations acknowledged and then released by scope termination, a stop that still settles its target, and a target never admitted that leaves nothing charged
-- the protocol's nearest-rank percentiles, missing samples, validity and verdict rules
+- the control probe against isolated authorities:
+  - status samples of its own running target;
+  - effective terminations, released by scope termination;
+  - a stop before or during sampling that still settles every target;
+  - a target never admitted, which leaves nothing charged;
+  - a helper that ends before READY, which is reported so its grant is settled
+- the probe's missed-slot accounting
+- the protocol's rules:
+  - nearest-rank percentiles with missing samples;
+  - effective terminations and per-consumer load;
+  - receipts, validity and the ordering of verdicts;
+  - the recomputation that promotion relies on
 - the foreground fixture through headless Chrome, whose samples arrive but which is never a valid observation
 
 Where Chrome is absent the fixture case is recorded as `not_run`, and the suite reports `incomplete`. The SLO protocol itself is `measure.py macos`, run only on the target host in a window set aside for it.

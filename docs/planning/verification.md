@@ -136,8 +136,21 @@ C11 evidence covers:
 - **Real upgrade**: the upgrade of the installed release on the qualification host, which needs the user's confirmation, is recorded with the stage and upgrade reports, the backup's hashes and the status as C11 completion evidence.
 
 C12 evidence covers:
-- **Raw receipts**: the control probe's status and termination samples on its own targets, acknowledged and then released by scope termination; a stop that still settles its target; and a target never admitted that leaves nothing charged. It also covers the headless fixture's report, whose samples arrive but which is never a valid observation, or `not_run` where Chrome is absent.
-- **Unit tests**: the bounded workloads, and the protocol's rules. These are nearest-rank percentiles with missing samples ranked above every value, the Event Timing duration raising the page's estimate, frame stalls, connection losses, applied load, validity, and the interval, repetition and combination verdicts.
+- **Raw receipts**:
+  - the control probe's status and effective termination samples on its own targets, released by scope termination;
+  - a stop before and during sampling that still settles every target;
+  - a target never admitted, which leaves nothing charged;
+  - a helper that ends before READY, reported so its grant is settled;
+  - the headless fixture's report, whose samples arrive but which is never a valid observation, or `not_run` where Chrome is absent.
+- **Unit tests**:
+  - the bounded workloads, including paced I/O, and the probe's missed-slot accounting;
+  - nearest-rank percentiles, with missing samples ranked above every value;
+  - the Event Timing duration raising the page's estimate, skipped input slots, and frame stalls;
+  - status answers about a target that no longer runs;
+  - terminations that were not effective, and connection losses;
+  - per-consumer load, receipts, validity and service checks;
+  - the interval, repetition, combination and run verdicts in their order;
+  - the recomputation promotion relies on, which refuses changed reports, rehearsals, partial plans and passes that do not recompute.
 - **Measurement**: `scripts/measure.py macos` against the installed release on the qualification host, in a window the user confirms. It records the run header with source, artifact, policy, environment and harness hashes. For each repetition it keeps the raw samples, receipts and report, and it writes the summary with every verdict. A rehearsal or a headless run is recorded as inconclusive. Only a qualified run is promoted, and the promotion record is kept with the verification that the service runs that release.
 
 C02 evidence covers actual OS socket UID/PID observations at both ends, distinct consumer/admin credentials, rejected helper-role authentication, strict current/future wire fixtures, 64 KiB frames, a 32-session limit, absolute 250 ms per-frame deadlines including idle waits, partial/slow/final responses and private credential-FD transport. Dedicated subprocess helpers verify FD closure before a subsequent exec and inspect argv/environment/debug/output for secret leakage. They are executed by parent tests and are not independent ignored qualification successes. Record process cleanup as well as the nonzero parent-case inventory.

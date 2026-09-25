@@ -129,7 +129,8 @@ SUITES = {
         ("workloads", ["-p", "devguard-qualify", "--lib"]),
         ("protocol-analysis", ["unittest", "test_measure.py"]),
         ("native-control", ["-p", "devguard-qualify", "--test", "control"],
-         ["control-probe", "control-stopped", "control-refused"]),
+         ["control-probe", "control-stopped", "control-refused", "control-stopped-mid-run",
+          "control-helper-exited"]),
         ("native-fixture", ["unittest", "test_fixture.py"], ["fixture-check"]),
     ],
 }
@@ -253,7 +254,7 @@ def main():
             stage["log_sha256"]=hashlib.sha256(log.read_bytes()).hexdigest()
             text=log.read_text(errors="replace")
             stage["tests_passed"]=sum(map(int,re.findall(r"test result: ok\. (\d+) passed",text)))
-            if selectors[0]=="unittest" and re.search(r"^OK$",text,re.M):
+            if selectors[0]=="unittest" and re.search(r"^OK( \(.*\))?$",text,re.M):
                 stage["tests_passed"]=sum(map(int,re.findall(r"^Ran (\d+) tests? in",text,re.M)))
             if result.returncode or not stage["tests_passed"]: raise RuntimeError("failed or empty suite: "+name)
             if expected:

@@ -9,6 +9,12 @@
 //! call. A termination sample is a `Terminate` request answered by
 //! `Terminated`; the target's exit and the attempt's release are reported
 //! separately, because delivery of a signal is not release evidence.
+//!
+//! Every scheduled sample is written, including one the probe could not take:
+//! a slot that passed while an earlier call was still in flight is recorded
+//! as missed, and a target that could not be started is recorded with the
+//! stage and error that stopped it. Only an admission refused for capacity or
+//! pressure until the wait ends is not a sample.
 
 use devguard_cli::authority::{Endpoint, Service};
 use devguard_cli::preflight::NO_TIMEOUT_MS;
@@ -30,9 +36,15 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-/// Every target runs this program, which does not end by itself during a probe.
+/// Every target runs this program for a bounded time, so a target outlives
+/// a probe that dies abruptly by at most its own lifetime.
 const TARGET: &str = "/bin/sleep";
-const TARGET_SECONDS: &str = "86400";
+/// The working directory the targets run in, as their execution meaning says.
+const TARGET_DIRECTORY: &str = "/";
+/// A termination target lives at most this long.
+const TERMINATION_TARGET_LIFETIME: Duration = Duration::from_secs(600);
+/// The status target lives this much longer than the sampling.
+const STATUS_TARGET_MARGIN: Duration = Duration::from_secs(600);
 /// How long a started helper may take to report that the target runs.
 const READY_LIMIT: Duration = Duration::from_secs(10);
 /// How long a signalled target may take to exit and its attempt to be released.
@@ -106,15 +118,76 @@ impl<'a> Recorder<'a> {
     }
 }
 
+/// When sampling must end: the caller's stop, or this process's parent going
+/// away, so an orphaned probe settles its targets instead of sampling on.
+struct Watch<'a> {
+    stop: &'a AtomicBool,
+    parent: libc::pid_t,
+}
+
+impl Watch<'_> {
+    fn stopped(&self) -> bool {
+        // SAFETY: getppid has no preconditions.
+        self.stop.load(Ordering::Relaxed) || unsafe { libc::getppid() } != self.parent
+    }
+}
+
 /// A target this probe started and must settle.
 struct Target {
     key: AttemptKey,
     child: Child,
 }
 
+/// Why no target was started.
+enum Unstarted {
+    /// Admission stayed refused for capacity or pressure until the wait
+    /// ended. This is not a control sample.
+    Refused(String),
+    /// Any other failure: a control operation that did not succeed, with the
+    /// stage it failed at and the error's code when there was one.
+    Failed {
+        stage: &'static str,
+        code: Option<ErrorCode>,
+        note: String,
+    },
+}
+
+impl Unstarted {
+    fn failed(stage: &'static str, error: &Error, note: String) -> Self {
+        Self::Failed {
+            stage,
+            code: Some(error.code),
+            note,
+        }
+    }
+
+    fn sample(&self) -> Value {
+        match self {
+            Self::Refused(note) => json!({"outcome": "not_started", "note": note}),
+            Self::Failed { stage, code, note } => {
+                json!({"outcome": "error", "stage": stage, "code": code, "message": note})
+            }
+        }
+    }
+
+    fn into_error(self) -> Error {
+        match self {
+            Self::Refused(note) => Error::new(ErrorCode::ResourceUnavailable, note),
+            Self::Failed { code, note, .. } => {
+                Error::new(code.unwrap_or(ErrorCode::ResourceControlUnavailable), note)
+            }
+        }
+    }
+}
+
 /// How a signalled target ended.
 struct Settled {
+    /// When the target exited after an acknowledged termination, if it did
+    /// within the limit.
     exited_ms: Option<f64>,
+    /// The probe had to stop its own child, so the release that followed is
+    /// not evidence of the termination.
+    killed_by_probe: bool,
     released_ms: Option<f64>,
     phase: Option<AttemptPhase>,
     release_reason: Value,
@@ -123,8 +196,8 @@ struct Settled {
 
 /// Run the probes for `options.duration` against the authority at `paths`,
 /// starting targets through `helper`, and write raw samples to `out`. A set
-/// `stop` ends sampling early; the probe still settles its targets. Returns
-/// a summary of what was written.
+/// `stop`, or the loss of this process's parent, ends sampling early; the
+/// probe still settles its targets. Returns a summary of what was written.
 pub fn run(
     paths: &AuthorityPaths,
     helper: &Path,
@@ -132,35 +205,50 @@ pub fn run(
     out: &mut (dyn Write + Send),
     stop: &AtomicBool,
 ) -> Result<Value> {
+    let watch = Watch {
+        stop,
+        // SAFETY: getppid has no preconditions.
+        parent: unsafe { libc::getppid() },
+    };
     let endpoint = Endpoint::open(paths)?;
     endpoint.register()?;
     let recorder = Recorder::new(out);
     recorder.record(
         "header",
-        json!({"schema": "devguard-control-probe/v1", "endpoint": endpoint.summary(),
-               "helper": helper, "target": [TARGET, TARGET_SECONDS],
+        json!({"schema": "devguard-control-probe/v2", "endpoint": endpoint.summary(),
+               "helper": helper, "target": TARGET, "target_directory": TARGET_DIRECTORY,
                "options": {"duration_ms": ms(options.duration),
                            "status_interval_ms": ms(options.status_interval),
                            "terminate_period_ms": ms(options.terminate_period),
                            "admission_wait_ms": ms(options.admission_wait),
                            "target": options.target}}),
     );
-    let mut status_target = start(&endpoint, helper, options, &recorder, "status", stop)
-        .map_err(|note| Error::new(ErrorCode::ResourceUnavailable, note))?;
+    let lifetime = options.duration + STATUS_TARGET_MARGIN;
+    let started = start(
+        &endpoint, helper, options, &recorder, "status", lifetime, &watch, &mut None,
+    );
+    let mut status_target = match started {
+        Ok(target) => target,
+        Err(unstarted) => {
+            recorder.record("status_target", unstarted.sample());
+            return Err(unstarted.into_error());
+        }
+    };
     let deadline = Instant::now() + options.duration;
     let key = status_target.key.clone();
     std::thread::scope(|scope| {
-        scope.spawn(|| statuses(&endpoint, &key, options, &recorder, deadline, stop));
-        scope.spawn(|| terminations(&endpoint, helper, options, &recorder, deadline, stop));
+        scope.spawn(|| statuses(&endpoint, &key, options, &recorder, deadline, &watch));
+        scope.spawn(|| terminations(&endpoint, helper, options, &recorder, deadline, &watch));
     });
     let asked = Instant::now();
     let answer = terminate(&endpoint, &status_target.key);
     let settled = settle(&endpoint, &mut status_target, asked, answer.is_ok());
     recorder.record(
         "status_target",
-        json!({"key": status_target.key, "terminated": answer.is_ok(),
-               "exited_ms": settled.exited_ms, "released_ms": settled.released_ms,
-               "phase": settled.phase, "release_reason": settled.release_reason}),
+        json!({"outcome": "settled", "key": status_target.key, "terminated": answer.is_ok(),
+               "exited_ms": settled.exited_ms, "killed_by_probe": settled.killed_by_probe,
+               "released_ms": settled.released_ms, "phase": settled.phase,
+               "release_reason": settled.release_reason}),
     );
     if recorder.failed.load(Ordering::Relaxed) {
         return Err(Error::new(
@@ -169,22 +257,40 @@ pub fn run(
         ));
     }
     Ok(json!({"samples": recorder.written.load(Ordering::Relaxed),
-              "status_target_released": settled.phase == Some(AttemptPhase::Released)}))
+              "status_target_released": settled.phase == Some(AttemptPhase::Released),
+              "stopped_early": watch.stopped()}))
+}
+
+/// Record every slot of `period` that passed before `now` as missed, and
+/// return the next slot to take.
+fn missed_slots(
+    mut next: Instant,
+    period: Duration,
+    now: Instant,
+    recorder: &Recorder,
+    kind: &str,
+) -> Instant {
+    while next + period <= now {
+        next += period;
+        recorder.record(kind, json!({"outcome": "missed_slot"}));
+    }
+    next + period
 }
 
 /// A status call every interval until the deadline. Calls are serial: a
-/// slow reply delays the next call and is itself the slow sample.
+/// slow reply is itself the slow sample, and every slot it overran is
+/// recorded as missed.
 fn statuses(
     endpoint: &Endpoint,
     key: &AttemptKey,
     options: &Options,
     recorder: &Recorder,
     deadline: Instant,
-    stop: &AtomicBool,
+    watch: &Watch,
 ) {
     let mut next = Instant::now();
-    while !stop.load(Ordering::Relaxed) {
-        if !pause_until(next, deadline, stop) {
+    loop {
+        if !pause_until(next, deadline, watch) {
             break;
         }
         let asked = Instant::now();
@@ -199,8 +305,13 @@ fn statuses(
                                       "code": error.code, "message": error.message}),
             },
         );
-        next += options.status_interval;
-        next = next.max(Instant::now());
+        next = missed_slots(
+            next,
+            options.status_interval,
+            Instant::now().min(deadline),
+            recorder,
+            "status",
+        );
     }
 }
 
@@ -212,52 +323,87 @@ fn terminations(
     options: &Options,
     recorder: &Recorder,
     deadline: Instant,
-    stop: &AtomicBool,
+    watch: &Watch,
 ) {
     // Offset from the status calls so both rarely start in the same instant.
     let mut next = Instant::now() + options.terminate_period / 2;
-    while !stop.load(Ordering::Relaxed) {
-        if !pause_until(next, deadline, stop) {
+    loop {
+        if !pause_until(next, deadline, watch) {
             break;
         }
-        next += options.terminate_period;
-        let mut target = match start(endpoint, helper, options, recorder, "terminate", stop) {
-            Ok(target) => target,
-            Err(note) => {
-                recorder.record("terminate", json!({"outcome": "not_started", "note": note}));
-                continue;
-            }
-        };
-        let asked = Instant::now();
-        let answer = terminate(endpoint, &target.key);
-        let ack = asked.elapsed();
-        let settled = settle(endpoint, &mut target, asked, answer.is_ok());
-        let mut sample = json!({"key": target.key, "ack_ms": ms(ack),
-                                "exited_ms": settled.exited_ms, "released_ms": settled.released_ms,
-                                "phase": settled.phase, "release_reason": settled.release_reason,
-                                "observed": settled.observed});
-        match answer {
-            Ok(termination) => {
-                sample["outcome"] = "acknowledged".into();
-                sample["signalled"] = termination.signalled.into();
-                sample["complete"] = termination.complete.into();
-            }
-            Err(error) => {
-                sample["outcome"] = "error".into();
-                sample["code"] = json!(error.code);
-                sample["message"] = error.message.into();
-            }
-        }
+        let (sample, admitted) = terminate_once(endpoint, helper, options, recorder, watch);
         recorder.record("terminate", sample);
-        next = next.max(Instant::now());
+        // Slots that passed while this target's admission waited for capacity
+        // or pressure are not samples; slots its control operations overran are.
+        let now = Instant::now().min(deadline);
+        let mut slot = next + options.terminate_period;
+        while slot <= now {
+            let sample = match admitted {
+                Some(at) if slot >= at => json!({"outcome": "missed_slot"}),
+                _ => {
+                    json!({"outcome": "not_started", "note": "admission waited for capacity or pressure"})
+                }
+            };
+            recorder.record("terminate", sample);
+            slot += options.terminate_period;
+        }
+        next = slot;
     }
 }
 
+/// One termination sample on a fresh target, and when its admission ended.
+fn terminate_once(
+    endpoint: &Endpoint,
+    helper: &Path,
+    options: &Options,
+    recorder: &Recorder,
+    watch: &Watch,
+) -> (Value, Option<Instant>) {
+    let lifetime = TERMINATION_TARGET_LIFETIME;
+    let mut admitted = None;
+    let started = start(
+        endpoint,
+        helper,
+        options,
+        recorder,
+        "terminate",
+        lifetime,
+        watch,
+        &mut admitted,
+    );
+    let mut target = match started {
+        Ok(target) => target,
+        Err(unstarted) => return (unstarted.sample(), admitted),
+    };
+    let asked = Instant::now();
+    let answer = terminate(endpoint, &target.key);
+    let ack = asked.elapsed();
+    let settled = settle(endpoint, &mut target, asked, answer.is_ok());
+    let mut sample = json!({"key": target.key, "ack_ms": ms(ack),
+                            "exited_ms": settled.exited_ms, "killed_by_probe": settled.killed_by_probe,
+                            "released_ms": settled.released_ms, "phase": settled.phase,
+                            "release_reason": settled.release_reason, "observed": settled.observed});
+    match answer {
+        Ok(termination) => {
+            sample["outcome"] = "acknowledged".into();
+            sample["signalled"] = termination.signalled.into();
+            sample["complete"] = termination.complete.into();
+        }
+        Err(error) => {
+            sample["outcome"] = "error".into();
+            sample["stage"] = "terminate".into();
+            sample["code"] = json!(error.code);
+            sample["message"] = error.message.into();
+        }
+    }
+    (sample, admitted)
+}
+
 /// Sleep until `at`, returning false once the deadline or a stop comes first.
-fn pause_until(at: Instant, deadline: Instant, stop: &AtomicBool) -> bool {
+fn pause_until(at: Instant, deadline: Instant, watch: &Watch) -> bool {
     loop {
         let now = Instant::now();
-        if stop.load(Ordering::Relaxed) || now >= deadline {
+        if watch.stopped() || now >= deadline {
             return false;
         }
         if now >= at {
@@ -280,18 +426,23 @@ fn terminate(
         .terminate(key.clone(), StopSignal::Terminate)
 }
 
-/// Admit, commit and start one target through the stable helper. Admission
+/// Admit, commit and start one target that lives `lifetime` through the
+/// stable helper, setting `admitted` when admission succeeds. Admission
 /// refused for capacity or pressure is retried until `admission_wait`; any
 /// other failure is reported to the authority before it is returned.
+#[allow(clippy::too_many_arguments)]
 fn start(
     endpoint: &Endpoint,
     helper: &Path,
     options: &Options,
     recorder: &Recorder,
     role: &str,
-    stop: &AtomicBool,
-) -> std::result::Result<Target, String> {
+    lifetime: Duration,
+    watch: &Watch,
+    admitted: &mut Option<Instant>,
+) -> std::result::Result<Target, Unstarted> {
     let key = endpoint.key(format!("q-{}", uuid::Uuid::new_v4().simple()));
+    let seconds = lifetime.as_secs().max(1).to_string();
     let intent = ResourceIntent {
         profile: "interactive".into(),
         requested: options.target,
@@ -299,15 +450,15 @@ fn start(
     };
     let digest = ExecutionMeaning {
         executable_identity: TARGET.into(),
-        cwd_identity: "/".into(),
-        argv: vec![TARGET.into(), TARGET_SECONDS.into()],
+        cwd_identity: TARGET_DIRECTORY.into(),
+        argv: vec![TARGET.into(), seconds.clone()],
         environment_changes: BTreeMap::new(),
         tty: false,
         timeout_ms: NO_TIMEOUT_MS,
         resources: intent.clone(),
     }
     .digest()
-    .map_err(|error| error.message)?;
+    .map_err(|error| Unstarted::failed("meaning", &error, error.message.clone()))?;
     let request = AdmissionRequest {
         key: key.clone(),
         execution_digest: digest,
@@ -323,27 +474,34 @@ fn start(
                 format!("{:?}", record.denial)
             }
             Ok(record) => {
-                return Err(format!(
-                    "admission refused: {:?} {:?}",
-                    record.phase, record.denial
-                ))
+                return Err(Unstarted::Failed {
+                    stage: "admit",
+                    code: record.denial,
+                    note: format!("admission refused: {:?} {:?}", record.phase, record.denial),
+                })
             }
             // A full instance pool is a capacity condition like a denial.
             Err(error) if error.code == ErrorCode::ResourceUnavailable => error.message,
-            Err(error) => return Err(format!("admission failed: {}", error.message)),
+            Err(error) => {
+                let note = format!("admission failed: {}", error.message);
+                return Err(Unstarted::failed("admit", &error, note));
+            }
         };
         refusals += 1;
-        if stop.load(Ordering::Relaxed) || asked.elapsed() + backoff > options.admission_wait {
+        if watch.stopped() || asked.elapsed() + backoff > options.admission_wait {
             recorder.record(
                 "admission",
                 json!({"role": role, "outcome": "refused", "refusals": refusals,
                        "waited_ms": ms(asked.elapsed()), "last": refused}),
             );
-            return Err(format!("not admitted within the wait: {refused}"));
+            return Err(Unstarted::Refused(format!(
+                "not admitted within the wait: {refused}"
+            )));
         }
         std::thread::sleep(backoff);
         backoff = (backoff * 2).min(MAX_BACKOFF);
     }
+    *admitted = Some(Instant::now());
     recorder.record(
         "admission",
         json!({"role": role, "outcome": "admitted", "refusals": refusals,
@@ -353,19 +511,18 @@ fn start(
         Ok(grant) => match grant.permit {
             Some(permit) => permit,
             None => {
-                return Err(abandoned(
-                    endpoint,
-                    &key,
-                    "the launch grant carried no permit",
-                ))
+                let note = abandoned(endpoint, &key, AbandonReason::GrantNotReceived);
+                return Err(Unstarted::Failed {
+                    stage: "begin_launch",
+                    code: None,
+                    note: format!("the launch grant carried no permit; {note}"),
+                });
             }
         },
         Err(error) => {
-            return Err(abandoned(
-                endpoint,
-                &key,
-                &format!("launch commit failed: {}", error.message),
-            ))
+            let note = abandoned(endpoint, &key, AbandonReason::GrantNotReceived);
+            let note = format!("launch commit failed: {}; {note}", error.message);
+            return Err(Unstarted::failed("begin_launch", &error, note));
         }
     };
     let prepared = helper_command(
@@ -373,21 +530,20 @@ fn start(
         &endpoint.ticket(&key),
         &permit,
         Path::new(TARGET),
-        &[OsString::from(TARGET_SECONDS)],
+        &[OsString::from(&seconds)],
     );
     drop(permit);
     let (mut command, report) = match prepared {
         Ok(prepared) => prepared,
         Err(error) => {
-            return Err(spawn_failed(
-                endpoint,
-                &key,
-                &format!("cannot prepare the helper: {}", error.message),
-            ))
+            let note = abandoned(endpoint, &key, AbandonReason::SpawnFailed);
+            let note = format!("cannot prepare the helper: {}; {note}", error.message);
+            return Err(Unstarted::failed("spawn", &error, note));
         }
     };
     command
         .command_mut()
+        .current_dir(TARGET_DIRECTORY)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -396,64 +552,76 @@ fn start(
     let mut child = match command.spawn() {
         Ok(child) => child,
         Err(error) => {
-            return Err(spawn_failed(
-                endpoint,
-                &key,
-                &format!("cannot start the helper: {error}"),
-            ))
+            let note = abandoned(endpoint, &key, AbandonReason::SpawnFailed);
+            return Err(Unstarted::Failed {
+                stage: "spawn",
+                code: None,
+                note: format!("cannot start the helper: {error}; {note}"),
+            });
         }
     };
     match report.wait(READY_LIMIT) {
         Ok((LaunchOutcome::Started, _)) => Ok(Target { key, child }),
         outcome => {
             // Whatever the helper did, its group is this probe's own child:
-            // stop it, observe the attempt before reaping, then report.
+            // stop it and observe the attempt before reaping it. Then report,
+            // as the command-line owner does, that no helper exists any more,
+            // and observe again: an unclaimed grant is released as never
+            // started, and a claimed one is settled through its scope.
+            let pid = child.id() as libc::pid_t;
             // SAFETY: kill has no memory preconditions; the group is the
             // helper's own, created by process_group(0) above.
             unsafe {
-                libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL);
+                libc::kill(-pid, libc::SIGKILL);
             }
-            let _ = exited_unreaped(child.id() as libc::pid_t, RELEASE_LIMIT);
+            let _ = exited_unreaped(pid, RELEASE_LIMIT);
             let _ = endpoint.observe(&key);
             let _ = child.wait();
+            let reported = abandoned(endpoint, &key, AbandonReason::HelperExited);
+            let _ = endpoint.observe(&key);
             let note = match outcome {
                 Ok((outcome, phases)) => {
-                    format!("the target did not start: {outcome:?} {phases:?}")
+                    format!("the target did not start: {outcome:?} {phases:?}; {reported}")
                 }
-                Err(error) => format!("cannot read the helper report: {}", error.message),
+                Err(error) => {
+                    format!(
+                        "cannot read the helper report: {}; {reported}",
+                        error.message
+                    )
+                }
             };
-            Err(note)
+            Err(Unstarted::Failed {
+                stage: "helper",
+                code: None,
+                note,
+            })
         }
     }
 }
 
-/// Report that no helper exists for the grant, returning `note`.
-fn abandoned(endpoint: &Endpoint, key: &AttemptKey, note: &str) -> String {
-    match endpoint.abandon(key, AbandonReason::GrantNotReceived) {
-        Ok(record) => format!("{note}; reported, now {:?}", record.phase),
-        Err(error) => format!("{note}; the report failed: {}", error.message),
-    }
-}
-
-fn spawn_failed(endpoint: &Endpoint, key: &AttemptKey, note: &str) -> String {
-    match endpoint.abandon(key, AbandonReason::SpawnFailed) {
-        Ok(record) => format!("{note}; reported, now {:?}", record.phase),
-        Err(error) => format!("{note}; the report failed: {}", error.message),
+/// Report that this owner holds no helper for the grant.
+fn abandoned(endpoint: &Endpoint, key: &AttemptKey, reason: AbandonReason) -> String {
+    match endpoint.abandon(key, reason) {
+        Ok(record) => format!("reported {reason:?}, now {:?}", record.phase),
+        Err(error) => format!("the {reason:?} report failed: {}", error.message),
     }
 }
 
 /// Wait for a signalled target to exit without reaping it, observe the
 /// attempt while its root is unreaped, reap it, and wait for the release.
-/// If the authority did not signal it, the probe stops its own child so no
-/// target outlives the probe; that exit is then not a termination sample.
-fn settle(endpoint: &Endpoint, target: &mut Target, since: Instant, signalled: bool) -> Settled {
+/// When the authority did not acknowledge the termination, or the target
+/// did not exit within the limit, the probe stops its own child so no target
+/// outlives the probe; that exit and release are then marked as forced by
+/// the probe and are not evidence of the termination.
+fn settle(endpoint: &Endpoint, target: &mut Target, since: Instant, answered: bool) -> Settled {
     let pid = target.child.id() as libc::pid_t;
-    let exited = if signalled {
+    let exited = if answered {
         exited_unreaped(pid, RELEASE_LIMIT).then(|| ms(since.elapsed()))
     } else {
         None
     };
-    if exited.is_none() {
+    let killed_by_probe = exited.is_none();
+    if killed_by_probe {
         // SAFETY: as in start: the group is this probe's own child's.
         unsafe {
             libc::kill(-pid, libc::SIGKILL);
@@ -467,6 +635,7 @@ fn settle(endpoint: &Endpoint, target: &mut Target, since: Instant, signalled: b
     let _ = target.child.wait();
     let mut settled = Settled {
         exited_ms: exited,
+        killed_by_probe,
         released_ms: None,
         phase: None,
         release_reason: Value::Null,
@@ -529,4 +698,40 @@ fn unix_ms() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|elapsed| elapsed.as_millis() as u64)
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn slots_that_passed_during_a_call_are_recorded_as_missed() {
+        let mut out = Vec::new();
+        let recorder = Recorder::new(&mut out);
+        let start = Instant::now();
+        let period = Duration::from_millis(100);
+        // A call that took 350 ms overran three later slots.
+        let next = missed_slots(
+            start,
+            period,
+            start + Duration::from_millis(350),
+            &recorder,
+            "status",
+        );
+        assert_eq!(next, start + Duration::from_millis(400));
+        assert_eq!(recorder.written.load(Ordering::Relaxed), 3);
+        // A call within its slot misses nothing.
+        let next = missed_slots(
+            next,
+            period,
+            next + Duration::from_millis(40),
+            &recorder,
+            "status",
+        );
+        assert_eq!(next, start + Duration::from_millis(500));
+        assert_eq!(recorder.written.load(Ordering::Relaxed), 3);
+        drop(recorder);
+        let text = String::from_utf8(out).unwrap();
+        assert_eq!(text.matches("\"missed_slot\"").count(), 3);
+    }
 }

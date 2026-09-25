@@ -140,8 +140,21 @@ C11 증거는 다음을 포함한다.
 - **실제 upgrade**: 사용자 확인이 필요한 qualification 호스트의 설치 release upgrade는 stage·upgrade 보고, 백업 hash, status와 함께 C11 완료 증거로 기록한다.
 
 C12 증거는 다음을 포함한다.
-- **Raw receipt**: 제어 probe가 자기 target에서 얻은 상태·종료 표본을 담는다. 종료 표본은 확인된 뒤 scope 종료로 해제된다. 중지되어도 target을 정리하는 경우와, admit되지 않아 아무것도 과금하지 않는 target도 포함한다. 표본은 도착하지만 결코 유효한 관측이 아닌 headless fixture의 보고도 포함하며, Chrome이 없으면 이를 `not_run`으로 기록한다.
-- **단위 시험**: 제한된 작업 부하와 protocol 규칙을 검사한다. 규칙은 누락 표본을 모든 값보다 위에 두는 nearest-rank 백분위수, 페이지 추정치를 올리는 Event Timing duration, frame 정지, 연결 유실, 실제 적용된 부하, 유효성, 그리고 구간·반복·조합 판정이다.
+- **Raw receipt**:
+  - 제어 probe가 자기 target에서 얻은 상태 표본과 유효한 종료 표본. 종료된 target은 scope 종료로 해제된다.
+  - 표본 채취 전이나 도중에 중지되어도 모든 target을 정리하는 경우
+  - admit되지 않아 아무것도 과금하지 않는 target
+  - READY 전에 끝나 grant를 정리하도록 보고되는 helper
+  - headless fixture의 보고. 표본은 도착하지만 결코 유효한 관측이 아니며, Chrome이 없으면 `not_run`으로 기록한다.
+- **단위 시험**:
+  - 속도를 제한한 I/O를 포함한 제한된 작업 부하, probe의 놓친 slot 계산
+  - 누락 표본을 모든 값보다 위에 두는 nearest-rank 백분위수
+  - 페이지 추정치를 올리는 Event Timing duration, 건너뛴 입력 slot, frame 정지
+  - 더는 실행 중이 아닌 target에 대한 상태 응답
+  - 유효하지 않은 종료와 연결 유실
+  - 소비자별 부하, receipt, 유효성과 서비스 확인
+  - 순서를 지킨 구간·반복·조합·실행 판정
+  - 승격이 기대는 재계산. 바뀐 보고, rehearsal, 부분 계획, 다시 계산되지 않는 통과는 거절한다.
 - **측정**: 사용자가 확인한 시간에 qualification 호스트의 설치 release에 대해 `scripts/measure.py macos`를 실행한다. Source·artifact·정책·환경·harness hash를 담은 run header를 기록한다. 반복마다 원시 표본·receipt·보고를 보존하고, 모든 판정을 담은 요약을 쓴다. Rehearsal이나 headless 실행은 inconclusive로 기록한다. Qualified 실행만 승격하며, 승격 기록은 서비스가 그 release를 실행한다는 검증과 함께 보존한다.
 
 C02 증거는 양쪽 실제 OS socket UID/PID 관측, 분리된 consumer·관리 자격, helper-role 인증 거절, 현재·미래 wire fixture의 엄격한 decoding, 64 KiB frame, 세션 32개 제한, idle 대기를 포함한 frame별 절대 250 ms 기한, 부분·느린·마지막 응답과 private 자격 FD 전달을 포함한다. 전용 subprocess helper는 후속 exec 전 FD 닫기를 관측하고 argv·환경·debug·출력의 secret 누출을 확인한다. Parent test가 helper를 실행하며 별도의 ignored test를 독립 qualification 성공으로 세지 않는다. 0개가 아닌 parent case 수와 프로세스 정리를 함께 기록한다.
