@@ -105,15 +105,15 @@
       "id": "operations",
       "source": "docs/operations.md",
       "translation": "docs/ko/operations.md",
-      "reviewed_source_sha256": "de6af1edabfb3a1359221d77458d5a3bc7c36eff6874c9527c8303973779ccef",
-      "reviewed_translation_sha256": "d405a322909e863480954d7ad49f3856309b9f90ed700a5aeb061b99c7bc9748"
+      "reviewed_source_sha256": "0f1c210a0993495fdfb36da56fd445e58943e4887e129fcc8add8d0f6c74f0e7",
+      "reviewed_translation_sha256": "7ea67931f66a81b514176ea07a2672aaaedfb883fa9f53c63df85667a55e9190"
     },
     {
       "id": "contracts",
       "source": "docs/contracts.md",
       "translation": "docs/ko/contracts.md",
-      "reviewed_source_sha256": "d5880c0471922c891ceea75985e1506e91036c6c15b72dfc4e9161004de36b20",
-      "reviewed_translation_sha256": "b9116d55ffb6da4b350dbcbd1e1516d209b564c9f688961e6e8b65ba93003000"
+      "reviewed_source_sha256": "ce05766020f5ffc28a396374b4226b22a7d9133ee8a9a85bb4e5f8e98cc9e77b",
+      "reviewed_translation_sha256": "7005c65aaaa638290720774c0a136f5dc56b6f2063d471613f8f2d268b10a1fc"
     }
   ]
 }

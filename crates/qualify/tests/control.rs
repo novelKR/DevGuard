@@ -123,6 +123,9 @@ fn the_probe_measures_status_and_termination_on_its_own_targets() {
     assert_eq!(target[0]["killed_by_probe"], false);
     assert_eq!(target[0]["phase"], json!(AttemptPhase::Released));
     assert_eq!(summary["status_target_released"], true);
+    // The writer thread wrote every sample and reports how far it lagged.
+    assert_eq!(summary["samples"].as_u64().unwrap(), samples.len() as u64);
+    assert!(summary["writer_lag_max_ms"].as_f64().unwrap() >= 0.0);
     nothing_charged(&authority);
     let latencies = |values: &[&Value], field: &str| {
         let mut values: Vec<f64> = values.iter().filter_map(|v| v[field].as_f64()).collect();

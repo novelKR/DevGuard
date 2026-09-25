@@ -5,7 +5,10 @@ import math
 from pathlib import Path
 import sqlite3
 import tempfile
+import time
+import types
 import unittest
+from unittest import mock
 
 import measure
 
@@ -296,32 +299,154 @@ class LateReplies(unittest.TestCase):
 
 
 class EvidenceWriter(unittest.TestCase):
-    """Sampling threads hand rows to one writer thread and never wait on the disk."""
+    """Sampling threads hand rows to one writer thread per interval and never wait on the disk."""
 
-    def test_rows_are_written_in_order_per_file_and_settle_waits_for_them(self):
+    def test_rows_are_written_in_order_per_file_and_close_reports_them_once(self):
         with tempfile.TemporaryDirectory() as directory:
             writer = measure.Writer()
             first, second = Path(directory) / "a.jsonl", Path(directory) / "b.jsonl"
             for index in range(200):
                 writer.write(first if index % 2 else second, {"index": index})
-            settled = writer.settle()
+            report = writer.close()
             rows = [json.loads(line)["index"] for line in first.read_text().splitlines()]
-            writer.close()
-        self.assertEqual(settled["lines"], 200)
-        self.assertEqual(settled["errors"], [])
+            again = writer.close()
+        self.assertEqual((report["lines"], report["error_count"], report["errors"]), (200, 0, []))
         self.assertEqual(rows, list(range(1, 200, 2)))
-        self.assertGreaterEqual(settled["lag_max_ms"], 0)
+        self.assertGreaterEqual(report["lag_max_ms"], 0)
+        self.assertEqual(again, report)
 
-    def test_a_file_that_cannot_be_written_is_reported_and_others_continue(self):
+    def test_every_line_that_cannot_be_written_is_counted_and_others_continue(self):
         with tempfile.TemporaryDirectory() as directory:
             writer = measure.Writer()
-            writer.write(Path(directory) / "missing" / "x.jsonl", {"a": 1})
+            for index in range(3):
+                writer.write(Path(directory) / "missing" / "x.jsonl", {"a": index})
             writer.write(Path(directory) / "ok.jsonl", {"b": 2})
-            settled = writer.settle()
+            report = writer.close()
             written = (Path(directory) / "ok.jsonl").read_text()
-            writer.close()
-        self.assertEqual(len(settled["errors"]), 1)
+        self.assertEqual((report["lines"], report["error_count"], len(report["errors"])), (1, 3, 3))
         self.assertIn('"b": 2', written)
+
+    def test_the_errors_kept_are_bounded_but_all_are_counted(self):
+        with tempfile.TemporaryDirectory() as directory:
+            writer = measure.Writer()
+            for index in range(measure.Writer.ERRORS_KEPT + 10):
+                writer.write(Path(directory) / "missing" / "x.jsonl", {"a": index})
+            report = writer.close()
+        self.assertEqual(report["error_count"], measure.Writer.ERRORS_KEPT + 10)
+        self.assertEqual(len(report["errors"]), measure.Writer.ERRORS_KEPT)
+
+    def test_a_slow_disk_delays_the_evidence_never_the_sampler(self):
+        class Slow:
+            def __init__(self, *args):
+                self.lines = []
+
+            def write(self, line):
+                time.sleep(0.05)
+                self.lines.append(line)
+
+            def flush(self):
+                pass
+
+            def close(self):
+                pass
+
+        with mock.patch.object(measure, "open", Slow, create=True):
+            writer = measure.Writer()
+            began = time.monotonic()
+            for index in range(40):
+                writer.write("slow.jsonl", {"index": index})
+            handed = time.monotonic() - began
+            report = writer.close()
+        # Forty lines take the disk two seconds; handing them over takes a moment.
+        self.assertLess(handed, 0.5)
+        self.assertEqual((report["lines"], report["error_count"]), (40, 0))
+        self.assertGreaterEqual(report["lag_max_ms"], 50)
+
+    def test_a_writer_that_does_not_finish_is_an_error_not_a_wait(self):
+        class Stuck:
+            def __init__(self, *args):
+                pass
+
+            def write(self, line):
+                time.sleep(2)
+
+            def flush(self):
+                pass
+
+            def close(self):
+                pass
+
+        with mock.patch.object(measure, "open", Stuck, create=True):
+            writer = measure.Writer()
+            writer.write("stuck.jsonl", {"index": 0})
+            began = time.monotonic()
+            report = writer.close(limit=0.2)
+        self.assertLess(time.monotonic() - began, 1.5)
+        self.assertEqual(report["error_count"], 1)
+        self.assertIn("did not finish", report["errors"][0])
+
+
+class Staging(unittest.TestCase):
+    """The probe's binary and the fixture's profile run from a stage recorded with its disk."""
+
+    DF = "Filesystem 512-blocks Used Available Capacity Mounted on\n{device} 100 50 50 50% {mount}\n"
+    DISKUTIL = ("   Device Node:               {device}\n   Protocol:                  {protocol}\n"
+                "   Device Location:           {location}\n   APFS Physical Store:       {store}\n")
+
+    def host(self, volumes):
+        outputs = {}
+        for path, (device, mount, protocol, location, store) in volumes.items():
+            outputs[("/bin/df", "-P", path)] = self.DF.format(device=device, mount=mount)
+            outputs[("/usr/sbin/diskutil", "info", device)] = self.DISKUTIL.format(
+                device=device, protocol=protocol, location=location, store=store)
+        return mock.patch.object(measure, "run_text", lambda *args, timeout=10: outputs.get(args))
+
+    def test_a_placement_names_its_mount_and_physical_disk(self):
+        with self.host({"/w": ("/dev/disk7s1", "/Volumes/Dev Data", "USB", "External", "disk6s2")}):
+            found = measure.placement("/w")
+        self.assertEqual(found, {"device": "/dev/disk7s1", "mount": "/Volumes/Dev Data", "physical_disk": "disk6",
+                                 "protocol": "USB", "location": "External"})
+
+    def test_the_stage_is_flagged_when_it_shares_the_load_disk(self):
+        internal = ("/dev/disk3s5", "/System/Volumes/Data", "Apple Fabric", "Internal", "disk0s2")
+        external = ("/dev/disk7s1", "/Volumes/DevData", "USB", "External", "disk6s2")
+        with self.host({"/s": internal, "/w": external, "/o": external}):
+            apart = measure.placements(Path("/s"), Path("/w"), Path("/o"))
+        with self.host({"/s": internal, "/w": internal, "/o": internal}):
+            shared = measure.placements(Path("/s"), Path("/w"), Path("/o"))
+        with self.host({"/s": internal}):
+            unknown = measure.placements(Path("/s"), Path("/w"), Path("/o"))
+        self.assertIs(apart["stage_shares_load_disk"], False)
+        self.assertEqual(apart["evidence"]["physical_disk"], "disk6")
+        self.assertIs(shared["stage_shares_load_disk"], True)
+        self.assertIsNone(unknown["stage_shares_load_disk"])
+
+    def test_the_staged_binary_must_be_the_one_hashed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            binary, stage = Path(directory) / "qualify", Path(directory) / "stage"
+            binary.write_bytes(b"probe")
+            stage.mkdir()
+            staged, digest = measure.stage_binary(binary, stage, measure.sha256(binary))
+            self.assertEqual((staged.read_bytes(), digest), (b"probe", measure.sha256(binary)))
+            with self.assertRaises(SystemExit):
+                measure.stage_binary(binary, stage, "0" * 64)
+
+    def test_a_warm_run_touches_the_core_crate_and_a_cold_run_builds_fresh(self):
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory)
+            args = types.SimpleNamespace(qualify_bin=work / "devguard-qualify")
+            release = types.SimpleNamespace(devguard=work / "devguard")
+            warm = measure.consumers(args, release, "warm", work, work, 0, 1, False)[0]
+            cold = measure.consumers(args, release, "cold", work, work, 0, 2, False)[0]
+            (work / measure.TARGETS / "cold-2-004").mkdir(parents=True)
+            self.assertEqual(warm.before(1)["env"]["CARGO_TARGET_DIR"], str(work / measure.TARGETS / "warm"))
+            self.assertEqual(cold.before(3)["env"]["CARGO_TARGET_DIR"],
+                             str(work / measure.TARGETS / "cold-2-003"))
+            with self.assertRaises(RuntimeError):
+                cold.before(4)
+        self.assertTrue(warm.command[2].startswith("/usr/bin/touch crates/core/src/lib.rs && cargo build "))
+        self.assertTrue(cold.command[2].startswith("cargo build "))
+        self.assertEqual(warm.options[:2], ["--adapter", "cargo-pipeline"])
 
 
 class Receipts(unittest.TestCase):

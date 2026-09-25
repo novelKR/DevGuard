@@ -265,7 +265,7 @@ DG1-C12 measures a release instead of inferring responsiveness from functional s
   - **Admission.** An admission refused for capacity or pressure is retried and recorded, but a target that waits out its admission is not a sample.
   - **Missed slots.** Every slot that passes while an earlier call is still in flight is recorded as missed.
   - **Stopping.** SIGINT, SIGTERM, SIGHUP or the loss of its parent ends sampling; the probe still settles every target it started.
-  - **Evidence.** Its threads hand each sample to a writer thread, so a slow disk delays the evidence, never the sampling. The writer's largest lag is reported.
+  - **Evidence.** Its threads hand each sample to a writer thread, so a slow disk delays the evidence, never the sampling. Its summary reports how many samples were written and the writer's largest lag, from a sample being taken until it was written and flushed. A sample that cannot be written ends the probe with an error.
 - **Foreground fixture.** The fixture is a fixed local page, `crates/qualify/fixture/foreground.html`, hashed in every run and repetition report. It runs in one Google Chrome instance per run with a fresh profile, driven over `--remote-debugging-pipe`: there is no listening port and no flag that changes scheduling or throttling. Each repetition reloads the page.
   - **Input.** The browser synthesizes it with `Input.dispatch*`: a key, a click or a wheel step in each slot of 500 ms ± 100 ms. A slot that passes while an earlier dispatch is still in flight is a missing sample. Each dispatch's round trip through the browser is recorded as evidence.
   - **Input to next paint.** It runs from the event's timestamp to the next frame after the input's visible change, marked by a message posted from the next animation frame. It is raised to the browser's own Event Timing duration when the browser reports one. The browser reports none for wheel input, so wheel samples rest on the page's estimate alone. The measure excludes the operating system's input path before the browser.
@@ -276,7 +276,7 @@ DG1-C12 measures a release instead of inferring responsiveness from functional s
 
   | Consumer | Workload | Budget |
   | --- | --- | --- |
-  | Cargo | The release's own source (`--adapter cargo-pipeline`): a workspace build, then the core and contract tests, with one compiler job and no compiler wrapper. A warm run first touches a core source file, so it rebuilds incrementally. | 1 CPU, 2 GiB, 24 tasks |
+  | Cargo | The release's own source (`--adapter cargo-pipeline`): a workspace build, then the core and contract tests, with one compiler job and no compiler wrapper. A warm run first touches a core source file, which changes its timestamp but not its content, so Cargo rebuilds that crate and its dependents incrementally. | 1 CPU, 2 GiB, 24 tasks |
   | CPU | 1 thread | 1 CPU, 128 MiB, 4 tasks |
   | Memory | 1 GiB touched and held | 100 mCPU, 1.25 GiB, 4 tasks |
   | I/O | 256 MiB written, synced, read back and removed, then idle until 30 s have passed | 100 mCPU, 384 MiB, 4 tasks |
@@ -284,10 +284,10 @@ DG1-C12 measures a release instead of inferring responsiveness from functional s
   | Slow input | Reads one line per 100 ms, fed once the payload runs | 50 mCPU, 64 MiB, 4 tasks |
 
   Together with the probe's targets, the budgets total about 2,600 mCPU, 4 GiB and 48 tasks. That fits half the local host's work capacity (5,500 mCPU, 11.75 GiB and 144 tasks), which is the Constrained capacity. Memory warning therefore neither stops the load nor starves the probe's targets. Under Critical pressure nothing is admitted, and the interval is inconclusive.
-- **Placement.** The load builds and writes on the development disk it is given. The instruments do not share that disk:
-  - the probe's binary and the fixture's browser profile run from a stage on the internal disk, where a user's browser profile lives;
-  - every raw evidence line goes through a writer thread, so no sampling thread waits on the evidence disk;
-  - the run records each location's volume.
+- **Placement.** The load builds and writes on the development disk it is given. The evidence goes to the output directory, which may be on the same disk. No instrument waits on either disk:
+  - The `devguard-qualify` binary, which runs the probe and the CPU, memory, I/O, output and slow-input workloads, is copied to a stage on the internal disk, where a user's browser profile lives. The copy's hash must match the hash recorded for the given binary. The fixture's browser profile is in the same stage, which is removed when the run ends.
+  - Each interval has its own writer thread for the harness's samples: fixture drains, input dispatches, validity, service and host rows. It is closed before the interval's raw files are hashed, and the report records how many lines it wrote, its largest lag and its errors. The probe writes through its own writer thread. Receipts, reports and the run header are written outside the sampling threads.
+  - The run header records each location's volume, physical disk, protocol and location, and whether the stage shares the load's physical disk. This is evidence, not a verdict: on a host with one disk they always share it.
 
   The first full run (evidence `slo/protocol-1`) wrote evidence synchronously to a USB disk that the load saturated. Its instruments stalled for seconds, and the missing samples failed its cold repetitions although the page, the service and the probe's calls met every target.
 - **Protocol.**
@@ -300,12 +300,13 @@ DG1-C12 measures a release instead of inferring responsiveness from functional s
   - A missing input also counts as a response over one second.
 - **Validity.** An interval is a valid observation only if all of these hold:
   - the fixture runs headful and stays the frontmost application;
-  - its page stays visible and focused, with no visibility or focus change;
+  - its page stays visible and focused, with no visibility or focus change, and receives no input the harness did not send;
   - the screen stays unlocked;
   - validity samples cover 90% of the interval;
   - the measured release stays selected at every service check (one a minute);
-  - nothing else was charged when the interval began;
-  - the probe finished normally;
+  - nothing else was charged when the interval began, and the journal stays readable;
+  - the probe finished normally, and every sample it wrote is readable;
+  - every raw sample of the interval was written;
   - the load completed within its limit.
 
   `caffeinate` keeps the display and the system awake. An invalid interval is `inconclusive`, never a pass.
@@ -324,7 +325,7 @@ DG1-C12 measures a release instead of inferring responsiveness from functional s
   - It also refuses if the release manifest changed, the service no longer runs the release, the policy differs from the measured one, or the host differs from the measured one. The policy is the host.toml hash, the configuration fingerprint and the capabilities; the host is its OS build, CPU, logical CPUs and memory.
   - It writes `qualifications/<release>.json` in the private state directory: a read-only `devguard-release-qualification/v1` record. It is written through a temporary file and a link, which never replaces an existing record.
   - The record names the release, its manifest and artifact hashes, the policy, the environment, the harness and plan, every repetition's verdict, the evidence hashes, and the verification that the service runs that release. The release manifest stays unchanged: `slo_qualified: false` describes the package, not the promotion.
-- **Interruption.** SIGINT, SIGTERM or SIGHUP, or a harness failure, stops new work. The harness then asks every live owner, probe and browser to stop, and each owner settles its scope. It exits 130 when interrupted and 3 when it failed, and nothing is promoted.
+- **Interruption.** SIGINT, SIGTERM or SIGHUP, or a harness failure, stops new work. The harness then asks every live owner, probe and browser to stop, each owner settles its scope, and the stage is removed. It exits 130 when interrupted and 3 when it failed, and nothing is promoted.
 - **Limits.**
   - This qualifies standalone control, development and bounded self-use on the measured host, artifact and policy only; another host or release needs its own measurement.
   - Passing the fixture does not guarantee every website.

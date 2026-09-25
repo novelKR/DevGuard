@@ -479,26 +479,63 @@ def tree_sha256(directory):
     return digest.hexdigest()
 
 
-def volume(path):
-    """The device and mount a path lives on, from df."""
-    text = run_text("df", "-P", str(path)) or ""
-    lines = text.splitlines()
-    fields = lines[-1].split() if len(lines) > 1 else []
-    return {"device": fields[0], "mount": fields[-1]} if len(fields) >= 6 else None
+def placement(path):
+    """The volume a path lives on and the physical disk behind it, from df and diskutil."""
+    lines = (run_text("/bin/df", "-P", str(path)) or "").splitlines()
+    # The mount point is the last field and may contain spaces.
+    fields = lines[-1].split(None, 5) if len(lines) > 1 else []
+    if len(fields) < 6:
+        return {}
+    info = dict(re.findall(r"^\s*([^:\n]+?):\s+(.+?)\s*$",
+                           run_text("/usr/sbin/diskutil", "info", fields[0], timeout=30) or "", re.M))
+    store = info.get("APFS Physical Store") or info.get("Part of Whole") or ""
+    return {"device": fields[0], "mount": fields[5], "physical_disk": re.sub(r"s\d+$", "", store) or None,
+            "protocol": info.get("Protocol"), "location": info.get("Device Location")}
+
+
+def placements(stage, work, out):
+    """Where the stage, the load and the evidence live, and whether the stage shares the load's
+    physical disk. Evidence, not a verdict: on a one-disk host they always share it."""
+    found = {"stage_directory": str(stage), "stage": placement(stage), "work": placement(work),
+             "evidence": placement(out)}
+    disks = found["stage"].get("physical_disk"), found["work"].get("physical_disk")
+    found["stage_shares_load_disk"] = None if None in disks else disks[0] == disks[1]
+    return found
+
+
+def stage_binary(binary, stage, expected):
+    """A copy of the qualify binary in the stage, checked against the hash the run header records."""
+    staged = stage / "devguard-qualify"
+    shutil.copy2(binary, staged)
+    digest = sha256(staged)
+    if digest != expected:
+        raise SystemExit("measure: the staged qualify binary differs from the one that was hashed")
+    return staged, digest
+
+
+def remove_stage(stage, attempts=5):
+    """Remove the stage; a browser helper that outlives Chrome for a moment may still write in it."""
+    for _ in range(attempts):
+        shutil.rmtree(stage, ignore_errors=True)
+        if not stage.exists():
+            return True
+        time.sleep(1)
+    print(f"measure: could not remove {stage}", flush=True)
+    return False
 
 
 def frontmost_pid():
     """The process of the frontmost application, from LaunchServices."""
-    front = run_text("lsappinfo", "front")
+    front = run_text("/usr/bin/lsappinfo", "front")
     if not front:
         return None
-    info = run_text("lsappinfo", "info", "-only", "pid", front) or ""
+    info = run_text("/usr/bin/lsappinfo", "info", "-only", "pid", front) or ""
     match = re.search(r'"?pid"?\s*=\s*(\d+)', info)
     return int(match.group(1)) if match else None
 
 
 def screen_locked():
-    text = run_text("ioreg", "-n", "Root", "-d1", "-k", "IOConsoleUsers")
+    text = run_text("/usr/sbin/ioreg", "-n", "Root", "-d1", "-k", "IOConsoleUsers")
     if text is None:
         raise RuntimeError("cannot read the console session")
     return "CGSSessionScreenIsLocked\"=Yes" in text
@@ -506,24 +543,27 @@ def screen_locked():
 
 def environment():
     def sysctl(name):
-        return run_text("sysctl", "-n", name)
+        return run_text("/usr/sbin/sysctl", "-n", name)
     return {
         "platform": platform.platform(), "machine": platform.machine(), "macos": platform.mac_ver()[0],
-        "build": run_text("sw_vers", "-buildVersion"), "kernel": platform.release(),
+        "build": run_text("/usr/bin/sw_vers", "-buildVersion"), "kernel": platform.release(),
         "cpu": sysctl("machdep.cpu.brand_string"), "logical_cpus": sysctl("hw.logicalcpu"),
         "memory_bytes": sysctl("hw.memsize"), "boot_session": sysctl("kern.bootsessionuuid"),
-        "power": (run_text("pmset", "-g", "batt") or "").splitlines()[:1],
-        "thermal": run_text("pmset", "-g", "therm"),
-        "displays": run_text("system_profiler", "SPDisplaysDataType", "-detailLevel", "mini", timeout=30),
+        "power": (run_text("/usr/bin/pmset", "-g", "batt") or "").splitlines()[:1],
+        "thermal": run_text("/usr/bin/pmset", "-g", "therm"),
+        "displays": run_text("/usr/sbin/system_profiler", "SPDisplaysDataType", "-detailLevel", "mini", timeout=30),
         "chrome": run_text(str(CHROME), "--version") if CHROME.exists() else None,
-        "python": platform.python_version(),
+        "python": platform.python_version(), "python_executable": sys.executable,
+        "path": os.environ.get("PATH"),
     }
 
 
 class Writer(threading.Thread):
-    """Writes every raw evidence line on its own thread, so no sampling thread ever waits on a disk
-    write: a disk the load saturates delays the evidence, never the measurement. The largest lag
-    between a line being handed over and written is reported."""
+    """Writes the raw evidence lines of one interval on its own thread, so no sampling thread ever
+    waits on a disk write: a disk the load saturates delays the evidence, never the measurement.
+    A line's lag runs from being handed over until it is written and flushed."""
+
+    ERRORS_KEPT = 20
 
     def __init__(self):
         super().__init__(daemon=True)
@@ -532,44 +572,65 @@ class Writer(threading.Thread):
         self.lag_max = 0.0
         self.written = 0
         self.errors = []
+        self.error_count = 0
+        self.report = None
         self.start()
 
     def write(self, path, row):
         self.lines.put((time.monotonic(), Path(path), json.dumps(row) + "\n"))
 
+    def failed(self, message):
+        self.error_count += 1
+        if len(self.errors) < self.ERRORS_KEPT:
+            self.errors.append(message)
+
     def run(self):
-        while True:
-            item = self.lines.get()
-            if item is None:
-                self.lines.task_done()
-                break
-            queued, path, line = item
+        ending = False
+        while not ending:
+            batch = [self.lines.get()]
+            while True:
+                try:
+                    batch.append(self.lines.get_nowait())
+                except queue.Empty:
+                    break
+            ending = None in batch
+            batch = [item for item in batch if item is not None]
             try:
-                if path not in self.files:
-                    self.files[path] = open(path, "a")
-                self.files[path].write(line)
-                if self.lines.empty():
-                    for handle in self.files.values():
+                for _, path, line in batch:
+                    try:
+                        if path not in self.files:
+                            self.files[path] = open(path, "a")
+                        self.files[path].write(line)
+                        self.written += 1
+                    except OSError as error:
+                        self.failed(f"{path.name}: {error}")
+                for path, handle in self.files.items():
+                    try:
                         handle.flush()
-                self.written += 1
-            except OSError as error:
-                self.errors.append(f"{path.name}: {error}")
-            self.lag_max = max(self.lag_max, time.monotonic() - queued)
-            self.lines.task_done()
+                    except OSError as error:
+                        self.failed(f"{path.name}: {error}")
+            except Exception as error:  # the writer never dies silently
+                self.failed(f"writer: {type(error).__name__}: {error}")
+            if batch:
+                self.lag_max = max(self.lag_max, time.monotonic() - batch[0][0])
 
-    def settle(self):
-        """Wait until everything handed over so far is written and flushed, and report the lag."""
-        self.lines.join()
-        for handle in self.files.values():
-            handle.flush()
-        return {"lines": self.written, "lag_max_ms": round(self.lag_max * 1000, 3), "errors": list(self.errors)}
-
-    def close(self):
-        self.lines.put(None)
-        self.join()
-        for handle in self.files.values():
-            handle.close()
-        self.files.clear()
+    def close(self, limit=120):
+        """Write and flush every line handed over, close the files and report. A disk that does not
+        take them within `limit` seconds is reported as an error, never waited for without end.
+        Closing again returns the same report."""
+        if self.report is None:
+            self.lines.put(None)
+            self.join(timeout=limit)
+            if self.is_alive():
+                self.failed(f"the evidence writer did not finish within {limit} s")
+            for path, handle in list(self.files.items()):
+                try:
+                    handle.close()
+                except OSError as error:
+                    self.failed(f"{path.name}: {error}")
+            self.report = {"lines": self.written, "lag_max_ms": round(self.lag_max * 1000, 3),
+                           "errors": list(self.errors), "error_count": self.error_count}
+        return self.report
 
 
 class Sampler(threading.Thread):
@@ -601,13 +662,13 @@ class Sampler(threading.Thread):
 
 
 def host_sample():
-    swap = run_text("sysctl", "-n", "vm.swapusage") or ""
+    swap = run_text("/usr/sbin/sysctl", "-n", "vm.swapusage") or ""
     used = re.search(r"used = ([\d.]+)M", swap)
-    pageouts = re.search(r"Pageouts:\s+(\d+)", run_text("vm_stat") or "")
-    return {"pressure_level": run_text("sysctl", "-n", "kern.memorystatus_vm_pressure_level"),
+    pageouts = re.search(r"Pageouts:\s+(\d+)", run_text("/usr/bin/vm_stat") or "")
+    return {"pressure_level": run_text("/usr/sbin/sysctl", "-n", "kern.memorystatus_vm_pressure_level"),
             "swap_used_mib": float(used.group(1)) if used else None,
             "pageouts": int(pageouts.group(1)) if pageouts else None,
-            "load_average": run_text("sysctl", "-n", "vm.loadavg")}
+            "load_average": run_text("/usr/sbin/sysctl", "-n", "vm.loadavg")}
 
 
 def validity_sample(fixture_pid):
@@ -635,12 +696,12 @@ class Fixture:
 
     def __init__(self, profile, headless):
         self.headless = headless
-        to_chrome, self.writer = os.pipe()
-        self.reader, from_chrome = os.pipe()
+        chrome_in, self.to_chrome = os.pipe()
+        self.from_chrome, chrome_out = os.pipe()
 
         def descriptors():
-            os.dup2(to_chrome, 3)
-            os.dup2(from_chrome, 4)
+            os.dup2(chrome_in, 3)
+            os.dup2(chrome_out, 4)
 
         args = [str(CHROME), f"--user-data-dir={profile}", "--no-first-run", "--no-default-browser-check",
                 "--remote-debugging-pipe", "about:blank"]
@@ -649,8 +710,8 @@ class Fixture:
         self.process = track(subprocess.Popen(args, pass_fds=(3, 4), preexec_fn=descriptors, close_fds=True,
                                               stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                                               stderr=subprocess.DEVNULL))
-        os.close(to_chrome)
-        os.close(from_chrome)
+        os.close(chrome_in)
+        os.close(chrome_out)
         self.buffer = b""
         self.sequence = 0
         self.session = None
@@ -667,7 +728,7 @@ class Fixture:
         message = {"id": self.sequence, "method": method, "params": params or {}}
         if session and self.session:
             message["sessionId"] = self.session
-        os.write(self.writer, json.dumps(message).encode() + b"\0")
+        os.write(self.to_chrome, json.dumps(message).encode() + b"\0")
         return self.sequence
 
     def reply(self, wanted, method, timeout=CDP_TIMEOUT_S):
@@ -691,9 +752,9 @@ class Fixture:
             if remaining <= 0:
                 self.pending.add(wanted)
                 raise TimeoutError(method)
-            ready, _, _ = select.select([self.reader], [], [], remaining)
+            ready, _, _ = select.select([self.from_chrome], [], [], remaining)
             if ready:
-                chunk = os.read(self.reader, 1 << 20)
+                chunk = os.read(self.from_chrome, 1 << 20)
                 if not chunk:
                     self.mark_crashed()
                     raise ConnectionError("the fixture browser closed its pipe")
@@ -746,7 +807,7 @@ class Fixture:
     def activate(self):
         """Bring this Chrome to the front through LaunchServices. No other Chrome runs."""
         if not self.headless:
-            subprocess.run(["open", "-a", str(CHROME_APP)], capture_output=True, timeout=30)
+            subprocess.run(["/usr/bin/open", "-a", str(CHROME_APP)], capture_output=True, timeout=30)
             self.call("Page.bringToFront")
 
     @staticmethod
@@ -823,7 +884,7 @@ class Fixture:
             self.process.kill()
             self.process.wait()
         untrack(self.process)
-        for descriptor in (self.reader, self.writer):
+        for descriptor in (self.from_chrome, self.to_chrome):
             try:
                 os.close(descriptor)
             except OSError:
@@ -887,11 +948,13 @@ class Foreground(threading.Thread):
                         self.fixture.send_input(index)
                     except TimeoutError:
                         self.dispatch_timeouts += 1
-                    # The browser's round trip for this input, as evidence; the page measures latency.
-                    took = round((time.monotonic() - sent) * 1000, 3)
-                    self.dispatch_ms.append(took)
-                    self.writer.write(self.raw / "dispatch.jsonl",
-                                      {"unix": time.time(), "index": index, "kind": index % 3, "ms": took})
+                    finally:
+                        # The browser's round trip for this input, as evidence, however it ended;
+                        # the page measures latency.
+                        took = round((time.monotonic() - sent) * 1000, 3)
+                        self.dispatch_ms.append(took)
+                        self.writer.write(self.raw / "dispatch.jsonl",
+                                          {"unix": time.time(), "index": index, "kind": index % 3, "ms": took})
                     index += 1
                     next_input += INPUT_PERIOD_S + self.random.uniform(-INPUT_JITTER_S, INPUT_JITTER_S)
                     # Slots that passed during the dispatch are missing samples, not a burst.
@@ -1238,7 +1301,7 @@ def slow_feed(lines, period, marker="slow-reader"):
     def feed(process):
         deadline = time.monotonic() + LOAD_COMPLETION_LIMIT_S
         while process.poll() is None and time.monotonic() < deadline and not ABORT.is_set():
-            if run_text("pgrep", "-P", str(process.pid), "-f", marker):
+            if run_text("/usr/bin/pgrep", "-P", str(process.pid), "-f", marker):
                 break
             time.sleep(0.2)
         stream = process.stdin
@@ -1274,9 +1337,9 @@ def consumers(args, release, combination, work, raw, deadline, repetition, rehea
             raise RuntimeError(f"a cold target directory already exists: {target}")
         return {"env": {"CARGO_TARGET_DIR": str(target)}}
 
-    # A warm run rebuilds incrementally after a change to the core crate, as development does; a cold
-    # run builds everything into a fresh directory.
-    change = "touch crates/core/src/lib.rs && " if combination == "warm" else ""
+    # A warm run rebuilds incrementally after touching the core crate, as development does, without
+    # changing what is built; a cold run builds everything into a fresh directory.
+    change = "/usr/bin/touch crates/core/src/lib.rs && " if combination == "warm" else ""
     cargo = ["/bin/sh", "-c", change + "cargo build --offline --locked --workspace && "
              "cargo test --offline --locked -p devguard-core -p devguard-contract"]
     io_dir = work / "io"
@@ -1307,9 +1370,10 @@ def consumers(args, release, combination, work, raw, deadline, repetition, rehea
 # ---------------------------------------------------------------- the protocol
 
 def measure_interval(args, release, kind, repetition_raw, seconds, fixture, combination, work, repetition,
-                     service_pid, writer):
+                     service_pid):
     """One idle or load interval: the fixture, the control probe, validity, service and host samples
-    throughout, and for load the six consumers, observed until every started command completes."""
+    throughout, and for load the six consumers, observed until every started command completes. The
+    interval's own evidence writer is closed before its raw files are hashed."""
     raw = repetition_raw / kind
     raw.mkdir()
     journal_before = journal_counts()
@@ -1318,44 +1382,50 @@ def measure_interval(args, release, kind, repetition_raw, seconds, fixture, comb
         invalid.append(f"the journal could not be read: {journal_before['error']}")
     elif journal_before["charged_attempts"] or journal_before["charged_leases"]:
         invalid.append("work other than the harness's was charged when the interval began")
-    # The load probe samples until it is stopped after the load completes, which is bounded.
-    probe = Probe(args.qualify_bin, release, raw, kind,
-                  seconds + (LOAD_COMPLETION_LIMIT_S + 300 if kind == "load" else 0))
-    # The probe's status target runs before any load competes with it for admission.
-    probe.await_target()
-    started = time.time()
-    begun = time.monotonic()
-    host = Sampler(writer, raw / "host.jsonl", HOST_PERIOD_S, host_sample)
-    validity = Sampler(writer, raw / "validity.jsonl", VALIDITY_PERIOD_S, validity_sample(fixture.process.pid))
-    service = Sampler(writer, raw / "service.jsonl", SERVICE_PERIOD_S, lambda: service_state(release))
-    foreground = Foreground(fixture, raw, args.seed_source.getrandbits(32), writer)
-    for thread in (host, validity, service, foreground):
-        thread.start()
-    load = []
-    if kind == "load":
-        (raw / "runs").mkdir()
-        load = consumers(args, release, combination, work, raw / "runs", begun + seconds, repetition,
-                         args.rehearsal)
-        for consumer in load:
-            consumer.start()
-        limit = begun + seconds + LOAD_COMPLETION_LIMIT_S
-        for consumer in load:
-            consumer.join(timeout=max(0.0, limit - time.monotonic()))
-        if any(consumer.is_alive() for consumer in load):
-            invalid.append("the load did not complete within the limit")
-            settle_consumers(load)
-    else:
-        ABORT.wait(max(0.0, seconds - (time.monotonic() - begun)))
-    if ABORT.is_set():
-        raise KeyboardInterrupt
-    ended = time.time()
-    elapsed = time.monotonic() - begun
-    foreground.stop()
-    validity_rows = validity.stop()
-    service_rows = service.stop()
-    host_rows = host.stop()
-    control = probe.finish(stop=kind == "load")
-    written = writer.settle()
+    writer = Writer()
+    try:
+        # The load probe samples until it is stopped after the load completes, which is bounded.
+        probe = Probe(args.qualify_bin, release, raw, kind,
+                      seconds + (LOAD_COMPLETION_LIMIT_S + 300 if kind == "load" else 0))
+        # The probe's status target runs before any load competes with it for admission.
+        probe.await_target()
+        started = time.time()
+        begun = time.monotonic()
+        host = Sampler(writer, raw / "host.jsonl", HOST_PERIOD_S, host_sample)
+        validity = Sampler(writer, raw / "validity.jsonl", VALIDITY_PERIOD_S, validity_sample(fixture.process.pid))
+        service = Sampler(writer, raw / "service.jsonl", SERVICE_PERIOD_S, lambda: service_state(release))
+        foreground = Foreground(fixture, raw, args.seed_source.getrandbits(32), writer)
+        for thread in (host, validity, service, foreground):
+            thread.start()
+        load = []
+        if kind == "load":
+            (raw / "runs").mkdir()
+            load = consumers(args, release, combination, work, raw / "runs", begun + seconds, repetition,
+                             args.rehearsal)
+            for consumer in load:
+                consumer.start()
+            limit = begun + seconds + LOAD_COMPLETION_LIMIT_S
+            for consumer in load:
+                consumer.join(timeout=max(0.0, limit - time.monotonic()))
+            if any(consumer.is_alive() for consumer in load):
+                invalid.append("the load did not complete within the limit")
+                settle_consumers(load)
+        else:
+            ABORT.wait(max(0.0, seconds - (time.monotonic() - begun)))
+        if ABORT.is_set():
+            raise KeyboardInterrupt
+        ended = time.time()
+        elapsed = time.monotonic() - begun
+        foreground.stop()
+        validity_rows = validity.stop()
+        service_rows = service.stop()
+        host_rows = host.stop()
+        control = probe.finish(stop=kind == "load")
+        # Every producer of this interval has stopped: its evidence is complete before it is hashed.
+        written = writer.close()
+    finally:
+        # An interrupted interval's evidence is closed too, without waiting long on the disk.
+        writer.close(limit=10)
     rows = control["samples"]
     status = [row for row in rows if row.get("kind") == "status"]
     terminations = [row for row in rows if row.get("kind") == "terminate"]
@@ -1403,7 +1473,7 @@ def measure_interval(args, release, kind, repetition_raw, seconds, fixture, comb
         invalid.append(f"the control probe exited {control['returncode']}: {control['stderr'][-300:]}")
     if control["malformed_lines"]:
         invalid.append(f"{control['malformed_lines']} probe samples were unreadable")
-    if written["errors"]:
+    if written["error_count"]:
         invalid.append(f"raw evidence could not be written: {written['errors'][:3]}")
     verdict, reasons = interval_verdict(kind, invalid, metrics)
     return {"kind": kind, "started_unix": started, "ended_unix": ended, "seconds": round(elapsed, 3),
@@ -1430,7 +1500,7 @@ def export_source(commit, work):
     source = work / "source"
     source.mkdir()
     archive = subprocess.run(["git", "archive", "--format=tar", commit], cwd=ROOT, capture_output=True, check=True)
-    subprocess.run(["tar", "-x", "-C", str(source)], input=archive.stdout, check=True)
+    subprocess.run(["/usr/bin/tar", "-x", "-C", str(source)], input=archive.stdout, check=True)
     return source
 
 
@@ -1466,11 +1536,11 @@ def await_front(fixture, limit=120):
 
 def other_chrome():
     """Chrome processes this harness did not start (their activation would be ambiguous)."""
-    listing = run_text("pgrep", "-f", str(CHROME)) or ""
+    listing = run_text("/usr/bin/pgrep", "-f", str(CHROME)) or ""
     return [int(pid) for pid in listing.split()]
 
 
-def repetition_run(args, release, plan, combination, repetition, out, work, fixture, writer):
+def repetition_run(args, release, plan, combination, repetition, out, work, fixture):
     name = f"{combination}-{repetition}"
     raw = out / name
     raw.mkdir()
@@ -1502,9 +1572,9 @@ def repetition_run(args, release, plan, combination, repetition, out, work, fixt
     time.sleep(SETTLE_S)
     fixture.drain()
     idle = measure_interval(args, release, "idle", raw, plan["idle_s"], fixture, combination, work, repetition,
-                            service_pid, writer)
+                            service_pid)
     load = measure_interval(args, release, "load", raw, plan["load_s"], fixture, combination, work, repetition,
-                            service_pid, writer)
+                            service_pid)
     report["intervals"] = {"idle": idle, "load": load}
     failed_removals = []
     for target in sorted((work / TARGETS).glob(f"cold-{repetition}-*")):
@@ -1584,34 +1654,34 @@ def protocol(args):
         "service_log_offset": SERVICE_LOG.stat().st_size if SERVICE_LOG.exists() else None,
     }
     # The display and the system stay awake for the whole run; caffeinate ends with this process.
-    awake = track(subprocess.Popen(["caffeinate", "-d", "-i", "-w", str(os.getpid())],
+    awake = track(subprocess.Popen(["/usr/bin/caffeinate", "-d", "-i", "-w", str(os.getpid())],
                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
     header["caffeinate_pid"] = awake.pid
-    # The instruments and the foreground run from the internal disk, as a user's browser does; the
-    # load builds on the development disk it was given.
+    # The qualify binary, which runs the probe and the bounded workloads, and the fixture's browser
+    # profile are staged on the internal disk, where a user's browser profile lives; the load builds
+    # on the development disk it was given, and the evidence goes to --out.
     stage = Path(tempfile.mkdtemp(prefix="devguard-slo-", dir=STAGE_PARENT))
-    header["stage"] = {"directory": str(stage), "volume": volume(stage), "work_volume": volume(work),
-                       "out_volume": volume(out)}
-    writer = Writer()
     fixture = None
     try:
-        staged = stage / "devguard-qualify"
-        shutil.copy2(args.qualify_bin, staged)
+        staged, digest = stage_binary(args.qualify_bin, stage, header["harness"]["qualify_sha256"])
+        header["harness"]["qualify_staged"], header["harness"]["qualify_staged_sha256"] = str(staged), digest
         args.qualify_bin = staged
+        header["placement"] = placements(stage, work, out)
+        (out / "run.json").write_text(json.dumps(header, indent=2) + "\n")
         fixture = Fixture(stage / "chrome", args.headless)
         fixture.open(FIXTURE)
         header["chrome"] = fixture.version
         (out / "run.json").write_text(json.dumps(header, indent=2) + "\n")
         results = {}
         for combination in plan["combinations"]:
-            results[combination] = [repetition_run(args, release, plan, combination, repetition, out, work, fixture,
-                                                   writer)
+            results[combination] = [repetition_run(args, release, plan, combination, repetition, out, work, fixture)
                                     for repetition in range(1, plan["repetitions"] + 1)]
     finally:
-        if fixture:
-            fixture.close()
-        writer.close()
-        shutil.rmtree(stage, ignore_errors=True)
+        try:
+            if fixture:
+                fixture.close()
+        finally:
+            remove_stage(stage)
     summary = summarize(header, results, out)
     print(json.dumps({"verdict": summary["verdict"], "summary": str(out / "summary.json")}), flush=True)
     return 0 if summary["verdict"] == "qualified" else (1 if summary["verdict"] == "failed" else 2)
@@ -1670,13 +1740,18 @@ def fixture_check(args):
         foreground.stop()
         rows = validity.stop()
         metrics = foreground.metrics()
+        metrics["evidence_writer"] = writer.close()
         version = fixture.version
     finally:
-        fixture.close()
-        writer.close()
-        shutil.rmtree(profile, ignore_errors=True)
+        try:
+            fixture.close()
+        finally:
+            writer.close(limit=10)
+            remove_stage(profile)
     invalid = foreground.invalid(args.headless) + validity_reasons(rows, args.headless,
                                                                    int(args.seconds / VALIDITY_PERIOD_S))
+    if metrics["evidence_writer"]["error_count"]:
+        invalid.append(f"raw evidence could not be written: {metrics['evidence_writer']['errors'][:3]}")
     observed = metrics["input"]["painted"] > 0 and metrics["frames"]["frames"] > 1
     report = {"schema": "devguard-fixture-check/v2", "headless": args.headless, "chrome": version,
               "fixture_sha256": sha256(FIXTURE), "seconds": args.seconds, "metrics": metrics,

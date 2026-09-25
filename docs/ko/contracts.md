@@ -265,7 +265,7 @@ DG1-C12는 기능 시험의 성공으로 응답성을 추론하지 않고 releas
   - **Admission.** 용량이나 압력 때문에 거절된 admission은 다시 시도하고 기록하지만, admission을 기다리다 끝난 target은 표본이 아니다.
   - **놓친 slot.** 앞선 호출이 진행 중인 동안 지나간 slot은 모두 놓친 것으로 기록한다.
   - **중지.** SIGINT, SIGTERM, SIGHUP이나 부모 프로세스의 소멸은 표본 채취를 끝내지만, probe는 자신이 시작한 모든 target을 정리한다.
-  - **증거.** Probe의 스레드는 표본을 기록 스레드에 넘기므로, 디스크가 느려도 증거 기록만 늦어질 뿐 표본 채취는 늦어지지 않는다. 기록 스레드의 최대 지연을 보고한다.
+  - **증거.** Probe의 스레드는 표본을 기록 스레드에 넘기므로, 디스크가 느려도 증거 기록만 늦어질 뿐 표본 채취는 늦어지지 않는다. 요약에는 기록한 표본 수와 기록 스레드의 최대 지연을 보고한다. 지연은 표본을 잰 때부터 기록하고 flush할 때까지다. 기록하지 못한 표본이 있으면 probe는 오류로 끝난다.
 - **전경 fixture.** Fixture는 고정 로컬 페이지 `crates/qualify/fixture/foreground.html`이며, 모든 실행 보고와 반복 보고에 hash를 기록한다. 실행마다 새 profile의 Google Chrome 인스턴스 하나를 `--remote-debugging-pipe`로 구동하므로 수신 port가 없고, scheduling이나 throttling을 바꾸는 flag도 쓰지 않는다. 반복마다 페이지를 다시 불러온다.
   - **입력.** 브라우저가 `Input.dispatch*`로 합성한다. 500 ms ± 100 ms slot마다 key, click, wheel 한 단계 중 하나를 보낸다. 앞선 입력이 진행 중인 동안 지나간 slot은 누락 표본이다. 각 입력이 브라우저를 거쳐 돌아오는 시간을 증거로 기록한다.
   - **입력부터 다음 paint까지.** Event의 timestamp부터, 입력으로 생긴 화면 변화 뒤의 다음 frame까지를 잰다. 다음 frame은 다음 animation frame에서 보낸 message로 표시한다. 브라우저가 Event Timing duration을 보고하면 그 값까지 올려 잡는다. Wheel 입력에는 보고가 없으므로 wheel 표본은 페이지 추정치에만 기댄다. 브라우저 이전의 운영체제 입력 경로는 포함하지 않는다.
@@ -276,7 +276,7 @@ DG1-C12는 기능 시험의 성공으로 응답성을 추론하지 않고 releas
 
   | 소비자 | 작업 | 예산 |
   | --- | --- | --- |
-  | Cargo | release 자신의 source(`--adapter cargo-pipeline`): compiler wrapper 없이 compiler job 하나로 workspace build 뒤 core·contract 시험. warm 실행은 먼저 core source 파일 하나의 시각을 갱신해 증분 build를 한다. | CPU 1개, 2 GiB, task 24개 |
+  | Cargo | release 자신의 source(`--adapter cargo-pipeline`): compiler wrapper 없이 compiler job 하나로 workspace build 뒤 core·contract 시험. warm 실행은 먼저 core source 파일 하나의 시각만 갱신하고 내용은 바꾸지 않으므로, Cargo는 그 crate와 그에 의존하는 crate를 증분 build한다. | CPU 1개, 2 GiB, task 24개 |
   | CPU | thread 1개 | CPU 1개, 128 MiB, task 4개 |
   | 메모리 | 1 GiB를 쓰고 유지 | 100 mCPU, 1.25 GiB, task 4개 |
   | I/O | 256 MiB를 쓰고 sync한 뒤 다시 읽고 삭제한 다음, 30초가 될 때까지 대기 | 100 mCPU, 384 MiB, task 4개 |
@@ -284,10 +284,10 @@ DG1-C12는 기능 시험의 성공으로 응답성을 추론하지 않고 releas
   | 느린 입력 | 100 ms마다 한 줄씩 읽기, payload가 실행된 뒤부터 입력 | 50 mCPU, 64 MiB, task 4개 |
 
   Probe의 target까지 더한 예산은 약 2,600 mCPU, 4 GiB, task 48개다. 이는 로컬 호스트 작업 용량(5,500 mCPU, 11.75 GiB, task 144개)의 절반, 즉 Constrained 용량 안에 들어간다. 따라서 메모리 경고가 와도 부하가 멈추지 않고 probe의 target도 굶지 않는다. Critical 압력에서는 아무것도 admit되지 않으며, 그 구간은 inconclusive다.
-- **배치.** 부하는 주어진 개발 디스크에서 build하고 쓴다. 측정 도구는 그 디스크를 함께 쓰지 않는다.
-  - probe 바이너리와 fixture 브라우저 profile은 사용자의 브라우저 profile이 있는 내장 디스크의 stage에서 실행한다.
-  - 모든 원시 증거 줄은 기록 스레드를 거치므로, 어떤 표본 스레드도 증거 디스크를 기다리지 않는다.
-  - 실행은 각 위치의 볼륨을 기록한다.
+- **배치.** 부하는 주어진 개발 디스크에서 build하고 쓴다. 증거는 출력 디렉터리에 쓰며, 이 디렉터리는 같은 디스크에 있을 수 있다. 어떤 측정 도구도 두 디스크를 기다리지 않는다.
+  - Probe와 CPU·메모리·I/O·출력·느린 입력 작업을 실행하는 `devguard-qualify` 바이너리는 사용자의 브라우저 profile이 있는 내장 디스크의 stage로 복사한다. 복사본의 hash는 주어진 바이너리에 대해 기록한 hash와 같아야 한다. Fixture 브라우저 profile도 같은 stage에 두며, 실행이 끝나면 stage를 지운다.
+  - 구간마다 harness 표본(fixture drain, 입력 전달, 유효성, 서비스, 호스트 행)을 쓰는 기록 스레드를 따로 둔다. 그 구간의 원시 파일 hash를 내기 전에 이 스레드를 닫고, 보고에는 기록한 줄 수, 최대 지연, 오류를 남긴다. Probe는 자기 기록 스레드로 쓴다. Receipt, 보고, 실행 header는 표본 스레드 밖에서 쓴다.
+  - 실행 header에는 각 위치의 볼륨, 물리 디스크, protocol, 위치와 함께 stage가 부하의 물리 디스크를 함께 쓰는지를 기록한다. 이는 판정이 아니라 증거다. 디스크가 하나뿐인 호스트에서는 언제나 함께 쓴다.
 
   첫 전체 실행(증거 `slo/protocol-1`)은 부하가 포화시킨 USB 디스크에 증거를 동기식으로 기록했다. 그 도구가 수 초씩 멈췄고, 페이지·서비스·probe 호출은 모든 목표를 만족했는데도 누락 표본 때문에 cold 반복이 실패했다.
 - **Protocol.**
@@ -300,12 +300,13 @@ DG1-C12는 기능 시험의 성공으로 응답성을 추론하지 않고 releas
   - 누락된 입력은 1초를 넘는 응답으로도 센다.
 - **유효성.** 다음을 모두 만족해야 구간이 유효한 관측이다.
   - fixture가 headful로 실행되고 계속 전면 application이다.
-  - 페이지가 계속 보이고 focus를 유지하며, visibility나 focus가 바뀌지 않는다.
+  - 페이지가 계속 보이고 focus를 유지하며, visibility나 focus가 바뀌지 않고, harness가 보내지 않은 입력을 받지 않는다.
   - 화면이 잠기지 않는다.
   - 유효성 표본이 구간의 90% 이상을 덮는다.
   - 모든 서비스 확인(1분마다)에서 측정 대상 release가 계속 선택되어 있다.
-  - 구간이 시작될 때 다른 작업이 과금되어 있지 않다.
-  - probe가 정상적으로 끝난다.
+  - 구간이 시작될 때 다른 작업이 과금되어 있지 않고, journal을 계속 읽을 수 있다.
+  - probe가 정상적으로 끝나고, probe가 쓴 표본을 모두 읽을 수 있다.
+  - 구간의 원시 표본을 모두 기록했다.
   - 부하가 제한 시간 안에 끝난다.
 
   `caffeinate`로 화면과 시스템을 깨어 있게 한다. 유효하지 않은 구간은 `inconclusive`이며 결코 통과가 아니다.
@@ -324,7 +325,7 @@ DG1-C12는 기능 시험의 성공으로 응답성을 추론하지 않고 releas
   - release manifest가 바뀌었거나, 서비스가 더는 그 release를 실행하지 않거나, 정책이나 호스트가 측정 때와 다르면 거절한다. 정책은 host.toml hash, 설정 fingerprint, capability이고, 호스트는 OS build, CPU, logical CPU, 메모리다.
   - 비공개 상태 directory에 `qualifications/<release>.json`을 쓴다. 이는 읽기 전용 `devguard-release-qualification/v1` 기록이다. 임시 파일과 link로 쓰므로 기존 기록을 대체하지 않는다.
   - 기록에는 release, 그 manifest와 artifact hash, 정책, 환경, harness와 계획, 모든 반복의 판정, 증거 hash, 서비스가 그 release를 실행한다는 검증이 들어간다. Release manifest는 바꾸지 않는다. `slo_qualified: false`는 승격이 아니라 패키지를 기술한다.
-- **중단.** SIGINT, SIGTERM, SIGHUP이나 harness의 실패는 새 작업을 멈춘다. 그 뒤 살아 있는 모든 owner, probe, 브라우저에 중지를 요청하며, 각 owner는 자기 scope를 정리한다. 중단되면 130, 실패하면 3으로 끝나며 아무것도 승격하지 않는다.
+- **중단.** SIGINT, SIGTERM, SIGHUP이나 harness의 실패는 새 작업을 멈춘다. 그 뒤 살아 있는 모든 owner, probe, 브라우저에 중지를 요청하고, 각 owner는 자기 scope를 정리하며, stage를 지운다. 중단되면 130, 실패하면 3으로 끝나며 아무것도 승격하지 않는다.
 - **한계.**
   - 이 qualification은 측정한 호스트·artifact·정책에서의 독립 제어, 개발, 제한된 자기 적용에만 해당한다. 다른 호스트나 release는 따로 측정해야 한다.
   - Fixture 통과가 모든 website를 보장하지는 않는다.

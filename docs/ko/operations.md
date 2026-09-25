@@ -83,7 +83,7 @@ python3 scripts/measure.py promote --summary <증거 디렉터리>/summary.json
 - `/Applications`에 Google Chrome이 있고 다른 Chrome은 실행 중이지 않다.
 
 실행 내내 호스트를 비워 두어야 한다. 약 다섯 시간이 걸린다. 두 조합을 세 번씩 반복하며, 각 반복은 idle 10분과 최소 30분의 부하다. 실행 전체에 fixture 창 하나를 유지하며 그 창을 앞으로 가져온다. macOS가 이를 허용하지 않으면 창을 한 번 click한다. 그 뒤에는 호스트를 쓰지 않는다. 다른 application이 전면에 오거나, 화면이 잠기거나, visibility가 바뀌면 그 구간은 `inconclusive`가 된다. 방해 금지 모드를 켜 두면 알림이 focus를 가져가지 않는다.
-- **산출물.** 원시 표본, receipt, 반복마다의 `report.json`은 기록 스레드가 `--out` 아래에 쓴다. Source, Cargo target, I/O 작업 파일은 `--work` 아래에 두며, 실행 뒤 지워도 된다. Probe 바이너리와 브라우저 profile은 내장 디스크의 `/private/tmp` 아래 임시 stage에서 실행하며, 끝나면 지운다. `summary.json`은 조합별 판정과 전체 판정, 목표별 상태(측정함, 해당 없음, 실행하지 않음)를 담는다.
+- **산출물.** 원시 표본, receipt, 반복마다의 `report.json`은 `--out` 아래에 둔다. 표본은 기록 스레드가 쓰므로 어떤 표본 스레드도 그 디스크를 기다리지 않는다. Source, Cargo target, I/O 작업 파일은 `--work` 아래에 두며, 실행 뒤 지워도 된다. Probe와 제한된 작업을 실행하는 `devguard-qualify` 바이너리와 브라우저 profile은 내장 디스크의 `/private/tmp` 아래 임시 stage에서 실행하며, 끝나면 지운다. 실행 header에 각 위치가 어느 디스크에 있는지 기록한다. `summary.json`은 조합별 판정과 전체 판정, 목표별 상태(측정함, 해당 없음, 실행하지 않음)를 담는다.
 - **종료 상태.** 실행이 qualified일 때만 0으로 끝나고, 반복이 실패하면 1, inconclusive면 2, 중단되면 130, harness 자체가 실패하면 3이다. 중단이나 실패가 일어나면 시작한 모든 owner, probe, 브라우저에 중지를 요청하며, 각 owner는 자기 scope를 정리한다.
 - **Rehearsal.** `--rehearsal`은 harness를 입증하려고 조합마다 짧은 반복을 한 번 실행하며, 언제나 inconclusive다. `--headless`는 전면을 차지하지 않고 입증한다.
 - **승격.** `promote`는 보존한 보고로 판정을 다시 계산한다. 정책·호스트·release가 바뀌지 않았고 서비스가 여전히 그 release를 실행하는 qualified 실행에 대해서만 release의 qualification 기록을 쓴다. [계약](contracts.md#slo-qualification-c12)을 참고한다.

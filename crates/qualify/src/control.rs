@@ -107,31 +107,34 @@ impl Recorder {
 struct Written {
     lines: u64,
     failed: bool,
-    /// The longest a sample waited between being taken and being written.
+    /// The longest a sample waited between being taken and being written
+    /// and flushed.
     lag_max: Duration,
 }
 
 /// Write every received line until every sender is gone, flushing whenever
-/// nothing more is queued.
+/// nothing more is queued. A line that cannot be written is reported and the
+/// next is still tried.
 fn write_samples(
     receiver: mpsc::Receiver<(Instant, String)>,
     out: &mut (dyn Write + Send),
 ) -> Written {
     let mut written = Written::default();
-    while let Ok(first) = receiver.recv() {
-        let mut next = Some(first);
-        while let Some((queued, line)) = next {
+    while let Ok((oldest, line)) = receiver.recv() {
+        let mut next = Some(line);
+        while let Some(line) = next {
             if writeln!(out, "{line}").is_err() {
                 written.failed = true;
             } else {
                 written.lines += 1;
             }
-            written.lag_max = written.lag_max.max(queued.elapsed());
-            next = receiver.try_recv().ok();
+            next = receiver.try_recv().ok().map(|(_, line)| line);
         }
         if out.flush().is_err() {
             written.failed = true;
         }
+        // The batch's oldest line waited longest, until the flush.
+        written.lag_max = written.lag_max.max(oldest.elapsed());
     }
     written
 }
@@ -800,10 +803,11 @@ mod tests {
     }
 
     #[test]
-    fn a_failing_writer_is_reported_and_still_drains_every_sample() {
-        struct Broken;
+    fn a_failing_writer_is_reported_and_still_tries_every_sample() {
+        struct Broken(u64);
         impl Write for Broken {
             fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+                self.0 += 1;
                 Err(std::io::Error::other("disk gone"))
             }
             fn flush(&mut self) -> std::io::Result<()> {
@@ -815,9 +819,43 @@ mod tests {
             sender.send((Instant::now(), format!("{index}"))).unwrap();
         }
         drop(sender);
-        let written = write_samples(receiver, &mut Broken);
+        let mut broken = Broken(0);
+        let written = write_samples(receiver, &mut broken);
         assert!(written.failed);
         assert_eq!(written.lines, 0);
+        // Each line was tried once: a failure does not stop the writer.
+        assert_eq!(broken.0, 5);
+    }
+
+    #[test]
+    fn a_slow_disk_delays_the_samples_never_the_sampling() {
+        struct Slow;
+        impl Write for Slow {
+            fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+                std::thread::sleep(Duration::from_millis(20));
+                Ok(buffer.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let (sender, receiver) = mpsc::channel();
+        let recorder = Recorder {
+            sender,
+            started: Instant::now(),
+        };
+        let writer = std::thread::spawn(move || write_samples(receiver, &mut Slow));
+        let began = Instant::now();
+        for index in 0..25 {
+            recorder.record("status", json!({ "index": index }));
+        }
+        // The disk takes at least half a second for these lines; recording
+        // them takes a moment.
+        assert!(began.elapsed() < Duration::from_millis(250));
+        drop(recorder);
+        let written = writer.join().unwrap();
+        assert_eq!((written.lines, written.failed), (25, false));
+        assert!(written.lag_max >= Duration::from_millis(20));
     }
 
     #[test]
