@@ -331,34 +331,46 @@ fn terminations(
         if !pause_until(next, deadline, watch) {
             break;
         }
-        let (sample, admitted) = terminate_once(endpoint, helper, options, recorder, watch);
+        let (sample, admitted, answered) =
+            terminate_once(endpoint, helper, options, recorder, watch);
         recorder.record("terminate", sample);
         // Slots that passed while this target's admission waited for capacity
-        // or pressure are not samples; slots its control operations overran are.
+        // or pressure are not samples, nor are slots that passed while its exit
+        // and release were followed, which are reported separately. Slots its
+        // launch and termination request overran are missed samples.
         let now = Instant::now().min(deadline);
         let mut slot = next + options.terminate_period;
         while slot <= now {
-            let sample = match admitted {
-                Some(at) if slot >= at => json!({"outcome": "missed_slot"}),
-                _ => {
-                    json!({"outcome": "not_started", "note": "admission waited for capacity or pressure"})
-                }
-            };
-            recorder.record("terminate", sample);
+            recorder.record("terminate", overrun(slot, admitted, answered));
             slot += options.terminate_period;
         }
         next = slot;
     }
 }
 
-/// One termination sample on a fresh target, and when its admission ended.
+/// What a termination slot that passed during an earlier cycle was: waiting
+/// for admission (not a sample), overrun by the launch and termination
+/// request (a missed sample), or passed while the target's exit and release
+/// were followed (not a sample; they are reported separately).
+fn overrun(slot: Instant, admitted: Option<Instant>, answered: Option<Instant>) -> Value {
+    match (admitted, answered) {
+        (Some(_), Some(at)) if slot >= at => {
+            json!({"outcome": "not_sampled", "note": "the previous target was still settling"})
+        }
+        (Some(at), _) if slot >= at => json!({"outcome": "missed_slot"}),
+        _ => json!({"outcome": "not_started", "note": "admission waited for capacity or pressure"}),
+    }
+}
+
+/// One termination sample on a fresh target, when its admission ended and
+/// when the termination request was answered.
 fn terminate_once(
     endpoint: &Endpoint,
     helper: &Path,
     options: &Options,
     recorder: &Recorder,
     watch: &Watch,
-) -> (Value, Option<Instant>) {
+) -> (Value, Option<Instant>, Option<Instant>) {
     let lifetime = TERMINATION_TARGET_LIFETIME;
     let mut admitted = None;
     let started = start(
@@ -373,11 +385,12 @@ fn terminate_once(
     );
     let mut target = match started {
         Ok(target) => target,
-        Err(unstarted) => return (unstarted.sample(), admitted),
+        Err(unstarted) => return (unstarted.sample(), admitted, None),
     };
     let asked = Instant::now();
     let answer = terminate(endpoint, &target.key);
     let ack = asked.elapsed();
+    let answered = Instant::now();
     let settled = settle(endpoint, &mut target, asked, answer.is_ok());
     let mut sample = json!({"key": target.key, "ack_ms": ms(ack),
                             "exited_ms": settled.exited_ms, "killed_by_probe": settled.killed_by_probe,
@@ -396,7 +409,7 @@ fn terminate_once(
             sample["message"] = error.message.into();
         }
     }
-    (sample, admitted)
+    (sample, admitted, Some(answered))
 }
 
 /// Sleep until `at`, returning false once the deadline or a stop comes first.
@@ -654,7 +667,7 @@ fn settle(endpoint: &Endpoint, target: &mut Target, since: Instant, answered: bo
         if Instant::now() >= limit {
             return settled;
         }
-        std::thread::sleep(Duration::from_millis(10));
+        std::thread::sleep(Duration::from_millis(50));
     }
 }
 
@@ -733,5 +746,29 @@ mod tests {
         drop(recorder);
         let text = String::from_utf8(out).unwrap();
         assert_eq!(text.matches("\"missed_slot\"").count(), 3);
+    }
+
+    #[test]
+    fn termination_slots_are_classified_by_what_overran_them() {
+        let start = Instant::now();
+        let at = |ms| start + Duration::from_millis(ms);
+        // Admitted at 100 ms and answered at 200 ms.
+        let (admitted, answered) = (Some(at(100)), Some(at(200)));
+        assert_eq!(
+            overrun(at(50), admitted, answered)["outcome"],
+            "not_started"
+        );
+        assert_eq!(
+            overrun(at(150), admitted, answered)["outcome"],
+            "missed_slot"
+        );
+        assert_eq!(
+            overrun(at(250), admitted, answered)["outcome"],
+            "not_sampled"
+        );
+        // A target that failed after admission: its later slots are missed.
+        assert_eq!(overrun(at(250), admitted, None)["outcome"], "missed_slot");
+        // Never admitted: every slot waited for admission.
+        assert_eq!(overrun(at(250), None, None)["outcome"], "not_started");
     }
 }

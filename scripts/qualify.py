@@ -255,7 +255,9 @@ def main():
             text=log.read_text(errors="replace")
             stage["tests_passed"]=sum(map(int,re.findall(r"test result: ok\. (\d+) passed",text)))
             if selectors[0]=="unittest" and re.search(r"^OK( \(.*\))?$",text,re.M):
-                stage["tests_passed"]=sum(map(int,re.findall(r"^Ran (\d+) tests? in",text,re.M)))
+                # Skipped tests ran nothing, so they are not counted as passed.
+                skipped_tests=sum(map(int,re.findall(r"skipped=(\d+)",text)))
+                stage["tests_passed"]=sum(map(int,re.findall(r"^Ran (\d+) tests? in",text,re.M)))-skipped_tests
             if result.returncode or not stage["tests_passed"]: raise RuntimeError("failed or empty suite: "+name)
             if expected:
                 files=sorted(path for path in raw.iterdir() if path.is_file())

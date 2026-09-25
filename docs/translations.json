@@ -112,8 +112,8 @@
       "id": "contracts",
       "source": "docs/contracts.md",
       "translation": "docs/ko/contracts.md",
-      "reviewed_source_sha256": "81936fef7f19442aa740f2a1c6baf8802f616d692d79eb750245b0792307a9b1",
-      "reviewed_translation_sha256": "ae8d94d685ab48f0639d70c042d7aa104227e4dc1d5a4592cabef4f97d44b636"
+      "reviewed_source_sha256": "64a664aac92ff8a17c0f1495030154e101599f944d7168b7a79d364da5efa420",
+      "reviewed_translation_sha256": "a0d1078d7feb3d00f63e0e99e0d8cbb6170ea8dad75532ee9bbee190dd578c81"
     }
   ]
 }

@@ -82,6 +82,10 @@ TRANSPORT = "resource_control_unavailable"
 EXIT_CRASH = 3
 # One Cargo job: 1 CPU and 2 GiB by the adapter's estimate.
 CARGO_BUDGET = ["--cpu", "1000", "--memory", "2GiB", "--tasks", "24"]
+# Cargo targets under a ".noindex" directory, which Spotlight leaves alone.
+TARGETS = "targets.noindex"
+# Build variables recorded for provenance; a compiler wrapper is removed so cold builds stay cold.
+BUILD_VARIABLES = ("RUSTC_WRAPPER", "CARGO_BUILD_RUSTC_WRAPPER", "RUSTFLAGS", "CARGO_HOME", "RUSTUP_TOOLCHAIN")
 
 # Processes the harness started and must settle if it ends early.
 ABORT = threading.Event()
@@ -134,7 +138,8 @@ def input_metrics(inputs, timing, dispatched, skipped=0):
     return {"scheduled": scheduled, "dispatched": dispatched, "skipped_slots": skipped, "handled": len(inputs),
             "painted": len(latencies), "event_timing_matched": matched, "missing": missing,
             "p99_ms": number(p99), "max_ms": worst(latencies, missing), "over_limit": over,
-            "passed": p99 is not None and p99 <= INPUT_P99_MS and over == 0}
+            # None: nothing was scheduled, which is a shortfall, not a failure.
+            "passed": None if p99 is None else (p99 <= INPUT_P99_MS and over == 0)}
 
 
 def frame_metrics(frames):
@@ -143,7 +148,7 @@ def frame_metrics(frames):
     stalls = sum(1 for gap in gaps if gap > FRAME_STALL_MS)
     return {"frames": len(frames), "max_gap_ms": number(max(gaps, default=None)), "stalls": stalls,
             "span_ms": number(frames[-1] - frames[0]) if len(frames) > 1 else 0,
-            "passed": len(frames) > 1 and stalls == 0}
+            "passed": None if len(frames) < 2 else stalls == 0}
 
 
 def status_metrics(samples, expected):
@@ -160,7 +165,7 @@ def status_metrics(samples, expected):
     return {"samples": len(answered) + missing, "expected": expected, "answered": len(answered),
             "not_running": not_running, "errors": len(errors), "missed_slots": missed,
             "connection_losses": losses, "p99_ms": number(p99), "max_ms": worst(answered, missing),
-            "passed": p99 is not None and p99 <= STATUS_P99_MS and losses == 0}
+            "passed": None if p99 is None else (p99 <= STATUS_P99_MS and losses == 0)}
 
 
 def effective(sample):
@@ -181,6 +186,7 @@ def termination_metrics(samples, expected):
     errors = [s for s in samples if s["outcome"] == "error"]
     missed = sum(1 for s in samples if s["outcome"] == "missed_slot")
     unstarted = sum(1 for s in samples if s["outcome"] == "not_started")
+    unsampled = sum(1 for s in samples if s["outcome"] == "not_sampled")
     losses = sum(1 for s in errors if s.get("code") == TRANSPORT)
     missing = ineffective + len(errors) + missed
     acks = [s["ack_ms"] for s in good]
@@ -190,12 +196,15 @@ def termination_metrics(samples, expected):
     p99 = nearest_rank(acks, 0.99, missing)
     return {"samples": len(good) + missing, "expected": expected, "effective": len(good),
             "ineffective": ineffective, "errors": len(errors), "missed_slots": missed, "not_started": unstarted,
+            "not_sampled": unsampled,
             "connection_losses": losses, "ack_p99_ms": number(p99), "ack_max_ms": worst(acks, missing),
             "exit_p99_ms": number(nearest_rank(exits, 0.99)), "exit_max_ms": number(max(exits, default=None)),
             "release_p99_ms": number(nearest_rank(released, 0.99, unreleased)),
             "release_max_ms": worst(released, unreleased), "unreleased": unreleased,
-            "passed": (p99 is not None and p99 <= TERMINATION_P99_MS and losses == 0 and ineffective == 0
-                       and unreleased == 0)}
+            # A refused or ineffective termination fails even without a latency sample; with neither a
+            # sample nor a failure, nothing was measured, which is a shortfall.
+            "passed": (False if losses or ineffective or unreleased
+                       else None if p99 is None else p99 <= TERMINATION_P99_MS)}
 
 
 def covered(spans, started, ended):
@@ -263,18 +272,23 @@ def interval_verdict(kind, invalid, metrics):
     and inconclusive when too little was observed or the load was not the declared one."""
     if invalid:
         return "inconclusive", list(invalid)
-    failures = [name for name in ("status", "termination", "input", "frames") if not metrics[name]["passed"]]
+    names = ("status", "termination", "input", "frames")
+    failures = [name for name in names if metrics[name]["passed"] is False]
     if metrics.get("fixture", {}).get("crashed"):
         failures.append("the fixture browser crashed")
+    if metrics.get("service", {}).get("failure"):
+        failures.append(metrics["service"]["failure"])
+    if metrics["termination"].get("status_target_effective") is False:
+        failures.append("the status target's termination was not effective")
     if kind == "load":
         failures += metrics["load"]["failures"]
     if metrics["journal"].get("still_charged"):
         failures.append("harness attempts still charged after the interval")
     if metrics["journal"].get("duplicate_launches"):
-        failures.append("an attempt key launched more than once")
+        failures.append("a load run launched more than one attempt not proven unstarted")
     if failures:
         return "fail", failures
-    shortfalls = []
+    shortfalls = [f"{name}: nothing was measured" for name in names if metrics[name]["passed"] is None]
     status, termination, inputs = metrics["status"], metrics["termination"], metrics["input"]
     if status["samples"] < MIN_SAMPLES * status["expected"]:
         shortfalls.append(f"status samples {status['samples']} of {status['expected']}")
@@ -335,12 +349,21 @@ def validity_reasons(rows, headless, expected):
     return reasons
 
 
-def service_reasons(rows, service_pid):
+def service_findings(rows, release_id, service_pid):
+    """(invalid, failure) from the service checks. Another release selected, or a check that could
+    not be made, is invalid observation; the measured release restarting or unhealthy is a failure."""
+    invalid = []
     if not rows:
-        return ["the service was not observed"]
-    if any(not row.get("runs_release") or row.get("service_pid") != service_pid for row in rows):
-        return ["the service did not run the measured release throughout"]
-    return []
+        invalid.append("the service was not observed")
+    if any(row.get("error") for row in rows):
+        invalid.append("a service check could not be made")
+    if any(row.get("current") not in (None, release_id) for row in rows):
+        invalid.append("another release was selected during the interval")
+    ours = [row for row in rows if not row.get("error") and row.get("current") in (None, release_id)]
+    failure = None
+    if any(not row.get("runs_release") or row.get("service_pid") != service_pid for row in ours):
+        failure = "the measured release restarted or was unhealthy during the interval"
+    return invalid, failure
 
 
 def summarize_run(consumer, receipt, code, started, ended, output_bytes):
@@ -369,36 +392,50 @@ def summarize_run(consumer, receipt, code, started, ended, output_bytes):
     return run
 
 
-def verify_run(out):
-    """Recompute a run's verdict from its preserved reports. Returns (summary, run, reasons)."""
+def verify_run(summary_path):
+    """Recompute a run's verdict from its preserved reports and raw files, over every repetition the
+    plan requires, whatever the summary lists. Returns (summary, run, reasons)."""
+    out = summary_path.parent
     reasons = []
-    summary = json.loads((out / "summary.json").read_text())
+    summary = json.loads(summary_path.read_text())
     run = json.loads((out / "run.json").read_text())
     if sha256(out / "run.json") != summary.get("run_sha256"):
         reasons.append("the run header changed after the summary")
+    if (run.get("harness") or {}).get("dirty"):
+        reasons.append("the harness checkout had uncommitted changes")
+    plan = run["plan"]
+    listed = {combination: {entry["repetition"]: entry for entry in value.get("repetitions", [])}
+              for combination, value in summary.get("combinations", {}).items()}
     combinations = {}
-    for combination, entry in summary.get("combinations", {}).items():
+    for combination in plan["combinations"]:
         verdicts = []
-        for repetition in entry.get("repetitions", []):
-            path = out / f"{combination}-{repetition['repetition']}/report.json"
-            if not path.exists() or sha256(path) != repetition.get("report_sha256"):
-                reasons.append(f"{combination}-{repetition['repetition']}: report missing or changed")
+        for repetition in range(1, plan["repetitions"] + 1):
+            name = f"{combination}-{repetition}"
+            entry = listed.get(combination, {}).get(repetition)
+            path = out / name / "report.json"
+            if entry is None or not path.exists() or sha256(path) != entry.get("report_sha256"):
+                reasons.append(f"{name}: report missing, unlisted or changed")
                 verdicts.append("inconclusive")
                 continue
             report = json.loads(path.read_text())
+            for interval in (report.get("intervals") or {}).values():
+                for relative, digest in (interval.get("raw") or {}).items():
+                    raw = out / name / relative
+                    if not raw.is_file() or sha256(raw) != digest:
+                        reasons.append(f"{name}: raw evidence missing or changed: {relative}")
             verdict = report.get("verdict")
             intervals = report.get("intervals") or {}
             if "idle" in intervals and "load" in intervals:
                 recomputed, _ = repetition_verdict(intervals["idle"], intervals["load"])
                 if verdict == "pass" and recomputed != "pass":
-                    reasons.append(f"{combination}-{repetition['repetition']}: recorded pass does not recompute")
+                    reasons.append(f"{name}: recorded pass does not recompute")
                     verdict = recomputed
             elif verdict == "pass":
-                reasons.append(f"{combination}-{repetition['repetition']}: pass without intervals")
+                reasons.append(f"{name}: pass without intervals")
                 verdict = "inconclusive"
             verdicts.append(verdict)
-        combinations[combination] = {"verdict": combination_verdict(verdicts, run["plan"]["repetitions"])}
-    verdict = overall_verdict(combinations, run["plan"], run)
+        combinations[combination] = {"verdict": combination_verdict(verdicts, plan["repetitions"])}
+    verdict = overall_verdict(combinations, plan, run)
     if verdict != summary.get("verdict"):
         reasons.append(f"the summary says {summary.get('verdict')} but the reports give {verdict}")
     if verdict != "qualified":
@@ -558,7 +595,9 @@ class Fixture:
         self.pending = set()
         self.late = {}
         self.drain_ids = set()
+        self.unreadable_replies = 0
         self.crashed = False
+        self.crashed_at = None
         self.version = None
 
     def send(self, method, params=None, session=True):
@@ -585,7 +624,7 @@ class Fixture:
                     self.pending.discard(message["id"])
                     self.late[message["id"]] = message
                 elif message.get("method") in ("Inspector.targetCrashed", "Target.targetCrashed"):
-                    self.crashed = True
+                    self.mark_crashed()
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 self.pending.add(wanted)
@@ -594,9 +633,13 @@ class Fixture:
             if ready:
                 chunk = os.read(self.reader, 1 << 20)
                 if not chunk:
-                    self.crashed = True
+                    self.mark_crashed()
                     raise ConnectionError("the fixture browser closed its pipe")
                 self.buffer += chunk
+
+    def mark_crashed(self):
+        if not self.crashed:
+            self.crashed, self.crashed_at = True, time.time()
 
     @staticmethod
     def result(message, method):
@@ -618,22 +661,25 @@ class Fixture:
         self.ready()
 
     def ready(self, limit=30):
+        """Wait for the current document to load; the marker an earlier document carried is gone."""
         deadline = time.monotonic() + limit
         while time.monotonic() < deadline:
             try:
-                if self.evaluate("document.readyState === 'complete' && typeof drain === 'function'"):
+                if self.evaluate("document.readyState === 'complete' && typeof drain === 'function' "
+                                 "&& window.__devguardReloaded === undefined"):
                     self.targets = json.loads(self.evaluate("targets()"))
                     return
-            except RuntimeError:
+            except (RuntimeError, TimeoutError):
                 pass
             time.sleep(0.2)
         raise RuntimeError("the fixture page did not load")
 
     def reload(self):
         """A fresh page for a new repetition in the same browser, which keeps the front."""
+        self.evaluate("window.__devguardReloaded = true")
         self.call("Page.reload", {"ignoreCache": True})
-        time.sleep(0.5)
         self.ready()
+        self.reset_replies()
 
     def activate(self):
         """Bring this Chrome to the front through LaunchServices. No other Chrome runs."""
@@ -652,14 +698,25 @@ class Fixture:
 
     def late_drains(self):
         """Drain replies that arrived after their request timed out; other late replies carry
-        nothing the harness needs."""
+        nothing the harness needs, and an error reply carries no data."""
         drained = []
         for key in sorted(self.late):
             message = self.late.pop(key)
-            if key in self.drain_ids:
+            if key in self.drain_ids and "error" not in message:
                 self.drain_ids.discard(key)
-                drained.append(json.loads(self.value(self.result(message, "drain"))))
+                try:
+                    drained.append(json.loads(self.value(message.get("result", {}))))
+                except (RuntimeError, ValueError, KeyError):
+                    self.unreadable_replies += 1
         return drained
+
+    def reset_replies(self):
+        """Forget replies still owed from an earlier interval or document. Returns how many."""
+        owed = len(self.pending) + len(self.late)
+        self.pending.clear()
+        self.late.clear()
+        self.drain_ids.clear()
+        return owed
 
     def pending_drains(self):
         return bool(self.pending & self.drain_ids)
@@ -730,6 +787,7 @@ class Foreground(threading.Thread):
         self.handled_at_start = None
         self.handled = None
         self.error = None
+        self.discarded_replies = 0
 
     def absorb(self, drained):
         with open(self.raw / "fixture.jsonl", "a") as out:
@@ -752,6 +810,7 @@ class Foreground(threading.Thread):
             self.drain_timeouts += 1
 
     def run(self):
+        self.discarded_replies = self.fixture.reset_replies()
         try:
             self.handled_at_start = self.fixture.drain()["handled"]
             next_input = time.monotonic()
@@ -783,8 +842,10 @@ class Foreground(threading.Thread):
             while self.fixture.pending_drains() and time.monotonic() < deadline:
                 time.sleep(0.5)
                 self.collect()
+            for drained in self.fixture.late_drains():
+                self.absorb(drained)
         except ConnectionError as error:
-            self.fixture.crashed = True
+            self.fixture.mark_crashed()
             self.error = str(error)
         except (OSError, RuntimeError, ValueError) as error:
             self.error = f"{type(error).__name__}: {error}"
@@ -816,6 +877,8 @@ class Foreground(threading.Thread):
         return {"input": input_metrics(self.inputs, self.timing, self.dispatched, self.skipped),
                 "frames": frame_metrics(self.frames),
                 "fixture": {"dispatch_timeouts": self.dispatch_timeouts, "drain_timeouts": self.drain_timeouts,
+                            "discarded_replies": self.discarded_replies,
+                            "unreadable_replies": self.fixture.unreadable_replies,
                             "crashed": self.fixture.crashed, "error": self.error}}
 
 
@@ -857,7 +920,8 @@ def settle_live():
             process.send_signal(signal.SIGTERM)
     for process in processes:
         try:
-            process.wait(timeout=180)
+            # A probe settles its targets within this time; an owner, its scope sooner.
+            process.wait(timeout=PROBE_FINISH_S)
         except subprocess.TimeoutExpired:
             process.kill()
             process.wait()
@@ -870,10 +934,18 @@ class Release:
     def __init__(self, release_id):
         self.id = release_id
         directory = SUPPORT / "releases" / release_id
-        status = run_text(str(directory / "bin/devguardd"), "status", timeout=60)
-        executable = Path((((json.loads(status) if status else {}).get("running") or {}).get("executable")) or "")
-        if executable.name == "devguardd" and executable.parent.parent.name == release_id:
-            directory = executable.parent.parent
+        for candidate in (directory, SUPPORT / "recovery" / release_id):
+            status = run_text(str(candidate / "bin/devguardd"), "status", timeout=60)
+            if status is None:
+                continue
+            try:
+                running = (json.loads(status).get("running") or {})
+            except ValueError:
+                continue
+            executable = Path(running.get("executable") or "")
+            if executable.name == "devguardd" and executable.parent.parent.name == release_id:
+                directory = executable.parent.parent
+            break
         self.directory = directory
         self.manifest = directory / "MANIFEST.json"
         self.devguardd = directory / "bin/devguardd"
@@ -907,8 +979,8 @@ def doctor(release):
             "authority_pid": (service.get("authority") or {}).get("pid")}
 
 
-def journal_query(query, parameters=()):
-    path = SUPPORT / "state/authority.sqlite"
+def journal_query(query, parameters=(), database=None):
+    path = database or SUPPORT / "state/authority.sqlite"
     connection = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=5)
     try:
         return connection.execute(query, parameters).fetchall()
@@ -928,27 +1000,31 @@ def journal_counts():
             "charged_attempts": attempts, "charged_leases": leases}
 
 
-def journal_attempts(ids):
+def journal_attempts(ids, database=None):
     """For the harness's own attempt ids: whether each is charged and whether it was launched."""
     found = {}
     ids = sorted(ids)
     for start in range(0, len(ids), 500):
         chunk = ids[start:start + 500]
         marks = ",".join("?" * len(chunk))
+        # A committed grant later released as never started (no helper was created) did not run.
         for attempt, charged, launched, phase in journal_query(
-                f"SELECT attempt, charged, launch_hash IS NOT NULL, json_extract(record, '$.phase') "
-                f"FROM attempts WHERE consumer = 'dev-cli' AND attempt IN ({marks})", chunk):
+                f"SELECT attempt, charged, launch_hash IS NOT NULL AND NOT ("
+                f"json_extract(record, '$.phase') = 'released' "
+                f"AND json_extract(record, '$.release_reason') = 'no_helper_created'), "
+                f"json_extract(record, '$.phase') "
+                f"FROM attempts WHERE consumer = 'dev-cli' AND attempt IN ({marks})", chunk, database):
             found[attempt] = {"charged": bool(charged), "launched": bool(launched), "phase": phase}
     return found
 
 
-def settle_journal(ids, runs):
+def settle_journal(ids, runs, database=None, limit=JOURNAL_SETTLE_S):
     """Wait until none of the harness's attempts is charged, then check each receipt launched at
-    most one of its attempts."""
-    deadline = time.monotonic() + JOURNAL_SETTLE_S
+    most one of its attempts that was not proven never started."""
+    deadline = time.monotonic() + limit
     try:
         while True:
-            found = journal_attempts(ids)
+            found = journal_attempts(ids, database)
             charged = sorted(attempt for attempt, row in found.items() if row["charged"])
             if not charged or time.monotonic() >= deadline:
                 break
@@ -1078,6 +1154,14 @@ class Consumer(threading.Thread):
                 ABORT.wait(FAILURE_PAUSE_S)
 
 
+def cargo_environment():
+    """The Cargo load's environment: this one, without a compiler wrapper."""
+    env = dict(os.environ)
+    for name in ("RUSTC_WRAPPER", "CARGO_BUILD_RUSTC_WRAPPER"):
+        env.pop(name, None)
+    return env
+
+
 def slow_feed(lines, period, marker="slow-reader"):
     """Feed `lines` lines, one per `period`, once the payload runs: lines are not queued in the pipe
     while the owner waits for admission."""
@@ -1086,7 +1170,7 @@ def slow_feed(lines, period, marker="slow-reader"):
         while process.poll() is None and time.monotonic() < deadline and not ABORT.is_set():
             if run_text("pgrep", "-P", str(process.pid), "-f", marker):
                 break
-            time.sleep(0.1)
+            time.sleep(0.2)
         stream = process.stdin
         try:
             for index in range(lines):
@@ -1109,8 +1193,8 @@ def consumers(args, release, combination, work, raw, deadline, repetition, rehea
     """The six load consumers of the protocol, through the measured release's devguard."""
     qualify = str(args.qualify_bin)
     seconds = "20" if rehearsal else "120"
-    env = dict(os.environ)
-    targets = work / "targets"
+    env = cargo_environment()
+    targets = work / TARGETS
 
     def cargo_before(index):
         if combination == "warm":
@@ -1161,7 +1245,9 @@ def measure_interval(args, release, kind, repetition_raw, seconds, fixture, comb
         invalid.append(f"the journal could not be read: {journal_before['error']}")
     elif journal_before["charged_attempts"] or journal_before["charged_leases"]:
         invalid.append("work other than the harness's was charged when the interval began")
-    probe = Probe(args.qualify_bin, release, raw, kind, seconds + (7200 if kind == "load" else 0))
+    # The load probe samples until it is stopped after the load completes, which is bounded.
+    probe = Probe(args.qualify_bin, release, raw, kind,
+                  seconds + (LOAD_COMPLETION_LIMIT_S + 300 if kind == "load" else 0))
     # The probe's status target runs before any load competes with it for admission.
     probe.await_target()
     started = time.time()
@@ -1212,7 +1298,6 @@ def measure_interval(args, release, kind, repetition_raw, seconds, fixture, comb
         "journal": {"before": journal_before, "after": journal_counts(), **journal},
         "host": host_peaks(host_rows),
         "validity_rows": len(validity_rows),
-        "service_rows": len(service_rows),
     }
     if kind == "load":
         (raw / "runs.json").write_text(json.dumps(runs, indent=1) + "\n")
@@ -1221,8 +1306,22 @@ def measure_interval(args, release, kind, repetition_raw, seconds, fixture, comb
         if metrics["load"]["consumer_errors"]:
             metrics["load"]["issues"].append("a consumer stopped with an error")
     invalid += foreground.invalid(fixture.headless)
-    invalid += validity_reasons(validity_rows, fixture.headless, int(elapsed / VALIDITY_PERIOD_S))
-    invalid += service_reasons(service_rows, service_pid)
+    if fixture.crashed and fixture.crashed_at:
+        # A crashed browser leaves the front; that consequence is the crash's failure, not invalid
+        # observation. Validity counts until the crash.
+        observed = [row for row in validity_rows if row["unix"] < fixture.crashed_at]
+        expected = int(max(0.0, fixture.crashed_at - started) / VALIDITY_PERIOD_S)
+        invalid += validity_reasons(observed, fixture.headless, expected)
+    else:
+        invalid += validity_reasons(validity_rows, fixture.headless, int(elapsed / VALIDITY_PERIOD_S))
+    service_invalid, service_failure = service_findings(service_rows, release.id, service_pid)
+    invalid += service_invalid
+    metrics["service"] = {"rows": len(service_rows), "failure": service_failure}
+    settled = [row for row in rows if row.get("kind") == "status_target" and row.get("outcome") == "settled"]
+    if settled:
+        row = settled[-1]
+        metrics["termination"]["status_target_effective"] = bool(
+            row.get("terminated") and row.get("exited_ms") is not None and not row.get("killed_by_probe"))
     if "error" in journal:
         invalid.append(f"the journal could not be read: {journal['error']}")
     if not control["finished"] or control["returncode"] != 0:
@@ -1265,7 +1364,7 @@ def prewarm(args, release, work, raw):
     consumer = Consumer("prewarm", ["/bin/sh", "-c", "cargo build --offline --locked --workspace && "
                                     "cargo test --offline --locked -p devguard-core -p devguard-contract --no-run"],
                         ["--adapter", "cargo-pipeline", *CARGO_BUDGET, "--wait", "30m"], release.devguard, runs,
-                        time.monotonic() + 1, env=dict(os.environ, CARGO_TARGET_DIR=str(work / "targets/warm")),
+                        time.monotonic() + 1, env=dict(cargo_environment(), CARGO_TARGET_DIR=str(work / TARGETS / "warm")),
                         cwd=work / "source")
     consumer.run()
     return consumer.runs
@@ -1330,12 +1429,15 @@ def repetition_run(args, release, plan, combination, repetition, out, work, fixt
     load = measure_interval(args, release, "load", raw, plan["load_s"], fixture, combination, work, repetition,
                             service_pid)
     report["intervals"] = {"idle": idle, "load": load}
-    for target in sorted((work / "targets").glob(f"cold-{repetition}-*")):
-        shutil.rmtree(target)
+    failed_removals = []
+    for target in sorted((work / TARGETS).glob(f"cold-{repetition}-*")):
+        shutil.rmtree(target, onerror=lambda *_, path=target: failed_removals.append(str(path)))
+    report["cold_targets_not_removed"] = sorted(set(failed_removals))
     verdict, reasons = repetition_verdict(idle, load)
     after = service_state(release)
-    if not (after["runs_release"] and after["service_pid"] == service_pid):
-        verdict, reasons = "inconclusive", reasons + ["the service did not run the release throughout"]
+    if verdict == "pass" and not (after["runs_release"] and after["service_pid"] == service_pid):
+        # A change after the last interval cannot be attributed to it; it only withholds a pass.
+        verdict, reasons = "inconclusive", reasons + ["the service changed after the intervals"]
     if args.rehearsal:
         verdict, reasons = "inconclusive", reasons + ["rehearsal durations are below the protocol"]
     return conclude(verdict, reasons)
@@ -1392,7 +1494,9 @@ def protocol(args):
                    "service": service, "doctor": diagnosis},
         "environment": host,
         "harness": {"head": fingerprint["head"], "tree_digest": fingerprint["tree_digest"],
-                    "dirty": bool(run_text("git", "status", "--porcelain")),
+                    "dirty": bool(subprocess.run(["git", "status", "--porcelain"], cwd=ROOT, capture_output=True,
+                                                 text=True).stdout.strip()),
+                    "build_variables": {name: os.environ.get(name) for name in BUILD_VARIABLES},
                     "measure_sha256": sha256(Path(__file__)), "fixture_sha256": sha256(FIXTURE),
                     "qualify_source_sha256": tree_sha256(QUALIFY_SOURCE), "qualify_bin": str(args.qualify_bin),
                     "qualify_sha256": sha256(args.qualify_bin), "rustc": rustc, "cargo": run_text("cargo", "--version"),
@@ -1493,8 +1597,7 @@ def fixture_check(args):
 def promote(args):
     """Record a qualified run's release after recomputing its verdict from the preserved reports and
     checking that the measured policy, host and release still hold."""
-    out = args.summary.resolve().parent
-    summary, run, reasons = verify_run(out)
+    summary, run, reasons = verify_run(args.summary.resolve())
     release = Release(run["release"]["id"])
     if sha256(release.manifest) != run["release"]["manifest_sha256"]:
         reasons.append("the release manifest differs from the measured one")

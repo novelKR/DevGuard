@@ -1,8 +1,9 @@
-"""The SLO protocol's analysis: percentiles, missing samples, validity, load, verdicts and the
-recomputation promotion relies on."""
+"""The SLO protocol's analysis: percentiles, missing samples, validity, load, verdicts, the journal
+checks and the recomputation promotion relies on."""
 import json
 import math
 from pathlib import Path
+import sqlite3
 import tempfile
 import unittest
 
@@ -46,6 +47,7 @@ def passing_metrics(kind="idle"):
         "status": measure.status_metrics([status() for _ in range(50)], 50),
         "termination": measure.termination_metrics([termination() for _ in range(5)], 5),
         "journal": {"still_charged": [], "duplicate_launches": 0},
+        "service": {"failure": None},
     }
     if kind == "load":
         metrics["load"] = measure.load_metrics([run(name) for name in CONSUMERS], 0.0, 60.0, CONSUMERS)
@@ -110,8 +112,8 @@ class Frames(unittest.TestCase):
     def test_frames_from_out_of_order_drains_are_sorted(self):
         self.assertTrue(measure.frame_metrics([400.0, 0.0, 200.0, 600.0])["passed"])
 
-    def test_no_frames_is_not_a_pass(self):
-        self.assertFalse(measure.frame_metrics([])["passed"])
+    def test_no_frames_is_unmeasured_not_a_pass(self):
+        self.assertIsNone(measure.frame_metrics([])["passed"])
 
 
 class Status(unittest.TestCase):
@@ -169,6 +171,22 @@ class Terminations(unittest.TestCase):
         self.assertEqual((metrics["samples"], metrics["not_started"]), (1, 1))
         self.assertTrue(metrics["passed"])
 
+    def test_only_refused_targets_measure_nothing_rather_than_fail(self):
+        refused = [{"kind": "terminate", "outcome": "not_started", "note": "critical"}] * 5
+        metrics = measure.termination_metrics(refused, 5)
+        self.assertIsNone(metrics["passed"])
+        interval = passing_metrics("load")
+        interval["termination"] = metrics
+        verdict, reasons = measure.interval_verdict("load", [], interval)
+        self.assertEqual(verdict, "inconclusive")
+        self.assertIn("termination: nothing was measured", reasons)
+
+    def test_slots_passed_while_a_target_settled_are_not_samples(self):
+        samples = [termination()] * 4 + [{"kind": "terminate", "outcome": "not_sampled"}]
+        metrics = measure.termination_metrics(samples, 5)
+        self.assertEqual((metrics["samples"], metrics["not_sampled"]), (4, 1))
+        self.assertTrue(metrics["passed"])
+
 
 class Load(unittest.TestCase):
     def test_every_consumer_must_run_and_succeed(self):
@@ -205,6 +223,76 @@ class Load(unittest.TestCase):
         issues = measure.load_metrics(runs, 0.0, 60.0, CONSUMERS)["issues"]
         self.assertIn("io: 1 exec failed", issues)
         self.assertIn("output: 1 unknown", issues)
+
+
+class Journal(unittest.TestCase):
+    """The journal checks read a real SQLite journal with the service's attempts table."""
+
+    def journal(self, directory, rows):
+        path = Path(directory) / "authority.sqlite"
+        connection = sqlite3.connect(path)
+        connection.execute("CREATE TABLE attempts (consumer TEXT NOT NULL, generation TEXT NOT NULL, "
+                           "attempt TEXT NOT NULL, charged INTEGER NOT NULL, record TEXT NOT NULL, launch_hash TEXT)")
+        for attempt, charged, launched, phase, reason in rows:
+            connection.execute("INSERT INTO attempts VALUES ('dev-cli', 'g', ?, ?, ?, ?)",
+                               (attempt, charged, json.dumps({"phase": phase, "release_reason": reason}),
+                                "h" if launched else None))
+        connection.commit()
+        connection.close()
+        return path
+
+    def test_a_grant_released_as_never_started_is_not_a_launch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = self.journal(directory, [("a0", 0, True, "released", "no_helper_created"),
+                                            ("a1", 0, True, "released", "scope_terminated")])
+            runs = [{"attempt_ids": ["a0", "a1"]}]
+            journal = measure.settle_journal({"a0", "a1"}, runs, database=path, limit=0)
+        self.assertEqual((journal["duplicate_launches"], runs[0]["launched_attempts"]), (0, 1))
+
+    def test_two_executed_attempts_in_one_run_are_a_duplicate(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = self.journal(directory, [("a0", 0, True, "released", "scope_terminated"),
+                                            ("a1", 0, True, "released", "scope_terminated")])
+            runs = [{"attempt_ids": ["a0", "a1"]}]
+            journal = measure.settle_journal({"a0", "a1"}, runs, database=path, limit=0)
+        self.assertEqual(journal["duplicate_launches"], 1)
+
+    def test_attempts_still_charged_are_named(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = self.journal(directory, [("q-1", 1, True, "run_authorized", None),
+                                            ("q-2", 0, True, "released", "scope_terminated")])
+            journal = measure.settle_journal({"q-1", "q-2"}, [], database=path, limit=0)
+        self.assertEqual(journal["still_charged"], ["q-1"])
+
+    def test_an_unreadable_journal_is_reported(self):
+        with tempfile.TemporaryDirectory() as directory:
+            journal = measure.settle_journal({"q-1"}, [], database=Path(directory) / "missing.sqlite", limit=0)
+        self.assertIn("error", journal)
+
+
+class LateReplies(unittest.TestCase):
+    """A drain reply that arrives after its request timed out keeps its data; others do not count."""
+
+    def fixture(self):
+        fixture = object.__new__(measure.Fixture)
+        fixture.pending, fixture.late, fixture.drain_ids, fixture.unreadable_replies = set(), {}, set(), 0
+        return fixture
+
+    def test_late_drain_replies_are_absorbed_and_others_dropped(self):
+        fixture = self.fixture()
+        value = json.dumps({"frames": [1.0]})
+        fixture.drain_ids = {7, 9}
+        fixture.late = {7: {"id": 7, "result": {"result": {"value": value}}},
+                        8: {"id": 8, "result": {}},
+                        9: {"id": 9, "error": {"message": "context destroyed"}}}
+        self.assertEqual(fixture.late_drains(), [{"frames": [1.0]}])
+        self.assertEqual(fixture.late, {})
+
+    def test_replies_owed_from_an_earlier_interval_are_forgotten(self):
+        fixture = self.fixture()
+        fixture.pending, fixture.late, fixture.drain_ids = {3}, {4: {}}, {3, 4}
+        self.assertEqual(fixture.reset_replies(), 2)
+        self.assertEqual((fixture.pending, fixture.late, fixture.drain_ids), (set(), {}, set()))
 
 
 class Receipts(unittest.TestCase):
@@ -269,6 +357,14 @@ class Verdicts(unittest.TestCase):
         metrics["load"] = measure.load_metrics([run(name) for name in CONSUMERS[1:]], 0.0, 60.0, CONSUMERS)
         self.assertEqual(measure.interval_verdict("load", [], metrics)[0], "inconclusive")
 
+    def test_a_service_restart_and_an_ineffective_status_target_fail(self):
+        metrics = passing_metrics()
+        metrics["service"]["failure"] = "the measured release restarted or was unhealthy during the interval"
+        self.assertEqual(measure.interval_verdict("idle", [], metrics)[0], "fail")
+        metrics = passing_metrics()
+        metrics["termination"]["status_target_effective"] = False
+        self.assertEqual(measure.interval_verdict("idle", [], metrics)[0], "fail")
+
     def test_load_failures_a_crash_and_charged_attempts_fail(self):
         metrics = passing_metrics("load")
         metrics["load"]["failures"] = ["1 load runs are uncertain"]
@@ -321,28 +417,41 @@ class Validity(unittest.TestCase):
         self.assertIn("a validity sample could not be taken",
                       measure.validity_reasons(rows + [{"error": "TimeoutExpired"}], False, 6))
 
-    def test_the_service_must_run_the_release_under_one_pid(self):
-        self.assertEqual(measure.service_reasons([{"runs_release": True, "service_pid": 3}], 3), [])
-        self.assertTrue(measure.service_reasons([{"runs_release": True, "service_pid": 4}], 3))
-        self.assertTrue(measure.service_reasons([], 3))
+    def test_a_restart_of_the_measured_release_fails_and_another_release_is_invalid(self):
+        steady = {"runs_release": True, "service_pid": 3, "current": "r1"}
+        self.assertEqual(measure.service_findings([steady], "r1", 3), ([], None))
+        invalid, failure = measure.service_findings([steady, {**steady, "service_pid": 4}], "r1", 3)
+        self.assertEqual(invalid, [])
+        self.assertIn("restarted", failure)
+        invalid, failure = measure.service_findings([steady, {**steady, "runs_release": False, "current": "r2"}],
+                                                    "r1", 3)
+        self.assertIn("another release was selected during the interval", invalid)
+        self.assertIsNone(failure)
+        self.assertIn("the service was not observed", measure.service_findings([], "r1", 3)[0])
+        self.assertIn("a service check could not be made",
+                      measure.service_findings([steady, {"error": "TimeoutExpired"}], "r1", 3)[0])
 
 
 class Promotion(unittest.TestCase):
     """verify_run recomputes the verdict from the preserved reports."""
 
-    def run_directory(self, directory, *, rehearsal=False, tamper=False, plan=None, verdicts=None):
+    def run_directory(self, directory, *, rehearsal=False, tamper=False, plan=None, verdicts=None, dirty=False,
+                      omit=None):
         out = Path(directory)
         plan = plan or measure.PROTOCOL
-        header = {"rehearsal": rehearsal, "headless": False, "approved_target": True, "plan": plan}
+        header = {"rehearsal": rehearsal, "headless": False, "approved_target": True, "plan": plan,
+                  "harness": {"dirty": dirty}}
         (out / "run.json").write_text(json.dumps(header))
         combinations = {}
         for combination in plan["combinations"]:
             repetitions = []
             for repetition in range(1, plan["repetitions"] + 1):
                 verdict = (verdicts or {}).get((combination, repetition), "pass")
-                interval = {"verdict": verdict, "reasons": []}
+                (out / f"{combination}-{repetition}/idle").mkdir(parents=True)
+                sample = out / f"{combination}-{repetition}/idle/host.jsonl"
+                sample.write_text("{}\n")
+                interval = {"verdict": verdict, "reasons": [], "raw": {"idle/host.jsonl": measure.sha256(sample)}}
                 report = {"verdict": verdict, "reasons": [], "intervals": {"idle": interval, "load": interval}}
-                (out / f"{combination}-{repetition}").mkdir()
                 path = out / f"{combination}-{repetition}/report.json"
                 path.write_text(json.dumps(report))
                 repetitions.append({"repetition": repetition, "verdict": verdict,
@@ -350,6 +459,8 @@ class Promotion(unittest.TestCase):
             combinations[combination] = {"verdict": measure.combination_verdict(
                 [r["verdict"] for r in repetitions], plan["repetitions"]), "repetitions": repetitions}
         verdict = measure.overall_verdict(combinations, plan, header)
+        if omit:
+            del combinations[omit]
         summary = {"verdict": verdict, "combinations": combinations, "run_sha256": measure.sha256(out / "run.json")}
         (out / "summary.json").write_text(json.dumps(summary))
         if tamper:
@@ -359,21 +470,28 @@ class Promotion(unittest.TestCase):
 
     def test_a_qualified_run_verifies(self):
         with tempfile.TemporaryDirectory() as directory:
-            _, _, reasons = measure.verify_run(self.run_directory(directory))
+            _, _, reasons = measure.verify_run(self.run_directory(directory) / "summary.json")
         self.assertEqual(reasons, [])
 
     def test_a_changed_report_is_refused(self):
         with tempfile.TemporaryDirectory() as directory:
-            _, _, reasons = measure.verify_run(self.run_directory(directory, tamper=True))
-        self.assertTrue(any("report missing or changed" in reason for reason in reasons))
+            _, _, reasons = measure.verify_run(self.run_directory(directory, tamper=True) / "summary.json")
+        self.assertTrue(any("report missing, unlisted or changed" in reason for reason in reasons))
 
     def test_a_rehearsal_a_partial_plan_or_a_failed_repetition_is_refused(self):
         cases = [{"rehearsal": True}, {"plan": {**measure.PROTOCOL, "repetitions": 1}},
-                 {"verdicts": {("warm", 2): "fail"}}]
+                 {"verdicts": {("warm", 2): "fail"}}, {"dirty": True}, {"omit": "cold"}]
         for case in cases:
             with tempfile.TemporaryDirectory() as directory:
-                _, _, reasons = measure.verify_run(self.run_directory(directory, **case))
+                _, _, reasons = measure.verify_run(self.run_directory(directory, **case) / "summary.json")
             self.assertTrue(reasons, case)
+
+    def test_changed_raw_evidence_is_refused(self):
+        with tempfile.TemporaryDirectory() as directory:
+            out = self.run_directory(directory)
+            (out / "warm-3/idle/host.jsonl").write_text("{\"edited\": true}\n")
+            _, _, reasons = measure.verify_run(out / "summary.json")
+        self.assertTrue(any("raw evidence missing or changed" in reason for reason in reasons))
 
     def test_a_pass_that_does_not_recompute_is_refused(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -385,7 +503,7 @@ class Promotion(unittest.TestCase):
             summary = json.loads((out / "summary.json").read_text())
             summary["combinations"]["cold"]["repetitions"][0]["report_sha256"] = measure.sha256(path)
             (out / "summary.json").write_text(json.dumps(summary))
-            _, _, reasons = measure.verify_run(out)
+            _, _, reasons = measure.verify_run(out / "summary.json")
         self.assertTrue(any("does not recompute" in reason for reason in reasons))
 
     def test_host_and_policy_identities_compare_what_was_measured(self):
