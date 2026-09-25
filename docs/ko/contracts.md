@@ -265,8 +265,9 @@ DG1-C12는 기능 시험의 성공으로 응답성을 추론하지 않고 releas
   - **Admission.** 용량이나 압력 때문에 거절된 admission은 다시 시도하고 기록하지만, admission을 기다리다 끝난 target은 표본이 아니다.
   - **놓친 slot.** 앞선 호출이 진행 중인 동안 지나간 slot은 모두 놓친 것으로 기록한다.
   - **중지.** SIGINT, SIGTERM, SIGHUP이나 부모 프로세스의 소멸은 표본 채취를 끝내지만, probe는 자신이 시작한 모든 target을 정리한다.
+  - **증거.** Probe의 스레드는 표본을 기록 스레드에 넘기므로, 디스크가 느려도 증거 기록만 늦어질 뿐 표본 채취는 늦어지지 않는다. 기록 스레드의 최대 지연을 보고한다.
 - **전경 fixture.** Fixture는 고정 로컬 페이지 `crates/qualify/fixture/foreground.html`이며, 모든 실행 보고와 반복 보고에 hash를 기록한다. 실행마다 새 profile의 Google Chrome 인스턴스 하나를 `--remote-debugging-pipe`로 구동하므로 수신 port가 없고, scheduling이나 throttling을 바꾸는 flag도 쓰지 않는다. 반복마다 페이지를 다시 불러온다.
-  - **입력.** 브라우저가 `Input.dispatch*`로 합성한다. 500 ms ± 100 ms slot마다 key, click, wheel 한 단계 중 하나를 보낸다. 앞선 입력이 진행 중인 동안 지나간 slot은 누락 표본이다.
+  - **입력.** 브라우저가 `Input.dispatch*`로 합성한다. 500 ms ± 100 ms slot마다 key, click, wheel 한 단계 중 하나를 보낸다. 앞선 입력이 진행 중인 동안 지나간 slot은 누락 표본이다. 각 입력이 브라우저를 거쳐 돌아오는 시간을 증거로 기록한다.
   - **입력부터 다음 paint까지.** Event의 timestamp부터, 입력으로 생긴 화면 변화 뒤의 다음 frame까지를 잰다. 다음 frame은 다음 animation frame에서 보낸 message로 표시한다. 브라우저가 Event Timing duration을 보고하면 그 값까지 올려 잡는다. Wheel 입력에는 보고가 없으므로 wheel 표본은 페이지 추정치에만 기댄다. 브라우저 이전의 운영체제 입력 경로는 포함하지 않는다.
   - **Frame 정지.** 연속한 animation frame 사이가 500 ms를 넘는 경우다.
   - **늦은 응답.** 한 구간 안에서 늦게 도착한 drain 응답은 보관하므로 그 데이터를 잃지 않는다. 이전 구간이나 이전 문서에서 아직 받지 못한 응답은 버리고 그 수를 기록한다.
@@ -275,7 +276,7 @@ DG1-C12는 기능 시험의 성공으로 응답성을 추론하지 않고 releas
 
   | 소비자 | 작업 | 예산 |
   | --- | --- | --- |
-  | Cargo | release 자신의 source(`--adapter cargo-pipeline`): compiler wrapper 없이 compiler job 하나로 workspace build 뒤 core·contract 시험 | CPU 1개, 2 GiB, task 24개 |
+  | Cargo | release 자신의 source(`--adapter cargo-pipeline`): compiler wrapper 없이 compiler job 하나로 workspace build 뒤 core·contract 시험. warm 실행은 먼저 core source 파일 하나의 시각을 갱신해 증분 build를 한다. | CPU 1개, 2 GiB, task 24개 |
   | CPU | thread 1개 | CPU 1개, 128 MiB, task 4개 |
   | 메모리 | 1 GiB를 쓰고 유지 | 100 mCPU, 1.25 GiB, task 4개 |
   | I/O | 256 MiB를 쓰고 sync한 뒤 다시 읽고 삭제한 다음, 30초가 될 때까지 대기 | 100 mCPU, 384 MiB, task 4개 |
@@ -283,6 +284,12 @@ DG1-C12는 기능 시험의 성공으로 응답성을 추론하지 않고 releas
   | 느린 입력 | 100 ms마다 한 줄씩 읽기, payload가 실행된 뒤부터 입력 | 50 mCPU, 64 MiB, task 4개 |
 
   Probe의 target까지 더한 예산은 약 2,600 mCPU, 4 GiB, task 48개다. 이는 로컬 호스트 작업 용량(5,500 mCPU, 11.75 GiB, task 144개)의 절반, 즉 Constrained 용량 안에 들어간다. 따라서 메모리 경고가 와도 부하가 멈추지 않고 probe의 target도 굶지 않는다. Critical 압력에서는 아무것도 admit되지 않으며, 그 구간은 inconclusive다.
+- **배치.** 부하는 주어진 개발 디스크에서 build하고 쓴다. 측정 도구는 그 디스크를 함께 쓰지 않는다.
+  - probe 바이너리와 fixture 브라우저 profile은 사용자의 브라우저 profile이 있는 내장 디스크의 stage에서 실행한다.
+  - 모든 원시 증거 줄은 기록 스레드를 거치므로, 어떤 표본 스레드도 증거 디스크를 기다리지 않는다.
+  - 실행은 각 위치의 볼륨을 기록한다.
+
+  첫 전체 실행(증거 `slo/protocol-1`)은 부하가 포화시킨 USB 디스크에 증거를 동기식으로 기록했다. 그 도구가 수 초씩 멈췄고, 페이지·서비스·probe 호출은 모든 목표를 만족했는데도 누락 표본 때문에 cold 반복이 실패했다.
 - **Protocol.**
   - 조합은 두 가지다. `cold`는 Cargo build마다 Spotlight가 건너뛰는 `.noindex` 디렉터리 아래에 자기만의 새 target directory를 쓰고, 구간이 끝난 뒤 지운다. `warm`은 반복 전에 build한 target directory를 다시 쓰며, 그 build가 실패한 warm 반복은 측정하지 않는다.
   - 조합마다 반복 세 번을 실행한다. 각 반복은 idle 10분 뒤 최소 30분의 부하다.

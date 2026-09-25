@@ -32,8 +32,8 @@ use std::io::Write;
 use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::process::{Child, Stdio};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 /// Every target runs this program for a bounded time, so a target outlives
@@ -84,38 +84,56 @@ impl Options {
     }
 }
 
-/// Raw samples, one JSON object per line, written by the probe's threads.
-struct Recorder<'a> {
-    out: Mutex<&'a mut (dyn Write + Send)>,
+/// Raw samples, one JSON object per line. The probe's threads hand each line
+/// to a writer thread, so a slow disk delays the evidence, never the sampling.
+struct Recorder {
+    sender: mpsc::Sender<(Instant, String)>,
     started: Instant,
-    written: AtomicU64,
-    failed: AtomicBool,
 }
 
-impl<'a> Recorder<'a> {
-    fn new(out: &'a mut (dyn Write + Send)) -> Self {
-        Self {
-            out: Mutex::new(out),
-            started: Instant::now(),
-            written: AtomicU64::new(0),
-            failed: AtomicBool::new(false),
-        }
-    }
-
+impl Recorder {
     fn record(&self, kind: &str, mut sample: Value) {
         sample["kind"] = kind.into();
         sample["t_ms"] = ms(self.started.elapsed()).into();
         sample["unix_ms"] = unix_ms().into();
-        let mut out = self
-            .out
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if writeln!(out, "{sample}").and_then(|_| out.flush()).is_err() {
-            self.failed.store(true, Ordering::Relaxed);
-        } else {
-            self.written.fetch_add(1, Ordering::Relaxed);
+        // The writer drains until every sender is gone, so a send cannot fail
+        // before the recorder is dropped.
+        let _ = self.sender.send((Instant::now(), sample.to_string()));
+    }
+}
+
+/// What the writer thread did with the samples it received.
+#[derive(Default)]
+struct Written {
+    lines: u64,
+    failed: bool,
+    /// The longest a sample waited between being taken and being written.
+    lag_max: Duration,
+}
+
+/// Write every received line until every sender is gone, flushing whenever
+/// nothing more is queued.
+fn write_samples(
+    receiver: mpsc::Receiver<(Instant, String)>,
+    out: &mut (dyn Write + Send),
+) -> Written {
+    let mut written = Written::default();
+    while let Ok(first) = receiver.recv() {
+        let mut next = Some(first);
+        while let Some((queued, line)) = next {
+            if writeln!(out, "{line}").is_err() {
+                written.failed = true;
+            } else {
+                written.lines += 1;
+            }
+            written.lag_max = written.lag_max.max(queued.elapsed());
+            next = receiver.try_recv().ok();
+        }
+        if out.flush().is_err() {
+            written.failed = true;
         }
     }
+    written
 }
 
 /// When sampling must end: the caller's stop, or this process's parent going
@@ -212,7 +230,41 @@ pub fn run(
     };
     let endpoint = Endpoint::open(paths)?;
     endpoint.register()?;
-    let recorder = Recorder::new(out);
+    let (sender, receiver) = mpsc::channel();
+    std::thread::scope(|scope| {
+        let writer = scope.spawn(move || write_samples(receiver, out));
+        let recorder = Recorder {
+            sender,
+            started: Instant::now(),
+        };
+        let sampled = sample(&endpoint, helper, options, &recorder, &watch);
+        drop(recorder);
+        let written = writer.join().unwrap_or(Written {
+            failed: true,
+            ..Written::default()
+        });
+        let mut summary = sampled?;
+        if written.failed {
+            return Err(Error::new(
+                ErrorCode::ResourceControlUnavailable,
+                "cannot write the probe samples",
+            ));
+        }
+        summary["samples"] = written.lines.into();
+        summary["writer_lag_max_ms"] = ms(written.lag_max).into();
+        Ok(summary)
+    })
+}
+
+/// Take every sample of a run and settle every target, recording through
+/// `recorder`. Returns what the summary reports besides the writer's counts.
+fn sample(
+    endpoint: &Endpoint,
+    helper: &Path,
+    options: &Options,
+    recorder: &Recorder,
+    watch: &Watch,
+) -> Result<Value> {
     recorder.record(
         "header",
         json!({"schema": "devguard-control-probe/v2", "endpoint": endpoint.summary(),
@@ -225,7 +277,7 @@ pub fn run(
     );
     let lifetime = options.duration + STATUS_TARGET_MARGIN;
     let started = start(
-        &endpoint, helper, options, &recorder, "status", lifetime, &watch, &mut None,
+        endpoint, helper, options, recorder, "status", lifetime, watch, &mut None,
     );
     let mut status_target = match started {
         Ok(target) => target,
@@ -237,12 +289,12 @@ pub fn run(
     let deadline = Instant::now() + options.duration;
     let key = status_target.key.clone();
     std::thread::scope(|scope| {
-        scope.spawn(|| statuses(&endpoint, &key, options, &recorder, deadline, &watch));
-        scope.spawn(|| terminations(&endpoint, helper, options, &recorder, deadline, &watch));
+        scope.spawn(|| statuses(endpoint, &key, options, recorder, deadline, watch));
+        scope.spawn(|| terminations(endpoint, helper, options, recorder, deadline, watch));
     });
     let asked = Instant::now();
-    let answer = terminate(&endpoint, &status_target.key);
-    let settled = settle(&endpoint, &mut status_target, asked, answer.is_ok());
+    let answer = terminate(endpoint, &status_target.key);
+    let settled = settle(endpoint, &mut status_target, asked, answer.is_ok());
     recorder.record(
         "status_target",
         json!({"outcome": "settled", "key": status_target.key, "terminated": answer.is_ok(),
@@ -250,15 +302,10 @@ pub fn run(
                "released_ms": settled.released_ms, "phase": settled.phase,
                "release_reason": settled.release_reason}),
     );
-    if recorder.failed.load(Ordering::Relaxed) {
-        return Err(Error::new(
-            ErrorCode::ResourceControlUnavailable,
-            "cannot write the probe samples",
-        ));
-    }
-    Ok(json!({"samples": recorder.written.load(Ordering::Relaxed),
-              "status_target_released": settled.phase == Some(AttemptPhase::Released),
-              "stopped_early": watch.stopped()}))
+    Ok(
+        json!({"status_target_released": settled.phase == Some(AttemptPhase::Released),
+              "stopped_early": watch.stopped()}),
+    )
 }
 
 /// Record every slot of `period` that passed before `now` as missed, and
@@ -719,8 +766,11 @@ mod tests {
 
     #[test]
     fn slots_that_passed_during_a_call_are_recorded_as_missed() {
-        let mut out = Vec::new();
-        let recorder = Recorder::new(&mut out);
+        let (sender, receiver) = mpsc::channel();
+        let recorder = Recorder {
+            sender,
+            started: Instant::now(),
+        };
         let start = Instant::now();
         let period = Duration::from_millis(100);
         // A call that took 350 ms overran three later slots.
@@ -732,7 +782,6 @@ mod tests {
             "status",
         );
         assert_eq!(next, start + Duration::from_millis(400));
-        assert_eq!(recorder.written.load(Ordering::Relaxed), 3);
         // A call within its slot misses nothing.
         let next = missed_slots(
             next,
@@ -742,10 +791,33 @@ mod tests {
             "status",
         );
         assert_eq!(next, start + Duration::from_millis(500));
-        assert_eq!(recorder.written.load(Ordering::Relaxed), 3);
         drop(recorder);
+        let mut out = Vec::new();
+        let written = write_samples(receiver, &mut out);
+        assert_eq!((written.lines, written.failed), (3, false));
         let text = String::from_utf8(out).unwrap();
         assert_eq!(text.matches("\"missed_slot\"").count(), 3);
+    }
+
+    #[test]
+    fn a_failing_writer_is_reported_and_still_drains_every_sample() {
+        struct Broken;
+        impl Write for Broken {
+            fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+                Err(std::io::Error::other("disk gone"))
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let (sender, receiver) = mpsc::channel();
+        for index in 0..5 {
+            sender.send((Instant::now(), format!("{index}"))).unwrap();
+        }
+        drop(sender);
+        let written = write_samples(receiver, &mut Broken);
+        assert!(written.failed);
+        assert_eq!(written.lines, 0);
     }
 
     #[test]

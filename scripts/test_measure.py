@@ -295,6 +295,35 @@ class LateReplies(unittest.TestCase):
         self.assertEqual((fixture.pending, fixture.late, fixture.drain_ids), (set(), {}, set()))
 
 
+class EvidenceWriter(unittest.TestCase):
+    """Sampling threads hand rows to one writer thread and never wait on the disk."""
+
+    def test_rows_are_written_in_order_per_file_and_settle_waits_for_them(self):
+        with tempfile.TemporaryDirectory() as directory:
+            writer = measure.Writer()
+            first, second = Path(directory) / "a.jsonl", Path(directory) / "b.jsonl"
+            for index in range(200):
+                writer.write(first if index % 2 else second, {"index": index})
+            settled = writer.settle()
+            rows = [json.loads(line)["index"] for line in first.read_text().splitlines()]
+            writer.close()
+        self.assertEqual(settled["lines"], 200)
+        self.assertEqual(settled["errors"], [])
+        self.assertEqual(rows, list(range(1, 200, 2)))
+        self.assertGreaterEqual(settled["lag_max_ms"], 0)
+
+    def test_a_file_that_cannot_be_written_is_reported_and_others_continue(self):
+        with tempfile.TemporaryDirectory() as directory:
+            writer = measure.Writer()
+            writer.write(Path(directory) / "missing" / "x.jsonl", {"a": 1})
+            writer.write(Path(directory) / "ok.jsonl", {"b": 2})
+            settled = writer.settle()
+            written = (Path(directory) / "ok.jsonl").read_text()
+            writer.close()
+        self.assertEqual(len(settled["errors"]), 1)
+        self.assertIn('"b": 2', written)
+
+
 class Receipts(unittest.TestCase):
     def receipt(self, directory, body):
         path = Path(directory) / "r.receipt.json"

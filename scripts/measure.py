@@ -15,6 +15,7 @@ import math
 import os
 from pathlib import Path
 import platform
+import queue
 import random
 import re
 import select
@@ -23,6 +24,7 @@ import signal
 import sqlite3
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import traceback
@@ -84,6 +86,8 @@ EXIT_CRASH = 3
 CARGO_BUDGET = ["--cpu", "1000", "--memory", "2GiB", "--tasks", "24"]
 # Cargo targets under a ".noindex" directory, which Spotlight leaves alone.
 TARGETS = "targets.noindex"
+# The instruments' and the fixture's own files live on the internal disk, off the load's disk.
+STAGE_PARENT = "/private/tmp"
 # Build variables recorded for provenance; a compiler wrapper is removed so cold builds stay cold.
 BUILD_VARIABLES = ("RUSTC_WRAPPER", "CARGO_BUILD_RUSTC_WRAPPER", "RUSTFLAGS", "CARGO_HOME", "RUSTUP_TOOLCHAIN")
 
@@ -475,6 +479,14 @@ def tree_sha256(directory):
     return digest.hexdigest()
 
 
+def volume(path):
+    """The device and mount a path lives on, from df."""
+    text = run_text("df", "-P", str(path)) or ""
+    lines = text.splitlines()
+    fields = lines[-1].split() if len(lines) > 1 else []
+    return {"device": fields[0], "mount": fields[-1]} if len(fields) >= 6 else None
+
+
 def frontmost_pid():
     """The process of the frontmost application, from LaunchServices."""
     front = run_text("lsappinfo", "front")
@@ -508,29 +520,79 @@ def environment():
     }
 
 
-class Sampler(threading.Thread):
-    """Calls `sample` every `period` seconds until stopped, writing JSON lines to `path`. A sample
-    that raises is recorded as an error row, never lost."""
+class Writer(threading.Thread):
+    """Writes every raw evidence line on its own thread, so no sampling thread ever waits on a disk
+    write: a disk the load saturates delays the evidence, never the measurement. The largest lag
+    between a line being handed over and written is reported."""
 
-    def __init__(self, path, period, sample):
+    def __init__(self):
         super().__init__(daemon=True)
-        self.path, self.period, self.sample = path, period, sample
+        self.lines = queue.Queue()
+        self.files = {}
+        self.lag_max = 0.0
+        self.written = 0
+        self.errors = []
+        self.start()
+
+    def write(self, path, row):
+        self.lines.put((time.monotonic(), Path(path), json.dumps(row) + "\n"))
+
+    def run(self):
+        while True:
+            item = self.lines.get()
+            if item is None:
+                self.lines.task_done()
+                break
+            queued, path, line = item
+            try:
+                if path not in self.files:
+                    self.files[path] = open(path, "a")
+                self.files[path].write(line)
+                if self.lines.empty():
+                    for handle in self.files.values():
+                        handle.flush()
+                self.written += 1
+            except OSError as error:
+                self.errors.append(f"{path.name}: {error}")
+            self.lag_max = max(self.lag_max, time.monotonic() - queued)
+            self.lines.task_done()
+
+    def settle(self):
+        """Wait until everything handed over so far is written and flushed, and report the lag."""
+        self.lines.join()
+        for handle in self.files.values():
+            handle.flush()
+        return {"lines": self.written, "lag_max_ms": round(self.lag_max * 1000, 3), "errors": list(self.errors)}
+
+    def close(self):
+        self.lines.put(None)
+        self.join()
+        for handle in self.files.values():
+            handle.close()
+        self.files.clear()
+
+
+class Sampler(threading.Thread):
+    """Calls `sample` every `period` seconds until stopped, handing JSON rows for `path` to the
+    writer. A sample that raises is recorded as an error row, never lost."""
+
+    def __init__(self, writer, path, period, sample):
+        super().__init__(daemon=True)
+        self.writer, self.path, self.period, self.sample = writer, path, period, sample
         self.halt = threading.Event()
         self.rows = []
 
     def run(self):
-        with open(self.path, "a") as out:
-            next_at = time.monotonic()
-            while not self.halt.is_set():
-                try:
-                    row = {"unix": time.time(), **self.sample()}
-                except Exception as error:  # every failed sample is kept as evidence
-                    row = {"unix": time.time(), "error": f"{type(error).__name__}: {error}"}
-                self.rows.append(row)
-                out.write(json.dumps(row) + "\n")
-                out.flush()
-                next_at += self.period
-                self.halt.wait(max(0.0, next_at - time.monotonic()))
+        next_at = time.monotonic()
+        while not self.halt.is_set():
+            try:
+                row = {"unix": time.time(), **self.sample()}
+            except Exception as error:  # every failed sample is kept as evidence
+                row = {"unix": time.time(), "error": f"{type(error).__name__}: {error}"}
+            self.rows.append(row)
+            self.writer.write(self.path, row)
+            next_at += self.period
+            self.halt.wait(max(0.0, next_at - time.monotonic()))
 
     def stop(self):
         self.halt.set()
@@ -774,9 +836,10 @@ class Foreground(threading.Thread):
     flight is counted as skipped, which is a missing sample. A drain that times out keeps its reply
     for later, so no data is lost; a closed browser or a crashed page is a crash, a failure."""
 
-    def __init__(self, fixture, raw, seed):
+    def __init__(self, fixture, raw, seed, writer):
         super().__init__(daemon=True)
-        self.fixture, self.raw = fixture, raw
+        self.fixture, self.raw, self.writer = fixture, raw, writer
+        self.dispatch_ms = []
         self.random = random.Random(seed)
         self.halt = threading.Event()
         self.dispatched = 0
@@ -790,8 +853,7 @@ class Foreground(threading.Thread):
         self.discarded_replies = 0
 
     def absorb(self, drained):
-        with open(self.raw / "fixture.jsonl", "a") as out:
-            out.write(json.dumps({"unix": time.time(), **drained}) + "\n")
+        self.writer.write(self.raw / "fixture.jsonl", {"unix": time.time(), **drained})
         self.frames += drained["frames"]
         self.inputs += drained["inputs"]
         self.timing += drained["timing"]
@@ -820,10 +882,16 @@ class Foreground(threading.Thread):
                 now = time.monotonic()
                 if now >= next_input:
                     self.dispatched += 1
+                    sent = time.monotonic()
                     try:
                         self.fixture.send_input(index)
                     except TimeoutError:
                         self.dispatch_timeouts += 1
+                    # The browser's round trip for this input, as evidence; the page measures latency.
+                    took = round((time.monotonic() - sent) * 1000, 3)
+                    self.dispatch_ms.append(took)
+                    self.writer.write(self.raw / "dispatch.jsonl",
+                                      {"unix": time.time(), "index": index, "kind": index % 3, "ms": took})
                     index += 1
                     next_input += INPUT_PERIOD_S + self.random.uniform(-INPUT_JITTER_S, INPUT_JITTER_S)
                     # Slots that passed during the dispatch are missing samples, not a burst.
@@ -877,6 +945,8 @@ class Foreground(threading.Thread):
         return {"input": input_metrics(self.inputs, self.timing, self.dispatched, self.skipped),
                 "frames": frame_metrics(self.frames),
                 "fixture": {"dispatch_timeouts": self.dispatch_timeouts, "drain_timeouts": self.drain_timeouts,
+                            "dispatch_p99_ms": number(nearest_rank(self.dispatch_ms, 0.99)),
+                            "dispatch_max_ms": number(max(self.dispatch_ms, default=None)),
                             "discarded_replies": self.discarded_replies,
                             "unreadable_replies": self.fixture.unreadable_replies,
                             "crashed": self.fixture.crashed, "error": self.error}}
@@ -1204,7 +1274,10 @@ def consumers(args, release, combination, work, raw, deadline, repetition, rehea
             raise RuntimeError(f"a cold target directory already exists: {target}")
         return {"env": {"CARGO_TARGET_DIR": str(target)}}
 
-    cargo = ["/bin/sh", "-c", "cargo build --offline --locked --workspace && "
+    # A warm run rebuilds incrementally after a change to the core crate, as development does; a cold
+    # run builds everything into a fresh directory.
+    change = "touch crates/core/src/lib.rs && " if combination == "warm" else ""
+    cargo = ["/bin/sh", "-c", change + "cargo build --offline --locked --workspace && "
              "cargo test --offline --locked -p devguard-core -p devguard-contract"]
     io_dir = work / "io"
     io_dir.mkdir(exist_ok=True)
@@ -1234,7 +1307,7 @@ def consumers(args, release, combination, work, raw, deadline, repetition, rehea
 # ---------------------------------------------------------------- the protocol
 
 def measure_interval(args, release, kind, repetition_raw, seconds, fixture, combination, work, repetition,
-                     service_pid):
+                     service_pid, writer):
     """One idle or load interval: the fixture, the control probe, validity, service and host samples
     throughout, and for load the six consumers, observed until every started command completes."""
     raw = repetition_raw / kind
@@ -1252,10 +1325,10 @@ def measure_interval(args, release, kind, repetition_raw, seconds, fixture, comb
     probe.await_target()
     started = time.time()
     begun = time.monotonic()
-    host = Sampler(raw / "host.jsonl", HOST_PERIOD_S, host_sample)
-    validity = Sampler(raw / "validity.jsonl", VALIDITY_PERIOD_S, validity_sample(fixture.process.pid))
-    service = Sampler(raw / "service.jsonl", SERVICE_PERIOD_S, lambda: service_state(release))
-    foreground = Foreground(fixture, raw, args.seed_source.getrandbits(32))
+    host = Sampler(writer, raw / "host.jsonl", HOST_PERIOD_S, host_sample)
+    validity = Sampler(writer, raw / "validity.jsonl", VALIDITY_PERIOD_S, validity_sample(fixture.process.pid))
+    service = Sampler(writer, raw / "service.jsonl", SERVICE_PERIOD_S, lambda: service_state(release))
+    foreground = Foreground(fixture, raw, args.seed_source.getrandbits(32), writer)
     for thread in (host, validity, service, foreground):
         thread.start()
     load = []
@@ -1282,6 +1355,7 @@ def measure_interval(args, release, kind, repetition_raw, seconds, fixture, comb
     service_rows = service.stop()
     host_rows = host.stop()
     control = probe.finish(stop=kind == "load")
+    written = writer.settle()
     rows = control["samples"]
     status = [row for row in rows if row.get("kind") == "status"]
     terminations = [row for row in rows if row.get("kind") == "terminate"]
@@ -1298,6 +1372,7 @@ def measure_interval(args, release, kind, repetition_raw, seconds, fixture, comb
         "journal": {"before": journal_before, "after": journal_counts(), **journal},
         "host": host_peaks(host_rows),
         "validity_rows": len(validity_rows),
+        "evidence_writer": written,
     }
     if kind == "load":
         (raw / "runs.json").write_text(json.dumps(runs, indent=1) + "\n")
@@ -1328,6 +1403,8 @@ def measure_interval(args, release, kind, repetition_raw, seconds, fixture, comb
         invalid.append(f"the control probe exited {control['returncode']}: {control['stderr'][-300:]}")
     if control["malformed_lines"]:
         invalid.append(f"{control['malformed_lines']} probe samples were unreadable")
+    if written["errors"]:
+        invalid.append(f"raw evidence could not be written: {written['errors'][:3]}")
     verdict, reasons = interval_verdict(kind, invalid, metrics)
     return {"kind": kind, "started_unix": started, "ended_unix": ended, "seconds": round(elapsed, 3),
             "verdict": verdict, "reasons": reasons, "metrics": metrics,
@@ -1393,7 +1470,7 @@ def other_chrome():
     return [int(pid) for pid in listing.split()]
 
 
-def repetition_run(args, release, plan, combination, repetition, out, work, fixture):
+def repetition_run(args, release, plan, combination, repetition, out, work, fixture, writer):
     name = f"{combination}-{repetition}"
     raw = out / name
     raw.mkdir()
@@ -1425,9 +1502,9 @@ def repetition_run(args, release, plan, combination, repetition, out, work, fixt
     time.sleep(SETTLE_S)
     fixture.drain()
     idle = measure_interval(args, release, "idle", raw, plan["idle_s"], fixture, combination, work, repetition,
-                            service_pid)
+                            service_pid, writer)
     load = measure_interval(args, release, "load", raw, plan["load_s"], fixture, combination, work, repetition,
-                            service_pid)
+                            service_pid, writer)
     report["intervals"] = {"idle": idle, "load": load}
     failed_removals = []
     for target in sorted((work / TARGETS).glob(f"cold-{repetition}-*")):
@@ -1510,17 +1587,31 @@ def protocol(args):
     awake = track(subprocess.Popen(["caffeinate", "-d", "-i", "-w", str(os.getpid())],
                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
     header["caffeinate_pid"] = awake.pid
-    fixture = Fixture(work / "chrome", args.headless)
+    # The instruments and the foreground run from the internal disk, as a user's browser does; the
+    # load builds on the development disk it was given.
+    stage = Path(tempfile.mkdtemp(prefix="devguard-slo-", dir=STAGE_PARENT))
+    header["stage"] = {"directory": str(stage), "volume": volume(stage), "work_volume": volume(work),
+                       "out_volume": volume(out)}
+    writer = Writer()
+    fixture = None
     try:
+        staged = stage / "devguard-qualify"
+        shutil.copy2(args.qualify_bin, staged)
+        args.qualify_bin = staged
+        fixture = Fixture(stage / "chrome", args.headless)
         fixture.open(FIXTURE)
         header["chrome"] = fixture.version
         (out / "run.json").write_text(json.dumps(header, indent=2) + "\n")
         results = {}
         for combination in plan["combinations"]:
-            results[combination] = [repetition_run(args, release, plan, combination, repetition, out, work, fixture)
+            results[combination] = [repetition_run(args, release, plan, combination, repetition, out, work, fixture,
+                                                   writer)
                                     for repetition in range(1, plan["repetitions"] + 1)]
     finally:
-        fixture.close()
+        if fixture:
+            fixture.close()
+        writer.close()
+        shutil.rmtree(stage, ignore_errors=True)
     summary = summarize(header, results, out)
     print(json.dumps({"verdict": summary["verdict"], "summary": str(out / "summary.json")}), flush=True)
     return 0 if summary["verdict"] == "qualified" else (1 if summary["verdict"] == "failed" else 2)
@@ -1566,12 +1657,13 @@ def fixture_check(args):
         return 0
     profile = out / "profile"
     fixture = Fixture(profile, args.headless)
+    writer = Writer()
     try:
         fixture.open(FIXTURE)
         fixture.prime()
         fixture.drain()
-        validity = Sampler(out / "validity.jsonl", VALIDITY_PERIOD_S, validity_sample(fixture.process.pid))
-        foreground = Foreground(fixture, out, seed=0)
+        validity = Sampler(writer, out / "validity.jsonl", VALIDITY_PERIOD_S, validity_sample(fixture.process.pid))
+        foreground = Foreground(fixture, out, 0, writer)
         validity.start()
         foreground.start()
         time.sleep(args.seconds)
@@ -1581,6 +1673,7 @@ def fixture_check(args):
         version = fixture.version
     finally:
         fixture.close()
+        writer.close()
         shutil.rmtree(profile, ignore_errors=True)
     invalid = foreground.invalid(args.headless) + validity_reasons(rows, args.headless,
                                                                    int(args.seconds / VALIDITY_PERIOD_S))

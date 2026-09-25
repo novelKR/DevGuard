@@ -265,8 +265,9 @@ DG1-C12 measures a release instead of inferring responsiveness from functional s
   - **Admission.** An admission refused for capacity or pressure is retried and recorded, but a target that waits out its admission is not a sample.
   - **Missed slots.** Every slot that passes while an earlier call is still in flight is recorded as missed.
   - **Stopping.** SIGINT, SIGTERM, SIGHUP or the loss of its parent ends sampling; the probe still settles every target it started.
+  - **Evidence.** Its threads hand each sample to a writer thread, so a slow disk delays the evidence, never the sampling. The writer's largest lag is reported.
 - **Foreground fixture.** The fixture is a fixed local page, `crates/qualify/fixture/foreground.html`, hashed in every run and repetition report. It runs in one Google Chrome instance per run with a fresh profile, driven over `--remote-debugging-pipe`: there is no listening port and no flag that changes scheduling or throttling. Each repetition reloads the page.
-  - **Input.** The browser synthesizes it with `Input.dispatch*`: a key, a click or a wheel step in each slot of 500 ms ± 100 ms. A slot that passes while an earlier dispatch is still in flight is a missing sample.
+  - **Input.** The browser synthesizes it with `Input.dispatch*`: a key, a click or a wheel step in each slot of 500 ms ± 100 ms. A slot that passes while an earlier dispatch is still in flight is a missing sample. Each dispatch's round trip through the browser is recorded as evidence.
   - **Input to next paint.** It runs from the event's timestamp to the next frame after the input's visible change, marked by a message posted from the next animation frame. It is raised to the browser's own Event Timing duration when the browser reports one. The browser reports none for wheel input, so wheel samples rest on the page's estimate alone. The measure excludes the operating system's input path before the browser.
   - **Frame stall.** A gap of more than 500 ms between consecutive animation frames.
   - **Late replies.** A drain whose reply comes late within an interval keeps that reply, so its data is not lost. Replies still owed from an earlier interval or document are discarded and counted.
@@ -275,7 +276,7 @@ DG1-C12 measures a release instead of inferring responsiveness from functional s
 
   | Consumer | Workload | Budget |
   | --- | --- | --- |
-  | Cargo | The release's own source (`--adapter cargo-pipeline`): a workspace build, then the core and contract tests, with one compiler job and no compiler wrapper | 1 CPU, 2 GiB, 24 tasks |
+  | Cargo | The release's own source (`--adapter cargo-pipeline`): a workspace build, then the core and contract tests, with one compiler job and no compiler wrapper. A warm run first touches a core source file, so it rebuilds incrementally. | 1 CPU, 2 GiB, 24 tasks |
   | CPU | 1 thread | 1 CPU, 128 MiB, 4 tasks |
   | Memory | 1 GiB touched and held | 100 mCPU, 1.25 GiB, 4 tasks |
   | I/O | 256 MiB written, synced, read back and removed, then idle until 30 s have passed | 100 mCPU, 384 MiB, 4 tasks |
@@ -283,6 +284,12 @@ DG1-C12 measures a release instead of inferring responsiveness from functional s
   | Slow input | Reads one line per 100 ms, fed once the payload runs | 50 mCPU, 64 MiB, 4 tasks |
 
   Together with the probe's targets, the budgets total about 2,600 mCPU, 4 GiB and 48 tasks. That fits half the local host's work capacity (5,500 mCPU, 11.75 GiB and 144 tasks), which is the Constrained capacity. Memory warning therefore neither stops the load nor starves the probe's targets. Under Critical pressure nothing is admitted, and the interval is inconclusive.
+- **Placement.** The load builds and writes on the development disk it is given. The instruments do not share that disk:
+  - the probe's binary and the fixture's browser profile run from a stage on the internal disk, where a user's browser profile lives;
+  - every raw evidence line goes through a writer thread, so no sampling thread waits on the evidence disk;
+  - the run records each location's volume.
+
+  The first full run (evidence `slo/protocol-1`) wrote evidence synchronously to a USB disk that the load saturated. Its instruments stalled for seconds, and the missing samples failed its cold repetitions although the page, the service and the probe's calls met every target.
 - **Protocol.**
   - There are two combinations. In `cold`, each Cargo build uses a fresh target directory of its own under a `.noindex` directory that Spotlight skips, removed after the interval. In `warm`, the Cargo builds reuse a target directory built before the repetition; a warm repetition whose build fails is not measured.
   - Each combination runs three repetitions: 10 minutes idle, then at least 30 minutes of load.
