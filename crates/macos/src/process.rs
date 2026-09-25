@@ -3,6 +3,7 @@
 //! unchanged by `exec` and distinguishes a reused PID within one boot.
 
 use devguard_contract::{ProcessIdentity, Result};
+use std::path::PathBuf;
 
 /// A live process observed in one consistent snapshot.
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
@@ -76,6 +77,36 @@ pub(crate) fn presence(pid: u32) -> Result<Presence> {
 
 #[cfg(not(target_os = "macos"))]
 pub(crate) fn presence(_: u32) -> Result<Presence> {
+    Err(crate::unsupported())
+}
+
+/// The executable image of a live process, as the kernel records it. An
+/// absent PID is `None`; a refused observation is an error, never absence.
+#[cfg(target_os = "macos")]
+pub fn executable_path(pid: u32) -> Result<Option<PathBuf>> {
+    use std::os::unix::ffi::OsStrExt;
+    let Ok(native) = libc::pid_t::try_from(pid) else {
+        return Ok(None);
+    };
+    if native <= 0 {
+        return Ok(None);
+    }
+    let mut buffer = vec![0u8; libc::PROC_PIDPATHINFO_MAXSIZE as usize];
+    // SAFETY: the buffer is live and its length is passed with it.
+    let length =
+        unsafe { libc::proc_pidpath(native, buffer.as_mut_ptr().cast(), buffer.len() as u32) };
+    if length <= 0 {
+        return match std::io::Error::last_os_error().raw_os_error() {
+            Some(libc::ESRCH) => Ok(None),
+            _ => Err(crate::failed("cannot observe a process's executable")),
+        };
+    }
+    buffer.truncate(length as usize);
+    Ok(Some(PathBuf::from(std::ffi::OsStr::from_bytes(&buffer))))
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn executable_path(_: u32) -> Result<Option<PathBuf>> {
     Err(crate::unsupported())
 }
 

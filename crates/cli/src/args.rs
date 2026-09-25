@@ -1,7 +1,8 @@
 //! Strict command-line parsing. The program and its arguments follow `--` and
 //! are passed as an argv vector; nothing is interpreted by a shell.
 
-use devguard_contract::{validate_id, Error, ErrorCode, Result};
+use devguard_contract::{validate_id, AttemptKey, Error, ErrorCode, Result};
+use devguard_daemon::candidate::parse_key;
 use devguard_daemon::config::AdapterSelection;
 use std::collections::BTreeSet;
 use std::ffi::OsString;
@@ -16,8 +17,22 @@ pub const MAX_WAIT: Duration = Duration::from_secs(24 * 60 * 60);
 pub enum Command {
     Exec(ExecArgs),
     Doctor(DoctorArgs),
+    TestCandidate(CandidateArgs),
+    Upgrade(UpgradeArgs),
+    /// `repair --use last-known-good`, the only repair.
+    Repair,
+    /// `admission --open`: reopen admission on the serving release.
+    Admission,
     Help,
     Version,
+}
+
+/// `devguard upgrade`: replace the current release with a staged one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UpgradeArgs {
+    pub release: String,
+    pub drain_timeout: Option<Duration>,
+    pub stopped: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -29,8 +44,24 @@ pub struct ExecArgs {
     pub memory_bytes: Option<u64>,
     pub tasks: Option<u64>,
     pub receipt: Option<PathBuf>,
+    /// Run as a child of this parent lease, admitted against its remainder
+    /// with the token read from `lease_token_fd`.
+    pub lease: Option<AttemptKey>,
+    pub lease_token_fd: Option<i32>,
     pub program: OsString,
     pub args: Vec<OsString>,
+}
+
+/// `devguard test-candidate`: a candidate tree verified under a parent lease.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CandidateArgs {
+    pub candidate: PathBuf,
+    pub report: PathBuf,
+    pub cpu_milli: Option<u64>,
+    pub memory_bytes: Option<u64>,
+    pub tasks: Option<u64>,
+    pub ttl: Option<Duration>,
+    pub wait: Option<Duration>,
 }
 
 /// What `doctor --require` can demand of the service.
@@ -175,15 +206,30 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Command> {
     match first.to_str() {
         Some("exec") => parse_exec(raw).map(Command::Exec),
         Some("doctor") => parse_doctor(raw).map(Command::Doctor),
+        Some("test-candidate") => parse_candidate(raw).map(Command::TestCandidate),
+        Some("upgrade") => parse_upgrade(raw).map(Command::Upgrade),
+        Some("repair") => parse_repair(raw).map(|()| Command::Repair),
+        Some("admission") => parse_admission(raw).map(|()| Command::Admission),
         Some("--help" | "-h" | "help") if raw.next().is_none() => Ok(Command::Help),
         Some("--version" | "-V") if raw.next().is_none() => Ok(Command::Version),
-        _ => Err(usage("expected exec, doctor, --help or --version")),
+        _ => Err(usage(
+            "expected exec, doctor, test-candidate, upgrade, repair, admission, --help or --version",
+        )),
     }
+}
+
+fn descriptor(value: &str) -> Result<i32> {
+    let fd = parse_count(value, "descriptors are whole numbers above 2")?;
+    i32::try_from(fd)
+        .ok()
+        .filter(|fd| *fd > 2)
+        .ok_or_else(|| usage("descriptors are whole numbers above 2"))
 }
 
 fn parse_exec(mut raw: impl Iterator<Item = OsString>) -> Result<ExecArgs> {
     let (mut project, mut adapter, mut wait, mut cpu, mut memory, mut tasks, mut receipt) =
         (None, None, None, None, None, None, None);
+    let (mut lease, mut lease_token_fd) = (None, None);
     loop {
         let option = raw
             .next()
@@ -203,12 +249,17 @@ fn parse_exec(mut raw: impl Iterator<Item = OsString>) -> Result<ExecArgs> {
                 parse_count(&value(&mut raw)?, "--tasks takes a whole number")?,
             )?,
             Some("--receipt") => once(&mut receipt, PathBuf::from(value(&mut raw)?))?,
+            Some("--lease") => once(&mut lease, parse_key(&value(&mut raw)?)?)?,
+            Some("--lease-token-fd") => once(&mut lease_token_fd, descriptor(&value(&mut raw)?)?)?,
             _ => {
                 return Err(usage(
                     "unknown exec option; the program must follow `--` and no shell is used",
                 ))
             }
         }
+    }
+    if lease.is_some() != lease_token_fd.is_some() {
+        return Err(usage("--lease and --lease-token-fd are given together"));
     }
     let program = raw
         .next()
@@ -224,8 +275,90 @@ fn parse_exec(mut raw: impl Iterator<Item = OsString>) -> Result<ExecArgs> {
         memory_bytes: memory,
         tasks,
         receipt,
+        lease,
+        lease_token_fd,
         program,
         args: raw.collect(),
+    })
+}
+
+fn parse_upgrade(mut raw: impl Iterator<Item = OsString>) -> Result<UpgradeArgs> {
+    let (mut release, mut drain_timeout, mut stopped) = (None, None, false);
+    while let Some(option) = raw.next() {
+        match option.to_str() {
+            Some("--release") => once(&mut release, project_id(value(&mut raw)?)?)?,
+            Some("--drain-timeout") => {
+                once(&mut drain_timeout, parse_duration(&value(&mut raw)?)?)?
+            }
+            Some("--stopped") if !stopped => stopped = true,
+            _ => {
+                return Err(usage(
+                    "upgrade accepts --release ID, --drain-timeout DURATION and --stopped",
+                ))
+            }
+        }
+    }
+    Ok(UpgradeArgs {
+        release: release.ok_or_else(|| usage("upgrade needs --release ID"))?,
+        drain_timeout,
+        stopped,
+    })
+}
+
+fn parse_repair(mut raw: impl Iterator<Item = OsString>) -> Result<()> {
+    match (
+        raw.next().as_deref().and_then(|option| option.to_str()),
+        raw.next().as_deref().and_then(|value| value.to_str()),
+        raw.next(),
+    ) {
+        (Some("--use"), Some("last-known-good"), None) => Ok(()),
+        _ => Err(usage("repair takes exactly --use last-known-good")),
+    }
+}
+
+fn parse_admission(mut raw: impl Iterator<Item = OsString>) -> Result<()> {
+    match (
+        raw.next().as_deref().and_then(|option| option.to_str()),
+        raw.next(),
+    ) {
+        (Some("--open"), None) => Ok(()),
+        _ => Err(usage("admission takes exactly --open")),
+    }
+}
+
+fn parse_candidate(mut raw: impl Iterator<Item = OsString>) -> Result<CandidateArgs> {
+    let (mut candidate, mut report, mut cpu, mut memory, mut tasks, mut ttl, mut wait) =
+        (None, None, None, None, None, None, None);
+    while let Some(option) = raw.next() {
+        match option.to_str() {
+            Some("--candidate") => once(&mut candidate, PathBuf::from(value(&mut raw)?))?,
+            Some("--report") => once(&mut report, PathBuf::from(value(&mut raw)?))?,
+            Some("--cpu") => once(
+                &mut cpu,
+                parse_count(&value(&mut raw)?, "--cpu takes whole millicpu")?,
+            )?,
+            Some("--memory") => once(&mut memory, parse_size(&value(&mut raw)?)?)?,
+            Some("--tasks") => once(
+                &mut tasks,
+                parse_count(&value(&mut raw)?, "--tasks takes a whole number")?,
+            )?,
+            Some("--ttl") => once(&mut ttl, parse_duration(&value(&mut raw)?)?)?,
+            Some("--wait") => once(&mut wait, parse_duration(&value(&mut raw)?)?)?,
+            _ => {
+                return Err(usage(
+                    "test-candidate accepts --candidate, --report, --cpu, --memory, --tasks, --ttl and --wait",
+                ))
+            }
+        }
+    }
+    Ok(CandidateArgs {
+        candidate: candidate.ok_or_else(|| usage("test-candidate needs --candidate DIR"))?,
+        report: report.ok_or_else(|| usage("test-candidate needs --report DIR"))?,
+        cpu_milli: cpu,
+        memory_bytes: memory,
+        tasks,
+        ttl,
+        wait,
     })
 }
 
@@ -274,6 +407,131 @@ mod tests {
         assert_eq!(exec.wait, Some(Duration::from_secs(30)));
         assert_eq!(exec.program, OsString::from("cargo"));
         assert_eq!(exec.args, args(&["test", "--", "--nocapture"]));
+    }
+
+    #[test]
+    fn lease_children_and_candidate_runs_take_explicit_options() {
+        let Command::Exec(exec) = parse(args(&[
+            "exec",
+            "--lease",
+            "dev-cli/g/lease-1",
+            "--lease-token-fd",
+            "5",
+            "--",
+            "true",
+        ]))
+        .unwrap() else {
+            panic!("expected exec")
+        };
+        assert_eq!(exec.lease.unwrap().attempt_id, "lease-1");
+        assert_eq!(exec.lease_token_fd, Some(5));
+        for invalid in [
+            &["exec", "--lease", "dev-cli/g/lease-1", "--", "true"][..],
+            &["exec", "--lease-token-fd", "5", "--", "true"],
+            &[
+                "exec",
+                "--lease",
+                "dev-cli/g",
+                "--lease-token-fd",
+                "5",
+                "--",
+                "true",
+            ],
+            &[
+                "exec",
+                "--lease",
+                "dev-cli/g/l",
+                "--lease-token-fd",
+                "2",
+                "--",
+                "true",
+            ],
+            &["test-candidate", "--candidate", "/x"],
+            &["test-candidate", "--report", "/r"],
+            &[
+                "test-candidate",
+                "--candidate",
+                "/x",
+                "--report",
+                "/r",
+                "--cpu",
+                "1.5",
+            ],
+            &[
+                "test-candidate",
+                "--candidate",
+                "/x",
+                "--report",
+                "/r",
+                "--",
+                "true",
+            ],
+        ] {
+            assert!(parse(args(invalid)).is_err(), "{invalid:?}");
+        }
+        let Command::TestCandidate(candidate) = parse(args(&[
+            "test-candidate",
+            "--candidate",
+            "/x",
+            "--report",
+            "/r",
+            "--memory",
+            "4GiB",
+            "--ttl",
+            "2h",
+        ]))
+        .unwrap() else {
+            panic!("expected test-candidate")
+        };
+        assert_eq!(candidate.memory_bytes, Some(4 << 30));
+        assert_eq!(candidate.ttl, Some(Duration::from_secs(7_200)));
+        assert_eq!(candidate.wait, None);
+    }
+
+    #[test]
+    fn upgrade_and_repair_name_a_release_or_the_last_known_good() {
+        let Command::Upgrade(upgrade) = parse(args(&[
+            "upgrade",
+            "--release",
+            "0.1.0-abc-1234",
+            "--drain-timeout",
+            "90s",
+        ]))
+        .unwrap() else {
+            panic!("expected upgrade")
+        };
+        assert_eq!(upgrade.release, "0.1.0-abc-1234");
+        assert_eq!(upgrade.drain_timeout, Some(Duration::from_secs(90)));
+        assert!(!upgrade.stopped);
+        let Command::Upgrade(stopped) =
+            parse(args(&["upgrade", "--stopped", "--release", "r1"])).unwrap()
+        else {
+            panic!("expected upgrade")
+        };
+        assert!(stopped.stopped);
+        assert_eq!(
+            parse(args(&["repair", "--use", "last-known-good"])).unwrap(),
+            Command::Repair
+        );
+        assert_eq!(
+            parse(args(&["admission", "--open"])).unwrap(),
+            Command::Admission
+        );
+        for invalid in [
+            &["upgrade"][..],
+            &["upgrade", "--release", "../x"],
+            &["upgrade", "--release", "a", "--release", "b"],
+            &["upgrade", "--release", "a", "--stopped", "--stopped"],
+            &["upgrade", "--release", "a", "--drain-timeout", "60"],
+            &["repair"],
+            &["repair", "--use", "current"],
+            &["repair", "--use", "last-known-good", "--force"],
+            &["admission"],
+            &["admission", "--close"],
+            &["admission", "--open", "now"],
+        ] {
+            assert!(parse(args(invalid)).is_err(), "{invalid:?}");
+        }
     }
 
     #[test]

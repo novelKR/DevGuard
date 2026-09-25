@@ -269,3 +269,139 @@ fn reconcile_requests_decode_strictly_and_carry_no_process_identity() {
     future["body"]["value"]["future_field"] = json!(true);
     assert!(serde_json::from_value::<Frame<Response>>(future).is_err());
 }
+
+fn lease() -> devguard_contract::LeaseRecord {
+    use devguard_contract::*;
+    let attempt = attempt();
+    LeaseRecord {
+        key: attempt.key,
+        owner: attempt.owner,
+        policy_revision: "policy".into(),
+        budget: Budget {
+            cpu_milli: 2_000,
+            memory_bytes: 1,
+            tasks: 1,
+        },
+        phase: LeasePhase::Active,
+        created_at: ObservationTime {
+            boot_id: "boot".into(),
+            monotonic_ms: 1,
+        },
+        deadline_ms: Some(60_001),
+        end_reason: None,
+    }
+}
+
+#[test]
+fn lease_requests_decode_strictly_and_never_print_the_token() {
+    use devguard_client::protocol::LeaseGranted;
+    let intent = json!({"profile": "interactive",
+        "requested": {"cpu_milli": 1000, "memory_bytes": 1, "tasks": 1},
+        "minimum": {"cpu": "cooperative", "memory": "accounted", "pids": "accounted"}});
+    let budget = json!({"cpu_milli": 2000, "memory_bytes": 1, "tasks": 1});
+    let child = json!({"key": key(), "execution_digest": devguard_contract::digest_bytes(b"child"),
+                       "intent": intent});
+    let requests = [
+        json!({"method": "admit_lease", "params": {"key": key(), "budget": budget, "ttl_ms": 60000}}),
+        json!({"method": "admit_lease", "params": {"key": key(), "budget": budget, "ttl_ms": null}}),
+        json!({"method": "admit_child", "params": {"lease": key(), "token": PERMIT, "request": child}}),
+        json!({"method": "end_lease", "params": {"key": key()}}),
+        json!({"method": "lease_status", "params": {"key": key(), "token": PERMIT}}),
+    ];
+    for body in requests {
+        let frame = json!({"version": 1, "request_id": 10, "body": body});
+        assert!(
+            serde_json::from_value::<Frame<Request>>(frame.clone()).is_ok(),
+            "{frame}"
+        );
+        // No holder can declare an identity, a phase or a larger lease.
+        for field in ["pid", "owner", "phase", "remaining", "future_field"] {
+            let mut changed = frame.clone();
+            changed["body"]["params"][field] = json!(1);
+            assert!(
+                serde_json::from_value::<Frame<Request>>(changed).is_err(),
+                "accepted {field} in {frame}"
+            );
+        }
+    }
+    for method in ["admit_child", "lease_status"] {
+        let params = if method == "admit_child" {
+            json!({"lease": key(), "token": "abc", "request": child})
+        } else {
+            json!({"key": key(), "token": "abc"})
+        };
+        let short =
+            json!({"version": 1, "request_id": 11, "body": {"method": method, "params": params}});
+        assert!(serde_json::from_value::<Frame<Request>>(short).is_err());
+    }
+    let record = serde_json::to_value(lease()).unwrap();
+    let responses = [
+        json!({"result": "lease_granted", "value": {"lease": record, "token": PERMIT}}),
+        json!({"result": "lease_granted", "value": {"lease": record, "token": null}}),
+        json!({"result": "lease", "value": {"lease": record,
+            "remaining": {"cpu_milli": 1000, "memory_bytes": 1, "tasks": 1}, "children": [key()]}}),
+    ];
+    for body in responses {
+        let frame = json!({"version": 1, "request_id": 12, "body": body});
+        assert!(
+            serde_json::from_value::<Frame<Response>>(frame.clone()).is_ok(),
+            "{frame}"
+        );
+        let mut future = frame.clone();
+        future["body"]["value"]["future_field"] = json!(true);
+        assert!(serde_json::from_value::<Frame<Response>>(future).is_err());
+        let mut inner = frame;
+        inner["body"]["value"]["lease"]["future_field"] = json!(true);
+        assert!(serde_json::from_value::<Frame<Response>>(inner).is_err());
+    }
+    let granted = Response::LeaseGranted(LeaseGranted {
+        lease: lease(),
+        token: Some(devguard_contract::Secret::new(PERMIT.into()).unwrap()),
+    });
+    assert!(!format!("{granted:?}").contains(PERMIT));
+    // The capability added after protocol 1 has a stable name.
+    assert_eq!(
+        serde_json::to_value(devguard_contract::Capability::ParentLease).unwrap(),
+        json!("parent_lease")
+    );
+}
+
+#[test]
+fn drain_requests_decode_strictly_and_report_what_is_charged() {
+    for body in [
+        json!({"method": "close_admission", "params": {"reason": "upgrade"}}),
+        json!({"method": "open_admission"}),
+        json!({"method": "quiescence"}),
+    ] {
+        let frame = json!({"version": 1, "request_id": 13, "body": body});
+        assert!(
+            serde_json::from_value::<Frame<Request>>(frame.clone()).is_ok(),
+            "{frame}"
+        );
+    }
+    let mut extended = json!({"version": 1, "request_id": 14, "body": {"method": "close_admission", "params": {"reason": "upgrade"}}});
+    extended["body"]["params"]["drain_timeout_ms"] = json!(1);
+    assert!(serde_json::from_value::<Frame<Request>>(extended).is_err());
+    let report = json!({"version": 1, "request_id": 15, "body": {"result": "quiescence", "value": {
+        "closure": {"reason": "upgrade", "since_unix_ms": 1},
+        "charged_attempts": 40, "charged_leases": 1,
+        "attempts": [key()], "leases": [key()]}}});
+    let decoded = serde_json::from_value::<Frame<Response>>(report.clone()).unwrap();
+    let Response::Quiescence(quiescence) = decoded.body else {
+        panic!("expected a quiescence report")
+    };
+    // Counts are exact; the named keys are only the first ones.
+    assert!(!quiescence.quiet());
+    assert_eq!(quiescence.charged_attempts, 40);
+    assert_eq!(quiescence.attempts.len(), 1);
+    let mut records = report.clone();
+    records["body"]["value"]["attempts"] = json!([serde_json::to_value(attempt()).unwrap()]);
+    assert!(serde_json::from_value::<Frame<Response>>(records).is_err());
+    let mut future = report;
+    future["body"]["value"]["closure"]["future_field"] = json!(true);
+    assert!(serde_json::from_value::<Frame<Response>>(future).is_err());
+    assert_eq!(
+        serde_json::to_value(devguard_contract::Capability::UpgradeDrain).unwrap(),
+        json!("upgrade_drain")
+    );
+}

@@ -14,6 +14,22 @@ const GIB: u64 = 1024 * 1024 * 1024;
 /// plus the aggregate CLI control pool (0.25 CPU, 128 MiB for up to eight CLIs).
 const SYSTEM_CPU_MILLI: u64 = 250 + 250;
 const SYSTEM_MEMORY_BYTES: u64 = (128 + 128) * 1024 * 1024;
+/// A candidate reserves its own daemon only: it launches nothing, so it has
+/// no CLI pool.
+const CANDIDATE_SYSTEM_CPU_MILLI: u64 = 250;
+const CANDIDATE_SYSTEM_MEMORY_BYTES: u64 = 128 * 1024 * 1024;
+/// The system tasks bootstrap accounts: bounded sessions and CLI control.
+pub const BOOTSTRAP_SYSTEM_TASKS: u64 = devguard_client::protocol::MAX_SESSIONS as u64 + 16;
+
+/// What a candidate with `system_tasks` keeps for its own daemon; its
+/// capacity must exceed this in every quantity.
+pub fn candidate_reservation(system_tasks: u64) -> Budget {
+    Budget {
+        cpu_milli: CANDIDATE_SYSTEM_CPU_MILLI,
+        memory_bytes: CANDIDATE_SYSTEM_MEMORY_BYTES,
+        tasks: system_tasks,
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -172,8 +188,47 @@ impl HostConfig {
             tasks: self.task_headroom,
         }
         .checked_add(self.additional_headroom)?;
-        let consumers = self
-            .consumers
+        let policy = Policy {
+            revision: self.policy_revision.clone(),
+            effective_capacity,
+            host_headroom,
+            system_reservation: self.system_reservation(),
+            consumers: self.consumer_definitions(uid),
+        };
+        policy.validate()?;
+        Ok(policy)
+    }
+
+    /// Policy for a candidate authority whose whole capacity is a parent
+    /// lease. The parent already kept the host's headroom, so there is none
+    /// here, and the host's capacity is not used.
+    pub fn candidate_policy(&self, capacity: Budget, uid: u32) -> Result<Policy> {
+        capacity.validate_workload()?;
+        let policy = Policy {
+            revision: format!("{}-candidate", self.policy_revision),
+            effective_capacity: capacity,
+            host_headroom: Budget::ZERO,
+            system_reservation: candidate_reservation(self.system_tasks),
+            consumers: self.consumer_definitions(uid),
+        };
+        policy.validate()?;
+        policy
+            .work_capacity()?
+            .validate_workload()
+            .map_err(|_| too_small_for_a_candidate())?;
+        Ok(policy)
+    }
+
+    fn system_reservation(&self) -> Budget {
+        Budget {
+            cpu_milli: SYSTEM_CPU_MILLI,
+            memory_bytes: SYSTEM_MEMORY_BYTES,
+            tasks: self.system_tasks,
+        }
+    }
+
+    fn consumer_definitions(&self, uid: u32) -> BTreeMap<String, ConsumerDefinition> {
+        self.consumers
             .iter()
             .map(|(id, consumer)| {
                 (
@@ -188,20 +243,7 @@ impl HostConfig {
                     },
                 )
             })
-            .collect();
-        let policy = Policy {
-            revision: self.policy_revision.clone(),
-            effective_capacity,
-            host_headroom,
-            system_reservation: Budget {
-                cpu_milli: SYSTEM_CPU_MILLI,
-                memory_bytes: SYSTEM_MEMORY_BYTES,
-                tasks: self.system_tasks,
-            },
-            consumers,
-        };
-        policy.validate()?;
-        Ok(policy)
+            .collect()
     }
 }
 
@@ -258,6 +300,13 @@ impl ProjectSettings {
     }
 }
 
+pub fn too_small_for_a_candidate() -> Error {
+    Error::new(
+        ErrorCode::ResourceUnavailable,
+        "a candidate capacity must exceed its own daemon's reservation of 250 mCPU, 128 MiB and the system tasks",
+    )
+}
+
 fn new_secret() -> Result<Secret> {
     Secret::new(format!(
         "{}{}",
@@ -292,7 +341,7 @@ pub fn initialize(paths: &AuthorityPaths) -> Result<HostConfig> {
         admin_credential_sha256: admin.digest(),
         task_capacity: 256,
         task_headroom: 64,
-        system_tasks: 48,
+        system_tasks: BOOTSTRAP_SYSTEM_TASKS,
         additional_headroom: Budget::ZERO,
         consumers: BTreeMap::from([(
             "dev-cli".into(),

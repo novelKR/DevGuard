@@ -1,6 +1,6 @@
 use devguard_contract::{
-    AdmissionRequest, AttemptKey, AttemptRecord, Capability, Compatibility, Error, ErrorCode,
-    InstanceIdentity, Secret,
+    AdmissionRequest, AttemptKey, AttemptRecord, Budget, Capability, Compatibility, Error,
+    ErrorCode, InstanceIdentity, LeaseRecord, LeaseView, Secret,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -108,6 +108,83 @@ pub enum Request {
         instance_id: String,
         permit: Secret,
     },
+    /// Reserve a parent lease of `budget` from host capacity for the
+    /// registered owner, fenced after `ttl_ms` if given. Sent only after the
+    /// service echoed the `parent_lease` capability.
+    AdmitLease {
+        key: AttemptKey,
+        budget: Budget,
+        ttl_ms: Option<u64>,
+    },
+    /// Admit a child execution under a lease, presenting its token. The child
+    /// is then an ordinary attempt of the registered instance.
+    AdmitChild {
+        lease: AttemptKey,
+        token: Secret,
+        request: AdmissionRequest,
+    },
+    /// End an owned lease: no new child, released once every child settles.
+    EndLease {
+        key: AttemptKey,
+    },
+    /// A lease holder's view, authorized by the token alone. Like a helper,
+    /// a lease holder is not a caller: the session can make no other request.
+    LeaseStatus {
+        key: AttemptKey,
+        token: Secret,
+    },
+    /// Administrator only: close admission, cancelling every Prepared
+    /// attempt, while queries, stops and reconciliation continue. The closure
+    /// survives a restart. Sent only after the service echoed `upgrade_drain`.
+    CloseAdmission {
+        reason: String,
+    },
+    /// Administrator only: reopen admission.
+    OpenAdmission,
+    /// Administrator only: whether admission is open and what is still charged.
+    Quiescence,
+}
+
+/// The longest reason an administrator may give for closing admission.
+pub const MAX_CLOSURE_REASON: usize = 256;
+
+/// Admission closed by an administrator, for example for an upgrade.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AdmissionClosure {
+    pub reason: String,
+    pub since_unix_ms: u64,
+}
+
+/// The most charged attempts and leases a quiescence report names, so a
+/// report always fits one frame.
+pub const MAX_QUIESCENCE_KEYS: usize = 16;
+
+/// Whether admission is open, and how much is still charged.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Quiescence {
+    pub closure: Option<AdmissionClosure>,
+    pub charged_attempts: u64,
+    pub charged_leases: u64,
+    /// The first charged attempts and leases, at most [`MAX_QUIESCENCE_KEYS`] each.
+    pub attempts: Vec<AttemptKey>,
+    pub leases: Vec<AttemptKey>,
+}
+
+impl Quiescence {
+    /// Nothing is charged, so the service can be stopped without disturbing work.
+    pub fn quiet(&self) -> bool {
+        self.charged_attempts == 0 && self.charged_leases == 0
+    }
+}
+
+/// A new lease with its token, returned once.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LeaseGranted {
+    pub lease: LeaseRecord,
+    pub token: Option<Secret>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -231,5 +308,8 @@ pub enum Response {
     LaunchGranted(LaunchGrant),
     LaunchAuthorized(LaunchAuthorization),
     Terminated(Termination),
+    LeaseGranted(LeaseGranted),
+    Lease(LeaseView),
+    Quiescence(Quiescence),
     Error(WireError),
 }

@@ -3,6 +3,7 @@
 //! test cannot assume the real host is free of pressure. Nothing here is
 //! reachable from the `devguardd` command.
 
+use crate::candidate::{Candidate, CandidateSpec, Closure};
 use crate::config::{self, HostConfig};
 use crate::paths::{read_private, write_new_private, AuthorityPaths};
 use crate::server::{NativeAuthority, Options, Server};
@@ -36,6 +37,11 @@ impl HostProbe for HealthyProbe {
             }],
         })
     }
+}
+
+/// A synthetic probe reporting a healthy host.
+pub fn healthy_probe() -> Box<dyn HostProbe> {
+    Box::new(HealthyProbe)
 }
 
 fn unavailable(message: &'static str) -> Error {
@@ -90,6 +96,7 @@ impl TestAuthority {
             Options {
                 probe: Some(Box::new(HealthyProbe)),
                 reconcile_paused: Some(reconcile_paused.clone()),
+                ..Options::default()
             },
         )?;
         let authority = server.native_authority().ok_or_else(|| {
@@ -240,6 +247,95 @@ impl TestAuthority {
     pub fn stop(mut self) -> Result<()> {
         self.shutdown()
     }
+}
+
+/// Serve the fixture authority under `base` in this process until SIGTERM or
+/// SIGINT, as `devguardd serve` serves the canonical one. Tests run it as the
+/// program of a service, under launchd or a fake manager.
+pub fn serve_until_terminated(base: &Path) -> Result<()> {
+    serve_fixture(base, ServiceFixture::default())
+}
+
+/// How a fixture service departs from the current release.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ServiceFixture {
+    /// State no upgrade drain, as a release before C11 does.
+    pub without_upgrade_drain: bool,
+    /// End the process when asked what is charged, as a release that dies
+    /// while an upgrade verifies it.
+    pub exit_on_quiescence: bool,
+}
+
+/// As [`serve_until_terminated`], stating no upgrade drain, as a release
+/// before C11 does.
+pub fn serve_without_upgrade_drain_until_terminated(base: &Path) -> Result<()> {
+    serve_fixture(
+        base,
+        ServiceFixture {
+            without_upgrade_drain: true,
+            ..ServiceFixture::default()
+        },
+    )
+}
+
+/// Serve the fixture authority under `base` with the given departures.
+pub fn serve_fixture(base: &Path, fixture: ServiceFixture) -> Result<()> {
+    let server = Server::open_with(
+        &AuthorityPaths::fixture(base),
+        Options {
+            probe: Some(Box::new(HealthyProbe)),
+            without_upgrade_drain: fixture.without_upgrade_drain,
+            exit_on_quiescence: fixture.exit_on_quiescence,
+            ..Options::default()
+        },
+    )?;
+    until_terminated(|stop| server.run(stop))
+}
+
+/// Serve a candidate of the fixture authority under `base` in this process,
+/// as `devguardd candidate` serves one of the canonical authority: the token
+/// is read from the inherited descriptor `token_fd`. Returns why it closed.
+pub fn candidate_until_terminated(
+    base: &Path,
+    spec: CandidateSpec,
+    token_fd: i32,
+) -> Result<Closure> {
+    // SAFETY: the test passes this descriptor to the process for the token only.
+    let token = unsafe { devguard_client::credential::take_inherited(token_fd) }?;
+    let candidate = Candidate::open(
+        &AuthorityPaths::fixture(base),
+        spec,
+        token,
+        Some(Box::new(HealthyProbe)),
+    )?;
+    until_terminated(|stop| candidate.serve(stop))
+}
+
+fn until_terminated<T>(serve: impl FnOnce(Arc<AtomicBool>) -> Result<T>) -> Result<T> {
+    static STOP: AtomicBool = AtomicBool::new(false);
+    extern "C" fn stop(_: libc::c_int) {
+        STOP.store(true, Ordering::Relaxed);
+    }
+    // SAFETY: the handler only stores to a lock-free atomic.
+    unsafe {
+        libc::signal(libc::SIGTERM, stop as *const () as libc::sighandler_t);
+        libc::signal(libc::SIGINT, stop as *const () as libc::sighandler_t);
+    }
+    let flag = Arc::new(AtomicBool::new(false));
+    let watched = flag.clone();
+    let watcher = std::thread::spawn(move || {
+        while !watched.load(Ordering::Relaxed) {
+            if STOP.load(Ordering::Relaxed) {
+                watched.store(true, Ordering::Relaxed);
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    });
+    let result = serve(flag.clone());
+    flag.store(true, Ordering::Relaxed);
+    let _ = watcher.join();
+    result
 }
 
 impl Drop for TestAuthority {

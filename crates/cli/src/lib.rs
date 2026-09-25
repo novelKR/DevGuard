@@ -10,6 +10,7 @@
 pub mod adapter;
 pub mod args;
 pub mod authority;
+pub mod candidate;
 pub mod doctor;
 pub mod exec;
 pub mod preflight;
@@ -18,23 +19,49 @@ pub mod signals;
 pub mod terminal;
 
 use devguard_contract::Result;
+use devguard_daemon::install::{InstallOptions, Launchctl};
 use devguard_daemon::paths::AuthorityPaths;
+use devguard_daemon::upgrade::UpgradeOptions;
 pub use receipt::Exit;
 use std::ffi::OsString;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 pub const USAGE: &str = "\
 devguard exec [--project ID] [--adapter auto|generic|cargo|cargo-pipeline] [--wait DURATION]
-              [--cpu MILLICPU] [--memory SIZE] [--tasks N] [--receipt PATH] -- PROGRAM [ARGS...]
+              [--cpu MILLICPU] [--memory SIZE] [--tasks N] [--receipt PATH]
+              [--lease CONSUMER/GENERATION/ATTEMPT --lease-token-fd N] -- PROGRAM [ARGS...]
 devguard doctor [--require admission,registration,macos-cooperative] [--project ID]
+devguard test-candidate --candidate DIR --report DIR [--cpu MILLICPU] [--memory SIZE] [--tasks N]
+              [--ttl DURATION] [--wait DURATION]
+devguard upgrade --release ID [--drain-timeout DURATION] [--stopped]
+devguard repair --use last-known-good
+devguard admission --open
 devguard --help | --version
 
 exec admits the command at the central authority, starts it through devguard-launch under
 the reserved budget and reports its own exit. A command is never run unmanaged: when it
 cannot be admitted or started, nothing runs and devguard exits 125. --wait retries a
-refused admission until the given time (ms, s, m or h) has passed. Durations and sizes are
-whole numbers; sizes take KiB, MiB or GiB. The authority comes from the operating account;
-there is no path or authority override.";
+refused admission until the given time (ms, s, m or h) has passed. With --lease the command
+is a child of that parent lease, admitted against its remainder with the token read from
+descriptor N. Durations and sizes are whole numbers; sizes take KiB, MiB or GiB. The
+authority comes from the operating account; there is no path or authority override.
+
+test-candidate admits one parent lease and runs a candidate tree's build, its applicable
+tests and its own candidate authority as children of it, checks the candidate's admission,
+ends the lease and writes report.json in the new report directory.
+
+upgrade replaces the installed release with a staged one (`devguardd stage --package DIR`)
+and must run from that release's own devguard: it closes admission, waits up to the drain
+timeout (60s by default) for charged work to end, backs up the journal, starts the new
+release closed, verifies it and reopens admission; otherwise the current release keeps
+serving. --stopped replaces a release that cannot close admission by stopping it first,
+only if nothing is then charged. repair returns the service to the last known good
+release, the one the last upgrade replaced, or to its recovery copy, while no authority
+serves; it never reinitializes the journal. A signal during the drain cancels the upgrade
+and reopens admission; once the drain has finished, the replacement completes or rolls
+back. An upgrade interrupted after the new release started is completed by running it
+again. admission --open reopens admission on the serving release.";
 
 /// Run the command line `args` (without the program name). `locate` supplies
 /// the authority paths and the launch helper, and is consulted only by
@@ -73,6 +100,107 @@ pub fn run(
                 Exit::Code(1)
             }
         },
+        args::Command::Upgrade(upgrade) => match locate() {
+            Ok((paths, _)) => operate(|| {
+                devguard_daemon::upgrade::upgrade(
+                    &paths,
+                    &upgrade.release,
+                    &Launchctl::new(paths.uid()),
+                    &InstallOptions::canonical(&paths),
+                    &UpgradeOptions {
+                        drain_timeout: upgrade
+                            .drain_timeout
+                            .unwrap_or(devguard_daemon::upgrade::DEFAULT_DRAIN_TIMEOUT),
+                        stopped: upgrade.stopped,
+                        cancel: Some(cancellable()),
+                    },
+                )
+            }),
+            Err(error) => {
+                eprintln!("devguard: {}", error.message);
+                Exit::Code(1)
+            }
+        },
+        args::Command::Repair => match locate() {
+            // A repair is short and bounded; a signal must not leave it half done.
+            Ok((paths, _)) => operate(|| {
+                cancellable();
+                devguard_daemon::upgrade::repair(
+                    &paths,
+                    &Launchctl::new(paths.uid()),
+                    &InstallOptions::canonical(&paths),
+                )
+            }),
+            Err(error) => {
+                eprintln!("devguard: {}", error.message);
+                Exit::Code(1)
+            }
+        },
+        args::Command::Admission => match locate() {
+            Ok((paths, _)) => operate(|| {
+                cancellable();
+                devguard_daemon::upgrade::reopen_admission(
+                    &paths,
+                    &Launchctl::new(paths.uid()),
+                    &InstallOptions::canonical(&paths),
+                )
+            }),
+            Err(error) => {
+                eprintln!("devguard: {}", error.message);
+                Exit::Code(1)
+            }
+        },
+        args::Command::TestCandidate(candidate) => match locate() {
+            Ok((paths, _)) => candidate::run_args(&candidate, &paths),
+            Err(error) => {
+                eprintln!("devguard: {}; nothing was started", error.message);
+                Exit::Code(exec::NOT_STARTED)
+            }
+        },
+    }
+}
+
+static CANCEL: AtomicBool = AtomicBool::new(false);
+
+extern "C" fn cancel_upgrade(_: libc::c_int) {
+    CANCEL.store(true, Ordering::Relaxed);
+}
+
+/// SIGINT and SIGTERM cancel an upgrade's drain instead of ending the CLI,
+/// which could leave admission closed; a repair or a reopening, which reads
+/// no flag, runs to its end.
+fn cancellable() -> &'static AtomicBool {
+    // SAFETY: the handler only stores to a lock-free atomic.
+    unsafe {
+        libc::signal(
+            libc::SIGINT,
+            cancel_upgrade as *const () as libc::sighandler_t,
+        );
+        libc::signal(
+            libc::SIGTERM,
+            cancel_upgrade as *const () as libc::sighandler_t,
+        );
+    }
+    &CANCEL
+}
+
+/// Run an operation on the installed service and print its JSON report.
+fn operate<T: serde::Serialize>(operation: impl FnOnce() -> Result<T>) -> Exit {
+    match operation() {
+        Ok(report) => match serde_json::to_string_pretty(&report) {
+            Ok(text) => {
+                println!("{text}");
+                Exit::Code(0)
+            }
+            Err(_) => {
+                eprintln!("devguard: the report could not be encoded");
+                Exit::Code(1)
+            }
+        },
+        Err(error) => {
+            eprintln!("devguard: {:?}: {}", error.code, error.message);
+            Exit::Code(1)
+        }
     }
 }
 

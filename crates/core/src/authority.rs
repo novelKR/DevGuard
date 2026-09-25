@@ -63,6 +63,14 @@ pub struct LaunchDecision {
     pub permit: Option<Secret>,
 }
 
+/// A newly admitted lease and its token, returned once; a replay of the same
+/// admission returns the lease without the token.
+#[derive(Debug, Clone)]
+pub struct LeaseGrant {
+    pub lease: LeaseRecord,
+    pub token: Option<Secret>,
+}
+
 #[derive(Debug)]
 pub struct RunDecision {
     pub attempt: AttemptRecord,
@@ -144,6 +152,28 @@ impl AuthorityStorage {
             authority_lock,
         })
     }
+
+    /// What the idle journal still charges: attempts not yet settled and
+    /// leases not yet released. It is read without activating the journal
+    /// and changes nothing.
+    pub fn charged(&mut self) -> Result<(Vec<AttemptRecord>, Vec<LeaseRecord>)> {
+        self.journal.transaction(|tx| {
+            let attempts = journal::active(tx)?;
+            let leases = if journal::lease_tables_exist(tx)? {
+                journal::validate_leases(tx)?;
+                journal::active_leases(tx)?
+            } else {
+                Vec::new()
+            };
+            Ok((attempts, leases))
+        })
+    }
+
+    /// Copy the journal, complete and consistent, into the new empty private
+    /// file at `path`, while this storage holds the authority lock.
+    pub fn backup(&mut self, path: &Path) -> Result<()> {
+        self.journal.backup(path)
+    }
 }
 
 impl<B: Backend, C: Clock> Authority<B, C> {
@@ -173,6 +203,8 @@ impl<B: Backend, C: Clock> Authority<B, C> {
             // Storage may have waited for host readiness. Recheck atomically with
             // recovery so intervening corruption cannot hide a charged attempt.
             journal::validate_index(tx)?;
+            journal::ensure_lease_tables(tx)?;
+            journal::validate_leases(tx)?;
             validate_registration_policies(tx, &policy)?;
             journal::expire_prepared(tx, &now)?;
             for mut record in journal::active(tx)? {
@@ -568,6 +600,25 @@ impl<B: Backend, C: Clock> Authority<B, C> {
         })
     }
 
+    /// Trusted path for closing admission before an upgrade: cancel every
+    /// Prepared attempt, which is known not to have started. Launched work is
+    /// left to finish and be reconciled.
+    pub fn cancel_prepared(&mut self) -> Result<Vec<AttemptRecord>> {
+        let now = self.clock.now();
+        self.journal.transaction(|tx| {
+            journal::expire_prepared(tx, &now)?;
+            let mut cancelled = Vec::new();
+            for mut record in journal::active(tx)? {
+                if record.phase == AttemptPhase::Prepared {
+                    record.phase = AttemptPhase::Cancelled;
+                    journal::save(tx, &record)?;
+                    cancelled.push(record);
+                }
+            }
+            Ok(cancelled)
+        })
+    }
+
     /// Trusted reconciliation path; it is not an unauthenticated client RPC.
     /// There is deliberately no `release(lease_id)` operation without evidence.
     pub fn reconcile(&mut self, key: &AttemptKey) -> Result<AttemptRecord> {
@@ -739,13 +790,335 @@ impl<B: Backend, C: Clock> Authority<B, C> {
         self.journal.transaction(|tx| {
             let instances: u64 = tx.query_row("SELECT COUNT(*) FROM instances WHERE consumer=?1 AND generation=?2 AND state!='retired'",
                 params![consumer, generation], |r| r.get(0)).map_err(db_error)?;
-            let charged = journal::active(tx)?.iter().any(|r| r.key.consumer_id == consumer && r.key.consumer_generation == generation);
+            let charged = journal::active(tx)?.iter().any(|r| r.key.consumer_id == consumer && r.key.consumer_generation == generation)
+                || journal::active_leases(tx)?.iter().any(|l| l.key.consumer_id == consumer && l.key.consumer_generation == generation);
             if instances != 0 || charged { return Err(Error::new(ErrorCode::ReconciliationRequired, "generation still has live or suspect ownership")); }
             tx.execute("INSERT OR IGNORE INTO retired_generations(consumer,generation) VALUES (?1,?2)", params![consumer, generation]).map_err(db_error)?;
             tx.execute("DELETE FROM attempts WHERE consumer=?1 AND generation=?2 AND charged=0", params![consumer, generation]).map_err(db_error)?;
             Ok(())
         })
     }
+}
+
+/// Parent leases: a bounded budget reserved from the host once, from which the
+/// lease's children are admitted. Children never draw on the host again, and
+/// their sum never exceeds the lease.
+impl<B: Backend, C: Clock> Authority<B, C> {
+    /// Reserve `budget` from host capacity as a lease owned by `principal`,
+    /// fenced after `ttl_ms` if given. The token is returned once.
+    pub fn admit_lease(
+        &mut self,
+        principal: &Principal,
+        key: &AttemptKey,
+        budget: Budget,
+        ttl_ms: Option<u64>,
+    ) -> Result<LeaseGrant> {
+        check_key(principal, key)?;
+        budget.validate_workload()?;
+        let now = self.clock.now();
+        let target = self
+            .pressure
+            .current(&now)
+            .target(self.policy.work_capacity()?);
+        let policy_revision = self.policy.revision.clone();
+        self.journal.transaction(|tx| {
+            validate_principal(tx, principal)?;
+            journal::expire_prepared(tx, &now)?;
+            if let Some((existing, _)) = journal::load_lease(tx, key)? {
+                if existing.owner != principal.instance || existing.budget != budget {
+                    return Err(Error::new(
+                        ErrorCode::AttemptConflict,
+                        "lease identity has a different meaning or owner",
+                    ));
+                }
+                return Ok(LeaseGrant {
+                    lease: existing,
+                    token: None,
+                });
+            }
+            if !budget.fits(target.remaining_after(journal::committed(tx)?)) {
+                return Err(Error::new(
+                    ErrorCode::ResourceUnavailable,
+                    "the lease does not fit the host's capacity at the current pressure",
+                ));
+            }
+            let deadline_ms = match ttl_ms {
+                Some(ttl) => Some(now.monotonic_ms.checked_add(ttl).ok_or_else(|| {
+                    Error::new(ErrorCode::InvalidRequest, "lease deadline overflow")
+                })?),
+                None => None,
+            };
+            let token = Secret::new(format!(
+                "{}{}",
+                Uuid::new_v4().simple(),
+                Uuid::new_v4().simple()
+            ))?;
+            let lease = LeaseRecord {
+                key: key.clone(),
+                owner: principal.instance.clone(),
+                policy_revision,
+                budget,
+                phase: LeasePhase::Active,
+                created_at: now.clone(),
+                deadline_ms,
+                end_reason: None,
+            };
+            journal::save_lease(tx, &lease, &token.digest())?;
+            Ok(LeaseGrant {
+                lease,
+                token: Some(token),
+            })
+        })
+    }
+
+    /// Admit a child execution under `lease`, presented with its token, against
+    /// the lease's remainder. The child is then an ordinary attempt of
+    /// `principal`, launched and released by the usual evidence.
+    pub fn admit_child(
+        &mut self,
+        principal: &Principal,
+        lease: &AttemptKey,
+        token: &Secret,
+        request: AdmissionRequest,
+    ) -> Result<AttemptRecord> {
+        let fingerprint = request.fingerprint()?;
+        check_key(principal, &request.key)?;
+        if lease.consumer_id != request.key.consumer_id
+            || lease.consumer_generation != request.key.consumer_generation
+        {
+            return Err(unauthorized());
+        }
+        let now = self.clock.now();
+        let policy = &self.policy;
+        let backend = &self.backend;
+        self.journal.transaction(|tx| {
+            validate_principal(tx, principal)?;
+            journal::expire_prepared(tx, &now)?;
+            // An unknown lease and a wrong token are refused alike.
+            let (mut parent, token_hash) =
+                journal::load_lease(tx, lease)?.ok_or_else(unauthorized)?;
+            if !same_digest(&token_hash, &token.digest()) {
+                return Err(unauthorized());
+            }
+            if let Some(record) = journal::load(tx, &request.key)? {
+                if record.request_fingerprint != fingerprint
+                    || record.owner != principal.instance
+                    || journal::child_lease(tx, &request.key)?.as_ref() != Some(lease)
+                {
+                    return Err(Error::new(
+                        ErrorCode::AttemptConflict,
+                        "attempt identity has different meaning, owner or lease",
+                    ));
+                }
+                return Ok(record);
+            }
+            if fence_if_due(&mut parent, &now) {
+                journal::save_lease(tx, &parent, &token_hash)?;
+            }
+            let remaining = lease_remaining(tx, &parent)?;
+            let plan = backend.plan(&request.intent);
+            let denial = if parent.phase != LeasePhase::Active {
+                // A fenced lease admits nothing; waiting cannot change that.
+                Some(ErrorCode::InvalidTransition)
+            } else {
+                match &plan {
+                    Ok(plan)
+                        if request.intent.profile == "interactive"
+                            && plan.validate().is_ok()
+                            && plan.levels().satisfies(request.intent.minimum) =>
+                    {
+                        (!request.intent.requested.fits(remaining))
+                            .then_some(ErrorCode::ResourceUnavailable)
+                    }
+                    Err(error) if error.code == ErrorCode::ResourceControlUnavailable => {
+                        Some(error.code)
+                    }
+                    _ => Some(ErrorCode::ResourcePolicyUnsupported),
+                }
+            };
+            let record = AttemptRecord {
+                key: request.key,
+                request_fingerprint: fingerprint,
+                owner: principal.instance.clone(),
+                policy_revision: policy.revision.clone(),
+                phase: if denial.is_some() {
+                    AttemptPhase::Denied
+                } else {
+                    AttemptPhase::Prepared
+                },
+                reservation: if denial.is_some() {
+                    None
+                } else {
+                    Some(ResourceReservation {
+                        lease_id: Uuid::new_v4().to_string(),
+                        quantities: request.intent.requested,
+                        prepared_at: now.clone(),
+                        prepare_deadline_ms: now
+                            .monotonic_ms
+                            .checked_add(PREPARED_TTL_MS)
+                            .ok_or_else(|| {
+                                Error::new(ErrorCode::InvalidRequest, "monotonic deadline overflow")
+                            })?,
+                    })
+                },
+                plan: if denial.is_some() { None } else { Some(plan?) },
+                scope: None,
+                applied: None,
+                denial,
+                tracking_lost: false,
+                release_reason: None,
+            };
+            journal::save(tx, &record)?;
+            journal::link_child(tx, &record.key, lease)?;
+            Ok(record)
+        })
+    }
+
+    /// End an owned lease: it admits no new child and is released once every
+    /// child is settled.
+    pub fn end_lease(&mut self, principal: &Principal, lease: &AttemptKey) -> Result<LeaseView> {
+        let now = self.clock.now();
+        self.journal.transaction(|tx| {
+            validate_principal(tx, principal)?;
+            journal::expire_prepared(tx, &now)?;
+            let (mut record, token_hash) = journal::load_lease(tx, lease)?.ok_or_else(not_found)?;
+            if record.owner != principal.instance {
+                return Err(unauthorized());
+            }
+            let before = record.clone();
+            if record.phase == LeasePhase::Active {
+                record.phase = LeasePhase::Ending;
+                record.end_reason = Some(LeaseEndReason::Ended);
+            }
+            settle(tx, &mut record)?;
+            if record != before {
+                journal::save_lease(tx, &record, &token_hash)?;
+            }
+            lease_view(tx, record)
+        })
+    }
+
+    /// A lease holder's view, authorized by the lease token alone.
+    pub fn lease_status(&mut self, lease: &AttemptKey, token: &Secret) -> Result<LeaseView> {
+        lease.validate()?;
+        let now = self.clock.now();
+        self.journal.transaction(|tx| {
+            journal::expire_prepared(tx, &now)?;
+            let (mut record, token_hash) =
+                journal::load_lease(tx, lease)?.ok_or_else(unauthorized)?;
+            if !same_digest(&token_hash, &token.digest()) {
+                return Err(unauthorized());
+            }
+            if fence_if_due(&mut record, &now) {
+                journal::save_lease(tx, &record, &token_hash)?;
+            }
+            lease_view(tx, record)
+        })
+    }
+
+    /// Trusted reconciliation: fence a lease whose owner has ended, which
+    /// belongs to an earlier boot or whose deadline passed, and release it once
+    /// every child is settled. Suspect children keep it charged.
+    pub fn reconcile_lease(
+        &mut self,
+        lease: &AttemptKey,
+        owner_running: bool,
+    ) -> Result<LeaseRecord> {
+        let now = self.clock.now();
+        self.journal.transaction(|tx| {
+            journal::expire_prepared(tx, &now)?;
+            let (mut record, token_hash) = journal::load_lease(tx, lease)?.ok_or_else(not_found)?;
+            let before = record.clone();
+            if record.phase == LeasePhase::Active && !owner_running {
+                record.phase = LeasePhase::Ending;
+                record.end_reason = Some(LeaseEndReason::OwnerGone);
+            }
+            fence_if_due(&mut record, &now);
+            settle(tx, &mut record)?;
+            if record != before {
+                journal::save_lease(tx, &record, &token_hash)?;
+            }
+            Ok(record)
+        })
+    }
+
+    /// Leases that still hold their budget, for the reconciler.
+    pub fn leases(&mut self) -> Result<Vec<LeaseRecord>> {
+        self.journal.transaction(journal::active_leases)
+    }
+
+    /// A lease and its children, for trusted diagnostics and tests.
+    pub fn lease(&mut self, lease: &AttemptKey) -> Result<LeaseView> {
+        self.journal.transaction(|tx| {
+            let (record, _) = journal::load_lease(tx, lease)?.ok_or_else(not_found)?;
+            lease_view(tx, record)
+        })
+    }
+}
+
+/// Fence an Active lease of an earlier boot or past its deadline.
+fn fence_if_due(lease: &mut LeaseRecord, now: &ObservationTime) -> bool {
+    if lease.phase != LeasePhase::Active {
+        return false;
+    }
+    let reason = if lease.created_at.boot_id != now.boot_id {
+        LeaseEndReason::OwnerGone
+    } else if lease
+        .deadline_ms
+        .is_some_and(|deadline| now.monotonic_ms >= deadline)
+    {
+        LeaseEndReason::Expired
+    } else {
+        return false;
+    };
+    lease.phase = LeasePhase::Ending;
+    lease.end_reason = Some(reason);
+    true
+}
+
+/// The budget of a lease's charged children.
+fn children_charged(tx: &Transaction<'_>, lease: &LeaseRecord) -> Result<Budget> {
+    let mut sum = Budget::ZERO;
+    for child in journal::lease_children(tx, &lease.key)? {
+        if let Some(record) = journal::load(tx, &child)? {
+            if let (true, Some(reservation)) = (record.phase.charged(), &record.reservation) {
+                sum = sum.checked_add(reservation.quantities)?;
+            }
+        }
+    }
+    Ok(sum)
+}
+
+fn lease_remaining(tx: &Transaction<'_>, lease: &LeaseRecord) -> Result<Budget> {
+    Ok(lease.budget.remaining_after(children_charged(tx, lease)?))
+}
+
+/// Release an Ending lease once none of its children is charged.
+fn settle(tx: &Transaction<'_>, lease: &mut LeaseRecord) -> Result<()> {
+    if lease.phase != LeasePhase::Ending {
+        return Ok(());
+    }
+    for child in journal::lease_children(tx, &lease.key)? {
+        if journal::load(tx, &child)?.is_some_and(|record| record.phase.charged()) {
+            return Ok(());
+        }
+    }
+    lease.phase = LeasePhase::Released;
+    Ok(())
+}
+
+fn lease_view(tx: &Transaction<'_>, lease: LeaseRecord) -> Result<LeaseView> {
+    let remaining = if lease.charged() {
+        lease_remaining(tx, &lease)?
+    } else {
+        Budget::ZERO
+    };
+    let children = journal::lease_children(tx, &lease.key)?;
+    Ok(LeaseView {
+        lease,
+        remaining,
+        children,
+    })
 }
 
 fn same_digest(left: &str, right: &str) -> bool {

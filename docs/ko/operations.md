@@ -2,7 +2,7 @@
 
 [English](../operations.md) | [한국어](operations.md)
 
-C01은 명시 bootstrap·고정 저장소를, C02는 인증된 로컬 transport를, C03은 native macOS boot·프로세스·호스트 압력 증거를, C04는 협조적 정책 readback과 scope 증거를, C05는 fenced launch helper를, C06은 대조를, C07은 `devguard` 명령행 owner를, C08은 Cargo adapter를 제공한다. PR과 병합 후 main 전달 증거는 구현과 별도로 추적한다. devguardd serve는 이 증거로 journal을 활성화하는 foreground 서비스를 실행하고 wire 등록·fenced launch·대조를 연다. `devguard exec`는 이 서비스를 통해 명령을 실행하고, `devguard doctor`는 이를 진단한다. 정상 authority는 현재 macOS만 지원하며 Linux CI는 이식 가능한 계약과 제한된 fixture를 검사한다. DG-LINUX 제어 자격을 부여하지 않는다.
+C01은 명시 bootstrap·고정 저장소를, C02는 인증된 로컬 transport를, C03은 native macOS boot·프로세스·호스트 압력 증거를, C04는 협조적 정책 readback과 scope 증거를, C05는 fenced launch helper를, C06은 대조를, C07은 `devguard` 명령행 owner를, C08은 Cargo adapter를, C09는 패키지로 만든 release를 현재 사용자 LaunchAgent로 설치하는 기능을, C10은 부모 lease와 후보 authority를, C11은 upgrade와 repair를 제공한다. PR과 병합 후 main 전달 증거는 구현과 별도로 추적한다. devguardd serve는 이 증거로 journal을 활성화하는 foreground 서비스를 실행하고 wire 등록·fenced launch·대조를 연다. `devguard exec`는 이 서비스를 통해 명령을 실행하고, `devguard doctor`는 이를 진단한다. 정상 authority는 현재 macOS만 지원하며 Linux CI는 이식 가능한 계약과 제한된 fixture를 검사한다. DG-LINUX 제어 자격을 부여하지 않는다.
 
 ## 제공 명령
 
@@ -39,9 +39,37 @@ Native 증거를 사용할 수 있으면 `serve`는 관측한 호스트로 정�
 
 Native 증거가 없는 플랫폼이거나 macOS 관측이 실패하면 `serve`는 저장소만 보유한 닫힌 동작을 유지하고 어느 경우인지 보고한다.
 
-인증된 status는 storage_validated, registration_ready, execution_ready, 이유와 설정 fingerprint를 보고한다. Native 증거가 있으면 등록과 실행이 준비된 상태이며, admission은 여전히 호스트 압력과 용량을 따른다. 그렇지 않으면 둘 다 false이며 이유는 미지원 플랫폼과 native 관측 실패를 구분한다. `devguard`는 자기 옆의 `devguard-launch`를 찾으므로 둘을 함께 빌드한다. 설치·LaunchAgent·repair는 후속 작업이다. 설정이나 handshake 성공만으로 명령이 관리되지는 않으며 bootstrap 빌드는 자기 적용 증거가 아니다. 영속 서비스는 제거 가능한 target 경로를 사용하지 않는다. 보호된 설치는 C09의 범위다.
+인증된 status는 storage_validated, registration_ready, execution_ready, 이유와 설정 fingerprint를 보고한다. Native 증거가 있으면 등록과 실행이 준비된 상태이며, admission은 여전히 호스트 압력과 용량을 따른다. 그렇지 않으면 둘 다 false이며 이유는 미지원 플랫폼과 native 관측 실패를 구분한다. `devguard`는 자기 옆의 `devguard-launch`를 찾으므로 둘을 함께 빌드한다. 설정이나 handshake 성공만으로 명령이 관리되지는 않으며 bootstrap 빌드는 자기 적용 증거가 아니다. 영속 서비스를 제거 가능한 target 경로에서 실행하지 않는다. 대신 패키지를 설치한다.
 
-`devguard exec [--project ID] [--adapter auto|generic|cargo|cargo-pipeline] [--wait DURATION] [--cpu MILLICPU] [--memory SIZE] [--tasks N] [--receipt PATH] -- PROGRAM [ARGS...]`는 명령을 admission하고 `devguard-launch`로 시작한 뒤 끝날 때까지 기다린다. 프로그램과 인자는 `--` 뒤에 두며 shell은 사용하지 않는다. 명령의 종료값으로 끝나거나 그 signal로 끝나며, 아무것도 시작하지 않았으면 125로 끝난다. `--wait`가 없으면 거절 즉시 끝나고, `--wait`가 있으면 용량·압력 거절을 기한까지 다시 시도하며, 호스트의 작업 용량보다 큰 요청은 즉시 거절한다. `--receipt`는 private JSON receipt를 기록한다. `devguard doctor`는 JSON 진단을 출력하며, `--require admission,registration,macos-cooperative`를 주면 요구 사항이 하나라도 충족되지 않을 때 실패한다. [계약 문서](contracts.md#명령행-owner)를 참조한다.
+영속 서비스는 설치된 release를 실행한다.
+
+```sh
+python3 scripts/package.py --offline
+target/package/<release-id>/bin/devguardd install --package target/package/<release-id>
+devguardd status
+```
+
+`package.py`는 깨끗한 tree에서 release 패키지를 만든다. `install`은 그 패키지에서 실행해야 하며, authority가 제공 중이거나 agent가 있거나 기존 authority 상태가 없으면 거절한다. Release를 변경 불가능한 `releases/<release-id>`로 복사하고, 현재 사용자 LaunchAgent `io.github.novelkr.devguard`로 시작한다. 이 agent는 `releases/<release-id>/bin/devguardd serve`를 실행한다. launchd가 정확히 그 바이너리를 실행한다고 검증한 뒤에만 release를 선택한다. `devguardd status`는 설치된 서비스를 보고하며, 검증된 current release를 실행하지 않으면 1로 끝난다. Release 교체는 upgrade(C11, 아래)이다. [계약 문서](contracts.md#설치와-현재-사용자-서비스)를 참조한다.
+
+후보 build는 실행 중인 서비스의 부모 lease 안에서 검증한다.
+
+```sh
+devguard test-candidate --candidate /path/to/candidate/tree --report /path/to/new/report --wait 5m
+```
+
+`test-candidate`는 lease 하나(기본값 CPU 2개, 4 GiB, task 96개, 기한 2시간)를 admission하고, tree의 build, 해당하는 시험, tree 자신의 `devguardd candidate`를 `devguard exec --lease`로 lease 자식으로 실행한다. 후보의 admission을 바깥에서 점검하고 lease를 끝낸 뒤 새 보고 디렉터리에 `report.json`을 쓰며, 모든 단계가 통과했을 때만 0으로 끝난다. 서비스는 부모 lease를 광고해야 하므로 C10 이후 release가 필요하며, 압력이 Critical인 동안에는 lease를 admission하지 않는다. [계약 문서](contracts.md#부모-lease와-후보-authority)를 참조한다.
+
+Staged release는 과금 중인 작업을 방해하지 않고 실행 중인 release를 교체한다.
+
+```sh
+target/package/<release-id>/bin/devguardd stage --package target/package/<release-id>
+"$HOME/Library/Application Support/DevGuard/releases/<release-id>/bin/devguard" upgrade --release <release-id>
+"$HOME/Library/Application Support/DevGuard/releases/<last-known-good>/bin/devguard" repair --use last-known-good
+```
+
+`upgrade`는 admission을 닫고, 과금 중인 작업이 끝날 때까지 `--drain-timeout`(기본 60초)만큼 기다린다. 그다음 `backups/` 아래에 journal을 백업하고, 새 release를 admission이 닫힌 채 시작해 검증한 뒤 admission을 다시 연다. Drain이 제한 시간을 넘기면 현재 release가 과금을 유지한 채 계속 제공하고, 새 release를 검증할 수 없으면 이전 release를 다시 시작한다. C11 이전 release는 admission을 닫을 수 없으므로 `--stopped`가 먼저 그 release를 멈추고, 과금된 것이 없을 때만 진행한다. Drain 중의 SIGINT·SIGTERM은 upgrade를 취소하고 admission을 다시 연다. 새 release가 시작된 뒤 중단된 upgrade는 다시 실행하면 완료되며, `devguard admission --open`은 제공 중인 release의 admission을 다시 연다. 설치·staging·upgrade·repair·재개는 한 번에 하나만 실행된다. `repair`는 authority가 제공 중이 아닐 때만 서비스를 last known good release, 즉 마지막 upgrade가 교체한 release나 그 복구 사본으로 되돌리며, 열 수 없는 journal은 닫힌 채로 둔다. [계약 문서](contracts.md#upgrade와-repair)를 참조한다.
+
+`devguard exec [--project ID] [--adapter auto|generic|cargo|cargo-pipeline] [--wait DURATION] [--cpu MILLICPU] [--memory SIZE] [--tasks N] [--receipt PATH] [--lease CONSUMER/GENERATION/ATTEMPT --lease-token-fd N] -- PROGRAM [ARGS...]`는 명령을 admission하고 `devguard-launch`로 시작한 뒤 끝날 때까지 기다린다. 프로그램과 인자는 `--` 뒤에 두며 shell은 사용하지 않는다. 명령의 종료값으로 끝나거나 그 signal로 끝나며, 아무것도 시작하지 않았으면 125로 끝난다. `--wait`가 없으면 거절 즉시 끝나고, `--wait`가 있으면 용량·압력 거절을 기한까지 다시 시도하며, 호스트의 작업 용량보다 큰 요청은 즉시 거절한다. `--receipt`는 private JSON receipt를 기록한다. `--lease`는 명령을 그 부모 lease의 자식으로 만들며, descriptor N에서 읽은 token으로 lease의 남은 예산에 대해 admission한다. `devguard doctor`는 JSON 진단을 출력하며, `--require admission,registration,macos-cooperative`를 주면 요구 사항이 하나라도 충족되지 않을 때 실패한다. [계약 문서](contracts.md#명령행-owner)를 참조한다.
 
 `--adapter cargo`는 `cargo`의 compiler job을 예약에 맞추고, `--adapter cargo-pipeline`은 검증 script 같은 프로그램이 실행하는 Cargo들이 jobserver 하나를 공유하게 한다. 기본값인 `auto`는 compile하는 `cargo` 명령에 Cargo adapter를 고른다. Cargo job 하나(CPU 1개와 2 GiB)도 수용할 수 없는 예약은 거절한다. [계약 문서](contracts.md#cargo-adapter)를 참조한다.
 
@@ -100,7 +128,7 @@ SDK 조회 예제는 CARGO_BUILD_JOBS=1 cargo build --locked -p devguard-client 
 
 ## 호환성·검사·복귀
 
-Core의 AuthorityStorage는 기존 배타 잠금을 보유하고 schema 1 journal을 검사하되 attempt 상태를 바꾸지 않는다. 실제 Backend·Clock으로 활성화할 때 boot 기반 복구와 같은 transaction 안에서 회계를 다시 검증한다. 기존 Authority::open의 복구 동작과 DG-0 시험을 유지하며 C01–C06은 journal schema와 contract 직렬화를 바꾸지 않는다. C05와 C06은 서비스가 fenced launch를 광고한 뒤에만 client가 사용하는 wire 요청과 응답을 추가한다. 새 로컬 protocol은 미지 필드·버전·필수 capability 미지원을 엄격히 거절하며 필드 추가도 명시적 호환성 시험이 필요하다.
+Core의 AuthorityStorage는 기존 배타 잠금을 보유하고 schema 1 journal을 검사하되 attempt 상태를 바꾸지 않는다. 실제 Backend·Clock으로 활성화할 때 boot 기반 복구와 같은 transaction 안에서 회계를 다시 검증한다. 기존 Authority::open의 복구 동작과 DG-0 시험을 유지하며 C01–C06은 journal schema와 contract 직렬화를 바꾸지 않는다. C05와 C06은 서비스가 fenced launch를 광고한 뒤에만 client가 사용하는 wire 요청과 응답을 추가한다. C10은 서비스가 부모 lease를 알린 뒤에만 client가 사용하는 lease 요청과 응답, 그리고 없을 때 만드는 `leases`·`lease_children` table을 추가하며 schema는 바꾸지 않는다. C11은 서비스가 `upgrade_drain`을 알린 뒤에만 쓰는, admission을 닫고 다시 열며 과금된 것을 보고하는 관리자 요청과 private marker `state/admission.json`을 추가한다. Journal schema는 바뀌지 않는다. 새 로컬 protocol은 미지 필드·버전·필수 capability 미지원을 엄격히 거절하며 필드 추가도 명시적 호환성 시험이 필요하다.
 
 ```sh
 python3 scripts/qualify.py dg1-authority --offline
@@ -111,6 +139,9 @@ python3 scripts/qualify.py dg1-launch --offline
 python3 scripts/qualify.py dg1-reconcile --offline
 python3 scripts/qualify.py dg1-cli --offline
 python3 scripts/qualify.py dg1-cargo --offline
+python3 scripts/qualify.py dg1-bootstrap --offline
+python3 scripts/qualify.py dg1-self-use --offline
+python3 scripts/qualify.py dg1-upgrade --offline
 python3 scripts/validate.py --offline
 ```
 
@@ -200,6 +231,38 @@ Core·launcher 증거·서비스·wire 시험은 이전 boot 회수, 옛 PID를 
 
 각 Cargo 실행과 pipeline script는 표준 descriptor만 상속한다. 호출자 자신의 descriptor 쌍 jobserver를 상속한 경우만 예외다. Shim은 각 Cargo가 받은 인자와 jobserver·fallback 변수도 기록한다. Hosted macOS 14 runner처럼 호스트의 작업 용량이 해당 경우에 필요한 Cargo job을 수용할 수 없으면 그 경우를 `not_run`으로 기록하고 suite는 `incomplete`를 보고한다. CI는 `--allow-incomplete`로 실행한다.
 
-이 suite들은 Linux 강제, 자기 적용, foreground SLO를 not_run으로 남긴다. 전체 검증은 기존 44개 시험과 workspace crate 8개의 명시적 전체 의존 그래프를 검사한다. Launch crate는 시험의 격리 authority를 위해서만 daemon에 의존한다. CLI는 daemon의 경로·설정과 Cargo adapter에 의존하며, daemon fixture에는 시험에서만 의존한다. Cargo adapter는 contract에만 의존한다. Core·contract는 daemon 설정과 native adapter에 독립적이며 client는 core에 의존하지 않는다.
+`dg1-bootstrap`도 macOS에서만 실행한다. 시험은 각 패키지의 `devguardd`로 시험 바이너리를 복사하므로, installer는 실제로 자기 패키지에서 실행된다. 설치된 서비스는 그 사본이며 격리된 fixture authority를 제공한다. 검사 항목은 다음과 같다.
+- 선택 전에 실행이 검증된 설치 release, 변경 불가능한 release·복구 사본과 정상 status
+- 같은 release의 재사용, 그리고 같은 id의 다른 release는 설치된 release를 건드리지 않고 거절하는지
+- 아무것도 쓰기 전에 거절되는 패키지: 바뀌었거나 남거나 빠졌거나 symlink인 바이너리, 다른 capability, 맞지 않는 scope, 패키지 자신의 것이 아닌 installer
+- authority가 제공 중이거나 authority 상태가 없을 때의 거절
+- 끝내 자신을 입증하지 못해 아무것도 선택하지 않고 unload되는 서비스
+- 서비스 하나만 남기는 동시 installer
+- launchd에서 고유 label의 임시 job으로: 같은 journal로 다시 시작하는 crash, SIGTERM 정지, journal을 읽을 수 없어 닫힌 채 끝나고 다시 시작하지 않는 시작
 
-복귀할 때 작업 소유 foreground 프로세스를 중지하고 보존한 설정과 schema 1 journal에 호환되는 source/artifact를 선택하며 영속 상태·자격을 유지한다. C03 활성화는 새 record 종류를 추가하지 않고 기존 복구만 수행하므로 C02 artifact로 같은 상태를 다시 열 수 있다. C06부터는 정상 서비스를 통해 workload가 시작될 수 있다. 대조가 없는 artifact로 복귀하기 전에 새 작업 시작을 멈추고 과금 중인 attempt가 종결 phase에 이를 때까지 기다린다. C05 artifact는 같은 journal을 읽지만 launch를 닫아 두고 대조하지 않으므로 남은 attempt는 과금된 Suspect로 남는다. Scope가 실행 중일 때 서비스가 멈추면 다시 시작한다. 그 attempt들은 owner가 claim되지 않은 grant를 보고하거나 reboot가 종료를 입증할 때까지 과금된 Suspect로 남는다. C07은 서비스 상태를 바꾸지 않는다. CLI를 되돌리려면 CLI로 명령을 시작하는 것을 멈춘다. 이미 시작한 명령은 scope가 끝날 때까지 과금되며, 관리되지 않는 실행으로 대체하지 않는다. C08도 서비스 상태를 바꾸지 않는다. Cargo job 조정을 멈추려면 `--adapter generic`을 명시하며, 기존 target과 cache는 유지된다. 복귀나 재시작을 성공시키려고 journal이나 tombstone을 삭제하지 않는다.
+launchd gui domain이 없는 session에서는 launchd 경우를 `not_run`으로 기록하고 suite는 `incomplete`를 보고한다.
+
+`dg1-self-use`도 macOS에서만 실행하며 먼저 `devguard-launch`를 빌드한다. 격리 authority에 대해 실제 lease 자식과 실제 후보 authority 프로세스를 실행한다. 검사 항목은 다음과 같다.
+- 호스트에 한 번 과금되는 lease, 남은 예산에 대해서만 admission되는 자식, lease를 넘지 않는 자식 합계
+- 요구한 client에게만 알리는 부모 lease capability, token만 쓰는 보유자 session, 틀린 token이나 모르는 lease의 거절
+- Lease가 끝났을 때, owner가 사라졌거나 이전 boot의 것일 때, 기한이 지났을 때의 fence, lease를 과금 상태로 유지하는 Suspect 자식, 모든 자식이 정리된 뒤의 해제와 재시작 뒤의 같은 동작
+- workload를 lease 자식으로 실행하며 표준 descriptor만 상속시키는 `devguard exec --lease`, lease보다 큰 자식(대기 포함), 위조 token, lease가 끝난 뒤 시작하는 자식
+- 용량 안에서 admission하고, 아무것도 launch하지 않고, lease를 갖지 않고, lease와 함께 닫히며, 부모 상태를 열지 않는 후보 authority, 그리고 위조 token, 모르거나 끝난 lease, lease보다 크거나 자기 예약 이하인 용량, 이미 있는 영역 때문에 거절되는 후보
+- workload와 후보를 lease 하나의 자식으로 실행한 뒤 그 lease를 해제하고 후보 영역을 지우는 `test-candidate`, 제공 전에 죽는 후보, 제공하지도 닫히지도 않아 SIGTERM으로 멈추는 후보. 두 후보 모두 실행은 실패하지만 scope와 lease는 해제된다
+
+`dg1-upgrade`도 macOS에서만 실행한다. Fake service manager로 fixture release를 설치한 뒤 교체하거나 복구한다. 검사 항목은 다음과 같다.
+- 정상 upgrade: drain이 Prepared attempt를 정리하고, 백업에 journal·선택·manifest가 있으며, 새 release가 닫힌 유휴 상태로 시작하고, tombstone이 보존되고, admission이 다시 열린다
+- 제한 시간을 넘긴 drain은 현재 release와 그 과금을 유지하며, 작업이 정리된 뒤 같은 upgrade는 성공한다
+- 시작할 수 없는 release 뒤에는 이전 release가 같은 journal로 admission을 연 채 제공한다
+- 호환되지 않는 downgrade는 아무것도 바꾸기 전에 거절한다
+- Drain할 수 없는 release: `--stopped` 없이는 거절하고, 멈춘 뒤 과금된 작업이 있으면 다시 시작하며, 과금된 것이 없으면 교체한다
+- Authority가 제공 중이면 repair를 거절하고, upgrade가 교체한 release로 같은 journal에서 되돌아가며, 손상된 release 대신 복구 사본을 쓰고, 열 수 없는 journal은 닫힌 채로 둔다
+- 복구 사본으로 repair한 release에서의 upgrade
+- 멈추기가 실패해 drain된 release가 계속 제공하며 admission만 다시 여는 경우, signal로 취소된 drain
+- 다시 실행해 완료하는 중단된 upgrade, 관리자 명령으로 다시 여는 admission, 중단된 upgrade가 닫아 둔 admission을 다시 여는 repair, 한 번에 하나의 작업
+- 검증 중에 죽어 이전 release에 자리를 내주는 release, upgrade가 아니라 repair가 완료하는 중단된 repair
+- 관리자만 admission을 닫고, 닫힌 상태가 재시작 뒤에도 유지되며 다시 열 수 있고, drain wire fixture와 호환성 규칙이 엄격하다
+
+이 suite들은 Linux 강제, 자기 적용, foreground SLO를 not_run으로 남긴다. 전체 검증은 기존 44개 시험과 workspace crate 8개의 명시적 전체 의존 그래프를 검사한다. Daemon은 자기 시험에서 fixture를 켜기 위해서만 자신에게 의존한다. Launch crate는 시험의 격리 authority를 위해서만 daemon에 의존한다. CLI는 daemon의 경로·설정과 Cargo adapter에 의존하며, daemon fixture에는 시험에서만 의존한다. Cargo adapter는 contract에만 의존한다. Core·contract는 daemon 설정과 native adapter에 독립적이며 client는 core에 의존하지 않는다.
+
+복귀할 때 작업 소유 foreground 프로세스를 중지하고 보존한 설정과 schema 1 journal에 호환되는 source/artifact를 선택하며 영속 상태·자격을 유지한다. C03 활성화는 새 record 종류를 추가하지 않고 기존 복구만 수행하므로 C02 artifact로 같은 상태를 다시 열 수 있다. C06부터는 정상 서비스를 통해 workload가 시작될 수 있다. 대조가 없는 artifact로 복귀하기 전에 새 작업 시작을 멈추고 과금 중인 attempt가 종결 phase에 이를 때까지 기다린다. C05 artifact는 같은 journal을 읽지만 launch를 닫아 두고 대조하지 않으므로 남은 attempt는 과금된 Suspect로 남는다. Scope가 실행 중일 때 서비스가 멈추면 다시 시작한다. 그 attempt들은 owner가 claim되지 않은 grant를 보고하거나 reboot가 종료를 입증할 때까지 과금된 Suspect로 남는다. C07은 서비스 상태를 바꾸지 않는다. CLI를 되돌리려면 CLI로 명령을 시작하는 것을 멈춘다. 이미 시작한 명령은 scope가 끝날 때까지 과금되며, 관리되지 않는 실행으로 대체하지 않는다. C08도 서비스 상태를 바꾸지 않는다. Cargo job 조정을 멈추려면 `--adapter generic`을 명시하며, 기존 target과 cache는 유지된다. C09 installer는 release가 검증되기 전에는 job을 bootout하고 plist를 제거하며 아무것도 선택하지 않는다. 설치된 서비스를 멈추려면 `launchctl bootout gui/<uid>/io.github.novelkr.devguard`를 실행하고 plist를 지운다. Release·복구 사본·선택·journal은 보존되며, 보존한 artifact의 foreground `devguardd serve`가 같은 상태를 읽는다. C10은 lease table 말고는 서비스 상태를 추가하지 않는다. C09 artifact로 복귀하기 전에 모든 lease를 끝내고 해제되기를 기다린다. C09 서비스는 lease table을 무시하므로 lease의 쓰지 않은 남은 예산을 보유하지 않는다. `candidates/` 아래의 후보 영역은 버려도 되는 상태이며 정상 서비스는 읽지 않는다. C11은 upgrade마다 만든 quiescent 백업을 수동 복구용으로 `backups/`에 보존하며 자동으로 복원하지 않는다. C11 이후 release로 돌아갈 때는 그 release로 upgrade한다. C11 이전 release에는 upgrade 명령이 없다. 서비스를 멈추고 plist를 지운 뒤 그 release의 release 디렉터리에서 `devguardd install --package`를 실행한다. 그 release는 닫기 marker를 무시하며, 이후 upgrade가 marker를 다시 기록한다. 복귀나 재시작을 성공시키려고 journal이나 tombstone을 삭제하지 않는다.

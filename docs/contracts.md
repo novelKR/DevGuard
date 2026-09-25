@@ -1,6 +1,6 @@
 # Implemented authority contract
 
-This document describes the implemented DG-0 authority, C01/C02 service, storage and transport behavior, C03 native macOS host evidence, C04 cooperative policy and scope evidence, the C05 fenced launch helper, C06 reconciliation, the C07 command-line owner and the C08 Cargo adapters. PR and post-merge main delivery evidence is tracked separately from implementation. [Operations](operations.md) lists actual command availability. With native host evidence the service opens registration, launch and reconciliation; CodeSpace integration remains unimplemented. [Korean translation](ko/contracts.md).
+This document describes the implemented DG-0 authority, C01/C02 service, storage and transport behavior, C03 native macOS host evidence, C04 cooperative policy and scope evidence, the C05 fenced launch helper, C06 reconciliation, the C07 command-line owner, the C08 Cargo adapters, C09 installation as the current user's LaunchAgent, C10 parent leases with candidate authorities and C11 upgrade and repair. PR and post-merge main delivery evidence is tracked separately from implementation. [Operations](operations.md) lists actual command availability. With native host evidence the service opens registration, launch and reconciliation; CodeSpace integration remains unimplemented. [Korean translation](ko/contracts.md).
 
 ## Authority and transport boundaries
 
@@ -8,9 +8,9 @@ The core is a Rust library. `Authority::register` accepts a `TrustedPeer` and ve
 
 DG-0 proves the library registration boundary with a fake peer and backend. C02 supplies real local UDS authentication and a small client, but does not activate native registration. The server observes peer UID/PID through OS socket credentials; the client independently corroborates the authority UID/PID and its own identity in the handshake. Neither accepts caller-declared peer identity. C03 adds native boot/start identity, so an OS-observed peer UID/PID joined with the kernel's start identity forms a complete trusted registration observation; native tests exercise this path in-process. With native host evidence the service opens registration over the wire and the fenced launch helper described below, together with reconciliation. Without it, on another platform or after a failed macOS observation, workload/control-service registration returns `ResourceControlUnavailable`. Authentication alone issues no `Principal`, instance slot, lease or host budget. Administrative credentials cannot perform registration.
 
-The handshake negotiates contract compatibility and wire version 1. A service with native evidence advertises durable admission, fenced launch, per-resource evidence, static control reservations and macOS cooperative control; without it, the service advertises none. Consumer generation and credential digest determine workload/control-service roles; an independent administrative digest grants only the explicitly exposed administrative role. All consumer and administrative digests must differ. Caller credentials, one-time helper permits and administrative operations are separate boundaries: a helper credential variant is not accepted as caller authentication. This remains a cooperative operating-account model, not isolation from a malicious same-UID process.
+The handshake negotiates contract compatibility and wire version 1. A service with native evidence advertises durable admission, fenced launch, per-resource evidence, static control reservations and macOS cooperative control; without it, the service advertises none. Parent leases (C10) are stated only to a client that requires them. Consumer generation and credential digest determine workload/control-service roles; an independent administrative digest grants only the explicitly exposed administrative role. All consumer and administrative digests must differ. Caller credentials, one-time helper permits and administrative operations are separate boundaries: a helper credential variant is not accepted as caller authentication. This remains a cooperative operating-account model, not isolation from a malicious same-UID process.
 
-The authority holds an exclusive no-follow lock in the journal's parent directory. All journals in that authority directory share the lock. The lock is opened with `O_NONBLOCK`, and its opened descriptor must identify a private, current-UID regular file with exactly one link, including during explicit initialization. A FIFO or linked file cannot stand in for the lock. C01 derives canonical normal-service paths from the OS account rather than caller HOME/XDG values and refuses state/socket overrides. Project configuration cannot carry authority credentials or capacity. Production candidate paths remain unavailable until C10 supplies a parent-lease boundary.
+The authority holds an exclusive no-follow lock in the journal's parent directory. All journals in that authority directory share the lock. The lock is opened with `O_NONBLOCK`, and its opened descriptor must identify a private, current-UID regular file with exactly one link, including during explicit initialization. A FIFO or linked file cannot stand in for the lock. C01 derives canonical normal-service paths from the OS account rather than caller HOME/XDG values and refuses state/socket overrides. Project configuration cannot carry authority credentials or capacity. Candidate paths exist only under a parent lease (C10): `devguardd candidate` derives them from the account's own authority and accepts no other.
 
 `AuthorityStorage` exclusively opens and validates a journal without inventing a boot clock, recovering attempts or granting capabilities. `Authority::from_storage` activates it with an actual Backend/Clock and revalidates the accounting index inside the recovery transaction. `Authority::open` preserves that behavior through the same path. Explicit bootstrap remains separate from ordinary open; missing/corrupt/future-schema state is not repaired automatically.
 
@@ -131,7 +131,7 @@ DG1-C07 adds `devguard`, the command-line owner of managed execution. It runs a 
 - **Exit.** The CLI exits with the workload's status, or ends by the same signal; before it ends itself by a signal it sets its own core-file limit to zero, so only the workload may leave a core dump. It exits 125 when nothing was started, as `env` and `timeout` do, and passes the helper's 126 and 127 through.
 - **Receipts.** `--receipt PATH` creates a new private file before anything is admitted, and writes `devguard-exec-receipt/v1`: the result (`completed`, `exec_failed`, `not_started` or `uncertain`), the command, the adapter's report, the budget and its source, the project, the authority, every attempt with its reservation and lease ID, the wait with the work capacity it was checked against, the helper's phases, the exit, the observations before and after reap, and the signals received, forwarded and inherited as ignored. It names the variables an adapter set or removed, never their inherited values, and never contains a permit or a caller credential.
 - **Doctor.** `devguard doctor` reports the paths, the configuration, the helper, the service's identity, capabilities and status, and optionally registration and a project. It states whether managed execution is available, and that there is no unmanaged fallback. `--require admission,registration,macos-cooperative` makes it exit 1 unless each requirement holds.
-- **Nested execution.** A workload that runs `devguard exec` again starts a separate managed execution under its own reservation and scope. It is not charged to, or contained by, the outer scope. Bounding nested work within a parent's budget is C10's parent-budget capability.
+- **Nested execution.** A workload that runs `devguard exec` again starts a separate managed execution under its own reservation and scope. It is not charged to, or contained by, the outer scope. Bounding nested work within a parent's budget takes an explicit parent lease (`--lease`, C10).
 - **Adapters.** C07 defines the adapter interface, separate from admission. An adapter may change arguments and environment for the reservation it will run under, and it reports what it did. The generic adapter changes nothing. The Cargo adapters are described below.
 
 ## Cargo adapter
@@ -145,6 +145,114 @@ DG1-C08 adds the Cargo adapters (`devguard-cargo`), which fit Cargo's compiler p
 - **Fallback.** Both modes set `CARGO_BUILD_JOBS` to the reservation's jobs N, replacing any value the caller set. Cargo uses it only when it opens no jobserver and neither its command line nor `--config` gives jobs, so it bounds a Cargo that could not open the pool, without the warning an explicit `-j` causes under a valid jobserver. The receipt lists it among the variables set.
 - **Inherited jobservers.** A jobserver the CLI inherited through `CARGO_MAKEFLAGS`, `MAKEFLAGS` or `MFLAGS` is checked the way Cargo will read it: the first variable present must name an open, inheritable pipe pair or a FIFO the user owns. A valid one is preserved and bounds parallelism in both modes, as the approved design requires, and the receipt states that its size cannot be observed; no second pool is created. Under it, direct mode inserts no jobs value, because Cargo would only warn that it ignores one, but an explicit value is still clamped. A descriptor-pair jobserver reaches only programs that keep inherited descriptors open. In pipeline mode, a Cargo started by a program that closes them, such as Python's `subprocess` by default, falls back to `CARGO_BUILD_JOBS`, and the receipt says so. A stale one, such as closed descriptors, is removed from the environment together with the job counts that came with it, so Cargo does not silently fall back to its own pool.
 - **Nested Cargo.** Cargo passes its jobserver to build scripts, so a nested Cargo shares the outer pool rather than creating another.
+
+## Installation and the current-user service
+
+DG1-C09 installs a packaged release as the current user's LaunchAgent. The service still runs the same foreground `devguardd serve`; it is not a privileged daemon, and a worktree `target` binary is never the installed service.
+
+- **Package.** `scripts/package.py` requires a clean tree and Rust 1.95.0. It builds `devguardd`, `devguard` and `devguard-launch` in one release build, labelled bootstrap until C10, and writes `devguard-release-manifest/v1` with:
+  - a release id: `<version>-<commit7>-<artifact digest>`;
+  - the source commit, tree and qualification tree digest;
+  - the build command and toolchain;
+  - each binary's SHA-256 and size;
+  - the build's compiled compatibility, which `devguardd version --json` prints: package version, wire version, protocol, capabilities, journal schema and configuration schema.
+
+  A package is a functional artifact (`scope: functional`, `slo_qualified: false`); only C12 qualifies a release.
+- **Validation.**
+  - A package or installed release holds exactly `MANIFEST.json` and `bin/` with the three binaries. They must be regular executable files, not symlinks, whose sizes and hashes match the manifest.
+  - The manifest's compatibility must equal the installer's own build.
+  - The installer must run from the package: its own executable must hash to the manifest's `devguardd`. Binaries from different builds are therefore never mixed.
+- **Install.** `devguardd install --package DIR` refuses while:
+  - an authority serves the canonical endpoint or holds the lock;
+  - the agent is loaded or its plist exists;
+  - the authority state is absent. It never creates, repairs or rewrites the journal.
+
+  It copies the release into a private sibling, syncs it and makes it read-only: directories and binaries 0500, the manifest 0400. Only then does it rename the copy to `releases/<id>`, so a partial copy never has the final name. An existing release is reused only when its manifest is byte-identical; a different release never overwrites it. Finally it writes `~/Library/LaunchAgents/io.github.novelkr.devguard.plist` (0644) and bootstraps it into the user's `gui/<uid>` domain.
+- **Agent.**
+  - The program is the release's `devguardd serve`, and `RunAtLoad` starts it at load and login.
+  - `KeepAlive {Crashed: true}` restarts it only after a crash, after a 10-second throttle.
+  - A clean exit leaves it stopped. That includes launchd's SIGTERM and a fail-closed exit, such as a missing or corrupt journal or a second authority refused by the lock.
+  - Output goes to `~/Library/Logs/DevGuard/devguardd.log`; rotation is manual.
+- **Verification before selection.** Within 15 seconds the installer must observe:
+  - the service launchd reports, with the same PID as the endpoint's handshake;
+  - that PID's executable image (`proc_pidpath`) being the release's `devguardd`, with the manifest's hash.
+
+  Only then does it record `releases/selection.json` (0600: current and last known good, with a history) and keep an immutable recovery copy under `recovery/<id>`. If verification fails, or the recovery copy or the selection cannot be written, the job is booted out and the plist removed; nothing is selected.
+- **Status.** `devguardd status` changes nothing. It reports:
+  - the selection and the launchd state;
+  - whether the plist is exactly the one this build renders for the current release;
+  - the running PID, executable and hash against the manifest;
+  - the releases and recovery copies.
+
+  It exits 0 only when the service runs the verified current release, or its recovery copy, with admission open. It reports an admission closure on a release that honours it.
+- **Restart.** A restarted service reopens and reconciles the existing journal, as any start does. A missing or corrupt journal fails closed and stays down.
+- **Limits.** Replacing the installed release is an upgrade (C11, below); installation refuses it. There is no uninstall command. `launchctl bootout gui/<uid>/io.github.novelkr.devguard` and removing the plist stop the service and keep every release, recovery copy, the selection and the journal.
+
+## Parent leases and candidate authorities
+
+DG1-C10 lets the stable authority lend one bounded budget, a parent lease, to the verification of a candidate build, instead of issuing the host's budget a second time.
+
+- **Capability.** The service states `parent_lease` only to a client whose handshake requires it, so an earlier client never receives a capability it cannot decode. Clients send lease requests only after that statement.
+- **Lease.** A registered workload owner requests `AdmitLease {key, budget, ttl}`.
+  - The lease is admitted against the host's capacity at the current pressure, like any request. Its whole budget stays charged until it is released.
+  - Only the first reply carries a one-time 64-character token; a replay returns the lease without it. The journal keeps only the token's digest, and receipts never contain the token.
+- **Children.** `AdmitChild {lease, token, request}` from a registered instance of the lease's consumer and generation admits an ordinary attempt against the lease's remainder: its budget less the reservations of its charged children.
+  - The host's capacity and pressure are not consulted again, so a live lease is never shrunk.
+  - A wrong token or an unknown lease is `Unauthorized`. A child larger than the remainder is denied `ResourceUnavailable`, and a lease that is no longer active denies every child `InvalidTransition`.
+  - An admitted child is launched, reconciled and released like any attempt, through the stable `devguard-launch`. Its release returns its budget to the lease, not to the host.
+- **End.** A lease is Active, then Ending, then Released.
+  - It becomes Ending when its owner ends it (`EndLease`), when its owner's process ends or belongs to an earlier boot, or when its deadline passes. An Ending lease admits no child.
+  - It is Released once none of its children is charged, and its budget returns to the host. A Suspect child keeps the lease charged. The reconciler settles leases on every pass.
+- **Holders.** `LeaseStatus {key, token}` is a session of its own: it presents only the token, is never authenticated as a caller and can make no other request. It reports the lease's phase, budget, remainder, deadline and children.
+- **Journal.** The tables `leases` and `lease_children` are added when absent, and the journal schema stays 1. Committed capacity is the budget of every unreleased lease plus the reservations of charged attempts that are not lease children. A generation holding an unreleased lease cannot be retired. Activation fails closed unless every child link names a lease the journal holds and no charged child belongs to a released lease. A C09 artifact that opens such a journal ignores the new tables: it counts the children as ordinary attempts and does not hold the unused remainder of a lease.
+- **Candidate authority.** `devguardd candidate --id ID --lease CONSUMER/GENERATION/ATTEMPT --capacity MILLICPU,BYTES,TASKS --token-fd N` serves an isolated authority whose whole capacity is a parent lease of the account's authority.
+  - It reads the lease token from the inherited descriptor N and closes it. Without the token it contacts and creates nothing.
+  - It asks the parent for the lease's status as a holder. The lease must be active and hold the capacity. A capacity that does not exceed the candidate daemon's own reservation (250 mCPU, 128 MiB and the bootstrap system tasks) is refused before anything is created.
+  - Its state, configuration, credentials, socket and cache live under `candidates/<id>` in the authority root and runtime directories, and must not exist yet: each candidate starts from new state. It never opens the normal state, credentials, releases or recovery copies.
+  - Its policy has the leased capacity and no host headroom; the host's capacity is not used. It samples host pressure like any authority.
+  - It advertises durable admission, per-resource evidence, static control reservations and macOS cooperative control, but neither fenced launch nor parent leases. It refuses launch, helper and lease requests with `ResourcePolicyUnsupported`. Its status reports registration ready and execution not ready, with a reason that names the candidate and its lease.
+  - It confirms the lease every second and closes as soon as the lease is no longer active. It fails closed when the parent refuses the token, or cannot confirm the lease for five seconds.
+  - The parent charges the capacity when it admits the candidate as a lease child, so the candidate's admissions can never exceed the lease.
+- **Lease children from the CLI.** `devguard exec --lease CONSUMER/GENERATION/ATTEMPT --lease-token-fd N` admits the command as a child of that lease. It reads the token from descriptor N first and closes it, so the workload never inherits it. It requires the parent-lease capability, records the lease in the receipt, and checks a wait against the lease's budget instead of the host's capacity.
+- **Test-candidate.** `devguard test-candidate --candidate DIR --report DIR [--cpu MILLICPU] [--memory SIZE] [--tasks N] [--ttl DURATION] [--wait DURATION]` verifies a candidate tree under one lease of the stable authority:
+  1. It admits the lease: by default 2 CPU, 4 GiB and 96 tasks, with a two-hour deadline. `--wait` asks again while capacity or pressure refuses it.
+  2. It runs each workload as a lease child through `devguard exec --lease`: the tree's `cargo build` of the daemon, CLI and helper, then `cargo test` of the crates whose tests create no process group or session and observe no host capacity (contract, core, client and the Cargo adapter), then the tree's own `devguardd candidate` with 1 CPU, 1 GiB and 64 tasks.
+  3. From outside, it checks the candidate's endpoint: its capabilities and status, an admission within its capacity, a refused launch, a cancellation, a denial beyond its capacity and a refused nested lease.
+  4. It ends the lease, waits for the candidate to close and the lease to be released, and removes the candidate's area. It writes `report.json` with the lease, each child's receipt and reservation and every check, and exits 0 only when all of them passed.
+
+  A failure ends the lease first. Children that are running finish, and the lease is released once they are settled. If the command itself is killed, its lease ends by the owner rule.
+- **Limits.** Workloads that create their own process groups or sessions would leave a lease child's scope and stay Suspect under the cooperative macOS model. The native launch, CLI, terminal and scope suites therefore remain bootstrap and CI qualification runs, not lease children. A candidate verifies admission only; its workloads never run through it. Real self-use under the installed parent needs a release that states parent leases. While host memory pressure keeps a service Critical, it admits no lease.
+
+## Upgrade and repair
+
+DG1-C11 replaces and repairs the installed service without losing or duplicating charged work, and without depending on a candidate's admission.
+
+- **Staging.** `devguardd stage --package DIR` validates a package and copies it into an immutable `releases/<id>`, as installation does. It must run from the package, and it leaves the service, the selection and the journal untouched.
+- **Closing admission.** An administrator session can close admission (`CloseAdmission {reason}`), reopen it (`OpenAdmission`) and ask what is still charged (`Quiescence`). The service states `upgrade_drain` only to a client that requires it.
+  - Closing writes a private marker, `state/admission.json`, before it takes effect, so a restarted service or the next release starts with admission still closed. Every Prepared attempt is cancelled and is known not to have started.
+  - While admission is closed, admissions, launch commits, parent leases and lease children are refused with `ResourceUnavailable`, which a waiting CLI retries. Queries, cancellations, stops, owner reports and reconciliation continue. The status reports execution not ready, with the closure's reason.
+  - Closing again keeps the first closure; reopening removes the marker durably before it takes effect.
+  - A report names how many attempts and leases are charged, and at most 16 of each, so it always fits one frame.
+  - A release before C11 cannot decode these requests and closes the connection unanswered. Whether a release can close admission is therefore read from what its manifest states; a release serving without native evidence states no capability and admits nothing, so it is treated as one that cannot.
+- **One operation at a time.** Installation, staging, upgrade, repair and reopening hold a private operations lock, `operations.lock` in the authority root, and refuse while another holds it.
+- **Upgrade.** `devguard upgrade --release ID [--drain-timeout DURATION] [--stopped]` must run from the staged release's own `devguard`.
+  1. It refuses a release that speaks another wire version or protocol, reads another journal or configuration schema, or lacks durable admission or fenced launch, which consumers require. A release that states less than the current one is reported as a downgrade and allowed only within those limits. An incompatible downgrade is refused before anything changes.
+  2. The current release must be running verified. The staged release's recovery copy is made before anything changes.
+  3. It closes admission at the running service and waits until no attempt or lease is charged. If the drain does not finish within the timeout (60 s by default), or SIGINT or SIGTERM cancels it, admission reopens on the current release, which keeps every charge, and nothing is replaced. A signal received before the service is stopped also ends the upgrade with admission reopened; from the stop on, the replacement completes or rolls back, and `launchctl` runs in its own process group so a terminal's interrupt does not reach it. A release before C11 cannot close admission: `--stopped` stops it first and proceeds only if its journal then charges nothing; otherwise that release serves again.
+  4. It stops the service. While holding the authority lock, it takes a quiescent backup under `backups/<time>-<from>-to-<to>/`: the journal as a complete SQLite copy, the selection and the current manifest, each hashed.
+  5. It writes the closure marker and starts the new release, which therefore starts with admission closed. It verifies that launchd runs the release's own `devguardd`, that a consumer's handshake succeeds, and that the service reports admission closed with nothing charged.
+  6. It records the new release as current and keeps the release it replaced as the last known good one, then reopens admission.
+
+  If a step fails once the drain has finished, the previous release serves again on the same journal, with admission reopened. A release that still serves, because stopping it failed, only has its admission reopened. Otherwise the new release, if it started, is booted out, whether it still runs or died while it was verified, and the previous one starts again once the endpoint and the lock are free. The backup is never restored over a journal that a release may have admitted from.
+
+  An upgrade interrupted after the new release started is completed by running it again: it records the release if the selection does not name it yet, provided it serves closed and idle as an upgrade starts it, and reopens admission if it is still closed. A serving last known good release is left to repair. `devguard admission --open` reopens admission on the serving, selected release; for a release before C11 it only removes the marker, which that release never reads.
+- **Repair.** `devguard repair --use last-known-good` returns the service to the last known good release: the one the last upgrade replaced, or the installed release when there has been no upgrade. The service runs only that release's own binaries, whichever `devguard` runs the repair.
+  - It refuses while any authority serves: it never starts a second one, and a serving release is replaced by an upgrade. The one exception completes an interrupted repair: when the last known good release already serves verified but is not yet selected, repair records it and reopens admission.
+  - The journal must open under the authority lock. One that cannot keeps admission closed; repair never creates, resets or restores it.
+  - The release must read the journal's schema and serve the same consumers. One without parent leases is refused while the journal holds unreleased leases.
+  - If the installed release is damaged, it runs the recovery copy instead, which status and a later upgrade then accept.
+  - It replaces any job left loaded once it has let go of the endpoint and the lock, and verifies the running binary. Booting out a service that is not loaded succeeds, although `launchctl` exits 3 for it. It records the repair in the selection as soon as the release serves, and then reopens admission left closed by an interrupted upgrade.
+- **Limits.** An upgrade needs the service idle: running work is waited for, never interrupted. A release before C11 has no `upgrade` command. Returning to one uses its own installer after the service is stopped, and such a release ignores the closure marker.
 
 ## Durable admission and launch
 
@@ -178,7 +286,7 @@ Every resource carries its own level and method. Accounting is not an OS memory 
 
 ## Boundaries deliberately left to later milestones
 
-- Remaining DG-1: bounded self-use, update/repair and measured macOS SLOs.
+- Remaining DG-1: measured macOS SLOs and the promotion of a measured release (C12).
 - CS-RG: Runner slots and transport lanes, approval migration, pinned client, process status integration and regression qualification.
 - DG-LINUX: actual cgroup hierarchy, controllers, ancestor constraints and sandbox/proxy inclusion.
 - DG-CACHE / DG-ADAPTERS: registered cache reclamation and additional tool-specific controls.

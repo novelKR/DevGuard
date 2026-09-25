@@ -5,12 +5,12 @@
 
 use devguard_client::launch::HelperTicket;
 use devguard_client::protocol::{
-    AbandonReason, CallerCredential, Hello, LaunchGrant, ServiceStatus,
+    AbandonReason, CallerCredential, Hello, LaunchGrant, LeaseGranted, ServiceStatus,
 };
 use devguard_client::Client;
 use devguard_contract::{
-    AdmissionRequest, AttemptKey, AttemptRecord, Capability, Compatibility, Error, ErrorCode,
-    InstanceIdentity, Result, Secret,
+    AdmissionRequest, AttemptKey, AttemptRecord, Budget, Capability, Compatibility, Error,
+    ErrorCode, InstanceIdentity, LeaseView, Result, Secret,
 };
 use devguard_daemon::config::HostConfig;
 use devguard_daemon::paths::{read_private, AuthorityPaths};
@@ -30,6 +30,19 @@ pub fn compatibility() -> Compatibility {
         maximum_protocol: 1,
         required: BTreeSet::from([Capability::DurableAdmission, Capability::FencedLaunch]),
     }
+}
+
+/// What an owner of a parent lease, or of one of its children, needs.
+pub fn lease_compatibility() -> Compatibility {
+    let mut compatibility = compatibility();
+    compatibility.required.insert(Capability::ParentLease);
+    compatibility
+}
+
+/// A parent lease this owner admits its attempts under, with its token.
+pub struct LeaseHold {
+    pub key: AttemptKey,
+    pub token: Secret,
 }
 
 /// A handshake that demands nothing, for diagnostics.
@@ -52,6 +65,8 @@ pub struct Endpoint {
     /// This process's registered instance, unique per CLI process because an
     /// instance identity can never be reused.
     pub instance_id: String,
+    /// When set, admissions are children of this lease.
+    pub lease: Option<LeaseHold>,
 }
 
 /// The non-secret part of an endpoint, for receipts and diagnostics.
@@ -87,6 +102,7 @@ impl Endpoint {
             generation,
             secret,
             instance_id: format!("cli-{}", uuid::Uuid::new_v4().simple()),
+            lease: None,
         })
     }
 
@@ -116,11 +132,53 @@ impl Endpoint {
         Ok(client)
     }
 
-    /// A fresh session registered as this process's instance.
+    /// A fresh session registered as this process's instance. A lease child
+    /// requires parent leases, so a service without them refuses at once.
     pub fn session(&self) -> Result<Client> {
-        let mut client = self.authenticated(compatibility())?;
+        let mut client = self.authenticated(if self.lease.is_some() {
+            lease_compatibility()
+        } else {
+            compatibility()
+        })?;
         client.register(self.instance_id.clone())?;
         Ok(client)
+    }
+
+    /// A fresh registered session of a parent lease's owner.
+    fn lease_session(&self) -> Result<Client> {
+        let mut client = self.authenticated(lease_compatibility())?;
+        client.register(self.instance_id.clone())?;
+        Ok(client)
+    }
+
+    /// Reserve `budget` from the host as a parent lease owned by this instance.
+    pub fn admit_lease(
+        &self,
+        key: &AttemptKey,
+        budget: Budget,
+        ttl_ms: Option<u64>,
+    ) -> Result<LeaseGranted> {
+        self.lease_session()?
+            .admit_lease(key.clone(), budget, ttl_ms)
+    }
+
+    /// Admit no further children under the lease.
+    pub fn end_lease(&self, key: &AttemptKey) -> Result<LeaseView> {
+        self.lease_session()?.end_lease(key.clone())
+    }
+
+    /// The lease as its token holder sees it.
+    pub fn lease_status(&self, key: &AttemptKey, token: &Secret) -> Result<LeaseView> {
+        let mut client = Client::connect(
+            &self.socket,
+            self.uid,
+            Compatibility {
+                minimum_protocol: 1,
+                maximum_protocol: 1,
+                required: BTreeSet::from([Capability::ParentLease]),
+            },
+        )?;
+        client.lease_status(key.clone(), token.clone())
     }
 
     /// Register and report the identity the authority observed.
@@ -165,7 +223,13 @@ impl Service for Endpoint {
     }
 
     fn admit(&self, request: AdmissionRequest) -> Result<AttemptRecord> {
-        self.session()?.admit(request)
+        match &self.lease {
+            Some(lease) => {
+                self.session()?
+                    .admit_child(lease.key.clone(), lease.token.clone(), request)
+            }
+            None => self.session()?.admit(request),
+        }
     }
 
     fn begin_launch(&self, key: &AttemptKey) -> Result<LaunchGrant> {

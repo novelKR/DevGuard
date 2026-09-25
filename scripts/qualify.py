@@ -30,7 +30,8 @@ SUITES = {
         ("wire-compatibility", ["-p", "devguard-client", "--test", "wire_compatibility"]),
         # Native sampling tests belong to dg1-probes, not the transport suite.
         ("service", ["-p", "devguard-daemon", "--lib", "server::tests", "--",
-                     "--skip", "server::tests::native", "--skip", "server::tests::launch"]),
+                     "--skip", "server::tests::native", "--skip", "server::tests::launch",
+                     "--skip", "server::tests::lease", "--skip", "server::tests::drain"]),
     ],
     "dg1-probes": [
         ("pressure-controller", ["-p", "devguard-core", "--test", "pressure_contract"]),
@@ -82,6 +83,12 @@ SUITES = {
           "nested-cargo", "inherited-jobserver", "inherited-pipe-jobserver", "stale-jobserver",
           "concurrent-consumers", "pipeline-cancelled"]),
     ],
+    "dg1-bootstrap": [
+        ("install-logic", ["-p", "devguard-daemon", "--lib", "install::tests"]),
+        ("native-install", ["-p", "devguard-daemon", "--test", "install"],
+         ["install-verified", "install-reuse", "install-refusals", "install-preconditions",
+          "install-unverified", "install-concurrent", "launchd-lifecycle", "install-unrecorded"]),
+    ],
     "dg1-reconcile": [
         ("reconcile-contract", ["-p", "devguard-core", "--test", "authority_contract", "reconcile_"]),
         ("launcher-evidence", ["-p", "devguard-macos", "--lib", "backend::tests"]),
@@ -95,11 +102,35 @@ SUITES = {
           "cancel-after-authorization", "dead-owner", "retired-instance", "unresponsive-helper",
           "daemon-crash-restart", "journal-failure"]),
     ],
+    "dg1-self-use": [
+        ("lease-contract", ["-p", "devguard-core", "--test", "lease_contract"]),
+        ("wire-lease", ["-p", "devguard-client", "--test", "wire_compatibility", "lease_"]),
+        ("service-leases", ["-p", "devguard-daemon", "--lib", "server::tests::lease"]),
+        ("candidate-service", ["-p", "devguard-daemon", "--lib", "candidate::tests"]),
+        ("candidate-entrypoint", ["-p", "devguard-daemon", "--test", "entrypoint", "a_candidate_"]),
+        ("lease-arguments", ["-p", "devguard-cli", "--lib", "args::tests::lease_"]),
+        ("candidate-plan", ["-p", "devguard-cli", "--lib", "candidate::tests"]),
+        ("native-self-use", ["-p", "devguard-cli", "--test", "candidate"],
+         ["test-candidate", "lease-children", "test-candidate-crash", "test-candidate-stopped"]),
+    ],
+    "dg1-upgrade": [
+        ("quiescence-contract", ["-p", "devguard-core", "--test", "quiescence_contract"]),
+        ("wire-drain", ["-p", "devguard-client", "--test", "wire_compatibility", "drain_"]),
+        ("service-drain", ["-p", "devguard-daemon", "--lib", "server::tests::drain"]),
+        ("upgrade-logic", ["-p", "devguard-daemon", "--lib", "upgrade::tests"]),
+        ("upgrade-arguments", ["-p", "devguard-cli", "--lib", "args::tests::upgrade_"]),
+        ("native-upgrade", ["-p", "devguard-daemon", "--test", "upgrade"],
+         ["upgrade-normal", "drain-timeout", "upgrade-unverified", "downgrade-refused",
+          "upgrade-stopped", "repair-recovery", "repair-corrupt-journal", "repair-previous",
+          "upgrade-after-recovery", "stop-failed", "repair-closure", "upgrade-completed",
+          "upgrade-cancelled", "upgrade-died-verifying", "repair-completed"]),
+    ],
 }
 # Binaries a suite's tests start but whose package the suite does not test.
 PREBUILD = {
     "dg1-cli": [["-p", "devguard-launch", "--bin", "devguard-launch"]],
     "dg1-cargo": [["-p", "devguard-launch", "--bin", "devguard-launch"]],
+    "dg1-self-use": [["-p", "devguard-launch", "--bin", "devguard-launch"]],
 }
 STAGE_TIMEOUT_SECONDS = 1800
 SCOPES = {
@@ -110,12 +141,16 @@ SCOPES = {
     "dg1-launch": "native macOS launch helper through an isolated authority: one claimed helper per grant, and scope binding and authorization before READY and exec",
     "dg1-cli": "the devguard command-line owner against isolated authorities with the real launch helper: preserved argv, directory, environment and exit status, signal forwarding and terminal job control, observation before reap, refusals, bounded waits, projects, the instance pool and doctor diagnostics",
     "dg1-cargo": "the Cargo adapters through the devguard owner against isolated authorities with real Cargo builds: jobs fitted to the reservation, clamping and refusals, one jobserver shared by a pipeline and by nested Cargo, inherited and stale jobservers, concurrent consumers and cancellation; Cargo jobs are compilation parallelism, not a cap on test threads or measured memory",
+    "dg1-bootstrap": "installation of a release as the current user's LaunchAgent against isolated authorities: package validation, immutable release and recovery copies, verification that launchd runs the release's own binary before it is selected, refusals, concurrent installers, and under launchd itself a crash restart, a SIGTERM stop and a fail-closed start that is not restarted; functional artifacts only, not SLO qualification",
     "dg1-reconcile": "native macOS reconciliation through isolated authorities: prepared cancellation and expiry, owner reports that no helper exists, releases only on scope termination, sticky escape and tracking loss, scope termination signals, dead owners, and a daemon crash with restart",
+    "dg1-upgrade": "replacement and repair of the installed service against isolated authorities with a fake service manager: compatibility checks that refuse an incompatible downgrade, admission closed by an administrator and kept across a restart, drains that finish or time out with every charge kept, quiescent backups, a new release started closed and verified before admission reopens, a failed start or stop, or a release that dies while it is verified, giving way to the previous release on the same journal, a drain cancelled by a signal, an interrupted upgrade completed by running it again, a release that cannot drain replaced only when stopped with nothing charged, and repair that never starts a second authority, completes an interrupted repair, returns to the release an upgrade replaced, uses the recovery copy of a damaged release and keeps a journal that cannot be opened closed; functional fixtures only, not the real upgrade of the installed service",
+    "dg1-self-use": "parent leases and candidate authorities against isolated authorities: a lease charged once against the host, children admitted only against its remainder with its token, fencing when it ends, its owner goes or its deadline passes, release once every child is settled, and a candidate authority run as a lease child through the real launch helper that admits within its leased capacity, launches nothing and closes with its lease; functional fixtures only, not real self-use under the installed parent",
 }
 # Suites that start real workloads through the launch helper (in fixtures).
-LAUNCHING = {"dg1-launch", "dg1-reconcile", "dg1-cli", "dg1-cargo"}
+LAUNCHING = {"dg1-launch", "dg1-reconcile", "dg1-cli", "dg1-cargo", "dg1-self-use"}
 # Native suites observe the actual host; elsewhere they are not run, never passed.
-NATIVE = {"dg1-probes", "dg1-scopes", "dg1-launch", "dg1-reconcile", "dg1-cli", "dg1-cargo"}
+NATIVE = {"dg1-probes", "dg1-scopes", "dg1-launch", "dg1-reconcile", "dg1-cli", "dg1-cargo", "dg1-bootstrap",
+          "dg1-self-use", "dg1-upgrade"}
 
 
 def host_facts():
@@ -165,7 +200,8 @@ def main():
             "scope":SCOPES[args.suite] + ("; no kernel resource-control enforcement or SLO qualification" if args.suite in LAUNCHING
                                           else "; no workload launch, resource-control enforcement or SLO qualification"),
             "runtime_qualification":{"macos_launch":"functional_fixture" if args.suite in LAUNCHING else "not_run",
-                                     "linux_cgroups":"not_run","foreground_slo":"not_run","candidate_self_use":"not_run"},"stages":[]}
+                                     "linux_cgroups":"not_run","foreground_slo":"not_run",
+                                     "candidate_self_use":"functional_fixture" if args.suite=="dg1-self-use" else "not_run"},"stages":[]}
     environment=os.environ.copy()
     environment.update(CARGO_BUILD_JOBS="1",RUST_TEST_THREADS="1")
     try:

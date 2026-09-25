@@ -2,7 +2,7 @@
 
 [English](operations.md) | [한국어](ko/operations.md)
 
-C01 provides explicit bootstrap/canonical storage, C02 authenticated local transport, C03 native macOS boot, process and host pressure evidence, C04 cooperative policy readback and scope evidence, C05 the fenced launch helper, C06 reconciliation, C07 the `devguard` command-line owner and C08 the Cargo adapters. PR and post-merge main delivery evidence is tracked separately from implementation. `devguardd serve` runs a foreground service that activates the journal with that evidence and then opens registration over the wire, fenced launch and reconciliation. `devguard exec` runs commands through that service, and `devguard doctor` diagnoses it. The normal authority is currently macOS-only; Linux CI checks portable contracts and bounded fixtures, not DG-LINUX controls.
+C01 provides explicit bootstrap/canonical storage, C02 authenticated local transport, C03 native macOS boot, process and host pressure evidence, C04 cooperative policy readback and scope evidence, C05 the fenced launch helper, C06 reconciliation, C07 the `devguard` command-line owner, C08 the Cargo adapters, C09 installation of a packaged release as the current user's LaunchAgent, C10 parent leases with candidate authorities and C11 upgrade and repair. PR and post-merge main delivery evidence is tracked separately from implementation. `devguardd serve` runs a foreground service that activates the journal with that evidence and then opens registration over the wire, fenced launch and reconciliation. `devguard exec` runs commands through that service, and `devguard doctor` diagnoses it. The normal authority is currently macOS-only; Linux CI checks portable contracts and bounded fixtures, not DG-LINUX controls.
 
 ## Available commands
 
@@ -39,9 +39,37 @@ When native evidence is available, `serve` derives the policy from the observed 
 
 On a platform without native evidence, or when the macOS observation fails, `serve` keeps the storage-only closed behavior and reports which case applies.
 
-Authenticated status reports `storage_validated`, `registration_ready`, `execution_ready`, a reason and the configuration fingerprint. With native evidence registration and execution are ready, and admission still follows host pressure and capacity. Otherwise both are false, and the reason distinguishes an unsupported platform from a failed native observation. `devguard` finds `devguard-launch` beside itself, so build them together. Installation, a LaunchAgent and repair remain future work. Configuration or a successful handshake alone does not govern commands. Necessary bootstrap builds are not self-use evidence. Do not use the disposable `target` path for a persistent service; protected installation is C09 work.
+Authenticated status reports `storage_validated`, `registration_ready`, `execution_ready`, a reason and the configuration fingerprint. With native evidence registration and execution are ready, and admission still follows host pressure and capacity. Otherwise both are false, and the reason distinguishes an unsupported platform from a failed native observation. `devguard` finds `devguard-launch` beside itself, so build them together. Configuration or a successful handshake alone does not govern commands. Necessary bootstrap builds are not self-use evidence. Do not run a persistent service from the disposable `target` path; install a package instead.
 
-`devguard exec [--project ID] [--adapter auto|generic|cargo|cargo-pipeline] [--wait DURATION] [--cpu MILLICPU] [--memory SIZE] [--tasks N] [--receipt PATH] -- PROGRAM [ARGS...]` admits the command, starts it through `devguard-launch` and waits for it. The program and its arguments follow `--`, and no shell is used. It exits with the command's status or ends by its signal, and exits 125 when nothing was started. Without `--wait` a denial ends it at once; `--wait` retries capacity and pressure denials until the deadline, and refuses at once a request larger than the host's work capacity. `--receipt` writes a private JSON receipt. `devguard doctor` prints a JSON diagnosis, and `--require admission,registration,macos-cooperative` makes it fail unless each requirement holds. See [contracts](contracts.md#command-line-owner).
+A persistent service runs an installed release:
+
+```sh
+python3 scripts/package.py --offline
+target/package/<release-id>/bin/devguardd install --package target/package/<release-id>
+devguardd status
+```
+
+`package.py` builds a release package from a clean tree. `install` must run from that package. It refuses while an authority serves, while the agent exists, or without the existing authority state. It copies the release to an immutable `releases/<release-id>` and starts it as the current user's LaunchAgent `io.github.novelkr.devguard`, which runs `releases/<release-id>/bin/devguardd serve`. It selects the release only after verifying that launchd runs exactly that binary. `devguardd status` reports the installed service and exits 1 unless it runs the verified current release. Replacing a release is an upgrade (C11, below). See [contracts](contracts.md#installation-and-the-current-user-service).
+
+A candidate build is verified under a parent lease of the running service:
+
+```sh
+devguard test-candidate --candidate /path/to/candidate/tree --report /path/to/new/report --wait 5m
+```
+
+`test-candidate` admits one lease (by default 2 CPU, 4 GiB and 96 tasks, with a two-hour deadline) and runs the tree's build, its applicable tests and its own `devguardd candidate` as lease children through `devguard exec --lease`. It checks the candidate's admission from outside, ends the lease and writes `report.json` into the new report directory, exiting 0 only when every step passed. The service must state parent leases, which needs a C10 or later release, and admits no lease while its pressure is Critical. See [contracts](contracts.md#parent-leases-and-candidate-authorities).
+
+A staged release replaces the running one without disturbing charged work:
+
+```sh
+target/package/<release-id>/bin/devguardd stage --package target/package/<release-id>
+"$HOME/Library/Application Support/DevGuard/releases/<release-id>/bin/devguard" upgrade --release <release-id>
+"$HOME/Library/Application Support/DevGuard/releases/<last-known-good>/bin/devguard" repair --use last-known-good
+```
+
+`upgrade` closes admission, waits up to `--drain-timeout` (60 s by default) for charged work to end, backs up the journal under `backups/`, starts the new release with admission closed, verifies it and then reopens admission. If the drain times out, the current release keeps serving with its charges; if the new release cannot be verified, the previous one starts again. A release before C11 cannot close admission, so `--stopped` stops it first and proceeds only when nothing is then charged. SIGINT or SIGTERM during the drain cancels the upgrade and reopens admission. An upgrade interrupted after the new release started is completed by running it again, and `devguard admission --open` reopens admission on the serving release. Only one installation, staging, upgrade, repair or reopening runs at a time. `repair` returns the service to the last known good release, the one the last upgrade replaced, or to its recovery copy, only while no authority serves, and keeps a journal that cannot be opened closed. See [contracts](contracts.md#upgrade-and-repair).
+
+`devguard exec [--project ID] [--adapter auto|generic|cargo|cargo-pipeline] [--wait DURATION] [--cpu MILLICPU] [--memory SIZE] [--tasks N] [--receipt PATH] [--lease CONSUMER/GENERATION/ATTEMPT --lease-token-fd N] -- PROGRAM [ARGS...]` admits the command, starts it through `devguard-launch` and waits for it. The program and its arguments follow `--`, and no shell is used. It exits with the command's status or ends by its signal, and exits 125 when nothing was started. Without `--wait` a denial ends it at once; `--wait` retries capacity and pressure denials until the deadline, and refuses at once a request larger than the host's work capacity. `--receipt` writes a private JSON receipt. `--lease` makes the command a child of that parent lease, admitted against its remainder with the token read from descriptor N. `devguard doctor` prints a JSON diagnosis, and `--require admission,registration,macos-cooperative` makes it fail unless each requirement holds. See [contracts](contracts.md#command-line-owner).
 
 `--adapter cargo` fits `cargo`'s compiler jobs to the reservation, and `--adapter cargo-pipeline` shares one jobserver across the Cargo runs of a program such as a validation script. `auto`, the default, selects the Cargo adapter for `cargo` commands that compile. A reservation that cannot fit one Cargo job (1 CPU and 2 GiB) is refused. See [contracts](contracts.md#cargo-adapter).
 
@@ -100,7 +128,7 @@ The SDK inspection example can be built with `CARGO_BUILD_JOBS=1 cargo build --l
 
 ## Compatibility, checks and rollback
 
-Core `AuthorityStorage` holds the original exclusive lock and validates the existing schema-1 journal without changing attempt state. Activation with a real `Backend`/`Clock` revalidates accounting in the same transaction as boot-aware recovery. Existing `Authority::open` preserves its recovery behavior and the DG-0 tests. C01–C06 do not change the journal schema or contract serialization. C05 and C06 add wire requests and responses that clients use only after the service advertises fenced launch. The new local protocol strictly rejects unknown fields, versions and unsupported required capabilities; added fields need explicit compatibility tests.
+Core `AuthorityStorage` holds the original exclusive lock and validates the existing schema-1 journal without changing attempt state. Activation with a real `Backend`/`Clock` revalidates accounting in the same transaction as boot-aware recovery. Existing `Authority::open` preserves its recovery behavior and the DG-0 tests. C01–C06 do not change the journal schema or contract serialization. C05 and C06 add wire requests and responses that clients use only after the service advertises fenced launch. C10 adds lease requests and responses that clients use only after the service states parent leases, and the tables `leases` and `lease_children`, created when absent, without changing the schema. C11 adds administrator requests that close and reopen admission and report what is charged, used only after the service states `upgrade_drain`, and the private marker `state/admission.json`; the journal schema is unchanged. The new local protocol strictly rejects unknown fields, versions and unsupported required capabilities; added fields need explicit compatibility tests.
 
 Available checks:
 
@@ -113,6 +141,9 @@ python3 scripts/qualify.py dg1-launch --offline
 python3 scripts/qualify.py dg1-reconcile --offline
 python3 scripts/qualify.py dg1-cli --offline
 python3 scripts/qualify.py dg1-cargo --offline
+python3 scripts/qualify.py dg1-bootstrap --offline
+python3 scripts/qualify.py dg1-self-use --offline
+python3 scripts/qualify.py dg1-upgrade --offline
 python3 scripts/validate.py --offline
 ```
 
@@ -202,6 +233,38 @@ Argument, preparation, entry-point and scripted-authority tests cover strict par
 
 Each Cargo launch and pipeline script inherits only its standard descriptors, except the caller's own descriptor-pair jobserver when one is inherited. The shim also records the arguments and the jobserver and fallback variables each Cargo received. Where the host's work capacity cannot fit the Cargo jobs a case needs, as on the hosted macOS 14 runner, the case is recorded as `not_run` and the suite reports `incomplete`; CI runs it with `--allow-incomplete`.
 
-These suites leave Linux enforcement, self-use and foreground SLO `not_run`. The full validator retains the 44 original tests and validates all eight workspace crates and their explicit dependency graph. The launch crate depends on the daemon only for its tests' isolated authorities. The CLI depends on the daemon's paths and configuration and on the Cargo adapter, and on the daemon's fixtures only in tests. The Cargo adapter depends only on the contract. Core/contract remain independent of daemon configuration and native adapters, and client does not depend on core.
+These suites leave Linux enforcement, self-use and foreground SLO `not_run`. `dg1-bootstrap` also runs only on macOS. Its tests copy the test binary into each package as its `devguardd`, so the installer really runs from its package. The installed service is that copy, serving an isolated fixture authority. It checks:
+- an installed release verified running before it is selected, with immutable release and recovery copies and a healthy status
+- an identical release reused, and a different release under the same id refused without touching the installed one
+- packages refused before anything is written: a modified, extra, missing or symlinked binary, other capabilities, an inconsistent scope, and an installer that is not the package's own
+- refusal while an authority serves, or without the authority state
+- a service that never proves itself, which is unloaded with nothing selected
+- concurrent installers, which leave exactly one service
+- under launchd itself, a transient job with a unique label: a crash restarted onto the same journal, a SIGTERM stop, and a start with an unreadable journal that fails closed and is not restarted
 
-To roll back this boundary, stop its task-owned foreground process and select a source/artifact compatible with the preserved configuration and schema-1 journal. Keep persistent state and credentials. A C02 artifact can reopen the same state: C03 activation adds no record type and only runs the existing recovery. From C06, workloads can start through the normal service. Before rolling back to an artifact without reconciliation, stop starting new work and let charged attempts reach a terminal phase. A C05 artifact reads the same journal but keeps launch closed and does not reconcile, so any remaining attempt stays charged and Suspect. If the service stops while scopes run, start it again: their attempts stay Suspect and charged until their owners report unclaimed grants or a reboot proves termination. C07 changes no service state: to roll back the CLI, stop starting commands through it. Commands it already started stay charged until their scopes end, and it never falls back to unmanaged execution. C08 changes no service state either: to stop fitting Cargo's jobs, select `--adapter generic` explicitly; existing targets and caches are kept. Never delete the journal or its tombstones to make a rollback or restart succeed.
+A session without a launchd gui domain records the launchd case as `not_run`, and the suite reports `incomplete`.
+
+`dg1-self-use` also runs only on macOS and builds `devguard-launch` first. It runs real lease children and a real candidate authority process against isolated authorities. It checks:
+- a lease charged once against the host, children admitted only against its remainder, and their sum never above the lease
+- the parent-lease capability stated only to clients that require it, a token-only holder session, and a refused wrong token or unknown lease
+- fencing when the lease ends, when its owner goes or belongs to an earlier boot and when its deadline passes, a Suspect child that keeps the lease charged, and release once every child is settled, also across a restart
+- `devguard exec --lease` running a workload as a lease child, which inherits only its standard descriptors; a child larger than the lease, also with a wait; a forged token; and a child that starts after the lease ended
+- a candidate authority that admits within its capacity, launches nothing, holds no lease, closes with its lease and never opens the parent's state, and one refused for a forged token, an unknown or ended lease, a capacity larger than the lease or below its own reservation, or an existing area
+- `test-candidate` running a workload and a candidate as children of one lease that is then released, with the candidate's area removed; a candidate that dies before serving; and one that never serves nor closes and is stopped with SIGTERM. Both fail the run while their scopes and the lease are still released
+
+`dg1-upgrade` also runs only on macOS. It installs fixture releases with a fake service manager and replaces or repairs them. It checks:
+- a normal upgrade: the drain settles a Prepared attempt, the backup holds the journal, the selection and the manifest, the new release starts closed and idle, tombstones survive and admission reopens
+- a drain that times out, keeping the current release and its charge, and the same upgrade succeeding once the work is settled
+- a release that cannot start, after which the previous one serves the same journal with admission open
+- an incompatible downgrade, refused before anything changes
+- a release that cannot drain: refused without `--stopped`, started again when stopping finds work charged, and replaced once nothing is
+- repair refused while an authority serves, returning to the release an upgrade replaced on the same journal, using the recovery copy of a damaged release, and keeping a journal that cannot be opened closed
+- an upgrade from a release repaired onto its recovery copy
+- a failed stop that leaves the drained release serving, whose admission only reopens, and a drain cancelled by a signal
+- an interrupted upgrade completed by running it again, admission reopened by the administrator's command, repair reopening admission that an interrupted upgrade left closed, and one operation at a time
+- a release that dies while it is verified, which gives way to the previous release, and an interrupted repair completed by repair, never adopted by an upgrade
+- admission closed by the administrator only, kept across a restart and reopened, and strict drain wire fixtures and compatibility rules
+
+The full validator retains the 44 original tests and validates all eight workspace crates and their explicit dependency graph. The daemon depends on itself only to enable its fixtures in its own tests. The launch crate depends on the daemon only for its tests' isolated authorities. The CLI depends on the daemon's paths and configuration and on the Cargo adapter, and on the daemon's fixtures only in tests. The Cargo adapter depends only on the contract. Core/contract remain independent of daemon configuration and native adapters, and client does not depend on core.
+
+To roll back this boundary, stop its task-owned foreground process and select a source/artifact compatible with the preserved configuration and schema-1 journal. Keep persistent state and credentials. A C02 artifact can reopen the same state: C03 activation adds no record type and only runs the existing recovery. From C06, workloads can start through the normal service. Before rolling back to an artifact without reconciliation, stop starting new work and let charged attempts reach a terminal phase. A C05 artifact reads the same journal but keeps launch closed and does not reconcile, so any remaining attempt stays charged and Suspect. If the service stops while scopes run, start it again: their attempts stay Suspect and charged until their owners report unclaimed grants or a reboot proves termination. C07 changes no service state: to roll back the CLI, stop starting commands through it. Commands it already started stay charged until their scopes end, and it never falls back to unmanaged execution. C08 changes no service state either: to stop fitting Cargo's jobs, select `--adapter generic` explicitly; existing targets and caches are kept. Before a release is verified, the C09 installer boots its job out and removes the plist, and nothing is selected. To stop the installed service, run `launchctl bootout gui/<uid>/io.github.novelkr.devguard` and remove the plist. Releases, recovery copies, the selection and the journal are kept, and a preserved artifact's foreground `devguardd serve` reads the same state. C10 adds no service state beyond its lease tables. Before rolling back to a C09 artifact, end every lease and let it be released: a C09 service ignores the lease tables, so it would not hold a lease's unused remainder. A candidate's area under `candidates/` is disposable and never read by the normal service. C11 keeps each upgrade's quiescent backup under `backups/` for manual recovery and never restores one automatically. To return to a C11 or later release, upgrade to it. A release before C11 has no upgrade command: stop the service, remove the plist and run that release's `devguardd install --package` on its release directory. It ignores the closure marker, which a later upgrade writes again. Never delete the journal or its tombstones to make a rollback or restart succeed.

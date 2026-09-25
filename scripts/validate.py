@@ -68,7 +68,9 @@ def dependency_boundary(offline, environment, output):
         "devguard-contract": set(),
         "devguard-core": {"devguard-contract"},
         "devguard-macos": {"devguard-contract", "devguard-core"},
-        "devguard-daemon": {"devguard-contract", "devguard-core", "devguard-client", "devguard-macos"},
+        # The self edge only enables the daemon's fixtures in its own tests.
+        "devguard-daemon": {"devguard-contract", "devguard-core", "devguard-client", "devguard-macos",
+                            "devguard-daemon"},
         "devguard-client": {"devguard-contract"},
         # The daemon edge is a test-only dependency for isolated fixture authorities.
         "devguard-launch": {"devguard-contract", "devguard-client", "devguard-macos", "devguard-daemon"},
@@ -85,6 +87,10 @@ def dependency_boundary(offline, environment, output):
             edges = {d["name"] for d in package["dependencies"]} & roots
             if edges != allowed[package["name"]]:
                 raise RuntimeError("workspace dependency boundary changed: " + package["name"])
+    daemon = next(p for p in packages if p["name"] == "devguard-daemon")
+    if any(d["name"] == "devguard-daemon" and (d.get("kind") != "dev" or d.get("features") != ["test-fixtures"])
+           for d in daemon["dependencies"]):
+        raise RuntimeError("devguard-daemon may depend on itself only to enable its fixtures in tests")
     # The launch crate uses the daemon only for isolated test authorities.
     launch = next(p for p in packages if p["name"] == "devguard-launch")
     if any(d["name"] == "devguard-daemon" and d.get("kind") != "dev" for d in launch["dependencies"]):

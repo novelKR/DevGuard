@@ -86,6 +86,61 @@ impl AuthorityPaths {
     pub fn root(&self) -> &Path {
         &self.root
     }
+    pub fn home(&self) -> &Path {
+        &self.home
+    }
+    /// Installed immutable releases, with the selection of the current one.
+    pub fn releases(&self) -> PathBuf {
+        self.root.join("releases")
+    }
+    pub fn selection(&self) -> PathBuf {
+        self.releases().join("selection.json")
+    }
+    /// Independent copies that repair can use when a release is damaged.
+    pub fn recovery(&self) -> PathBuf {
+        self.root.join("recovery")
+    }
+    /// The current user's launchd agents.
+    pub fn launch_agents(&self) -> PathBuf {
+        self.home.join("Library/LaunchAgents")
+    }
+    pub fn logs(&self) -> PathBuf {
+        self.home.join("Library/Logs/DevGuard")
+    }
+    /// The area of candidate authorities, apart from the normal state,
+    /// releases and recovery copies.
+    pub fn candidates(&self) -> PathBuf {
+        self.root.join("candidates")
+    }
+    pub fn candidate_runtime(&self) -> PathBuf {
+        self.runtime.join("candidates")
+    }
+
+    /// Isolated paths for candidate `id` under this authority: its own state,
+    /// configuration, credentials, socket and cache. `id` is short and plain,
+    /// so the socket path stays within the Unix-domain socket limit.
+    pub fn candidate(&self, id: &str) -> Result<Self> {
+        if id.is_empty()
+            || id.len() > 32
+            || !id
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+        {
+            return Err(Error::new(
+                ErrorCode::InvalidRequest,
+                "a candidate id is 1 to 32 lowercase letters, digits or '-'",
+            ));
+        }
+        let root = self.candidates().join(id);
+        Ok(Self {
+            uid: self.uid,
+            home: self.home.clone(),
+            config_directory: root.join("config"),
+            root,
+            runtime: self.candidate_runtime().join(id),
+            cache: self.cache.join("candidates").join(id),
+        })
+    }
     pub fn runtime(&self) -> &Path {
         &self.runtime
     }
@@ -97,6 +152,20 @@ impl AuthorityPaths {
     }
     pub fn lock(&self) -> PathBuf {
         self.state().join("authority.lock")
+    }
+    /// Present while an administrator has closed admission, for example for
+    /// an upgrade; a service that starts finds admission still closed.
+    pub fn admission_marker(&self) -> PathBuf {
+        self.state().join("admission.json")
+    }
+    /// Held across an installation, a staging, an upgrade, a repair or a
+    /// reopening, so no two interleave.
+    pub fn operations_lock(&self) -> PathBuf {
+        self.root.join("operations.lock")
+    }
+    /// Quiescent journal backups taken before a release is replaced.
+    pub fn backups(&self) -> PathBuf {
+        self.root.join("backups")
     }
     pub fn socket(&self) -> PathBuf {
         self.runtime.join("authority.sock")
@@ -245,6 +314,41 @@ pub fn read_private(path: &Path, uid: u32, limit: usize) -> Result<Vec<u8>> {
         ));
     }
     Ok(bytes)
+}
+
+/// Replace a private file atomically: write a new sibling, sync it, rename it.
+pub fn replace_private(path: &Path, bytes: &[u8]) -> Result<()> {
+    let parent = path.parent().ok_or_else(|| {
+        Error::new(
+            ErrorCode::InvalidRequest,
+            "a private file needs a directory",
+        )
+    })?;
+    let temporary = parent.join(format!(
+        ".{}.{}",
+        path.file_name().and_then(|n| n.to_str()).unwrap_or("file"),
+        uuid::Uuid::new_v4().simple()
+    ));
+    let written = (|| -> std::io::Result<()> {
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+            .open(&temporary)?;
+        file.write_all(bytes)?;
+        file.sync_all()?;
+        fs::rename(&temporary, path)?;
+        File::open(parent)?.sync_all()
+    })();
+    if written.is_err() {
+        let _ = fs::remove_file(&temporary);
+        return Err(Error::new(
+            ErrorCode::ResourceControlUnavailable,
+            format!("cannot write {}", path.display()),
+        ));
+    }
+    Ok(())
 }
 
 pub fn write_new_private(path: &Path, bytes: &[u8]) -> Result<()> {

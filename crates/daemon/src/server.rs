@@ -1,8 +1,12 @@
-use crate::{config::HostConfig, paths::AuthorityPaths};
+use crate::{
+    config::HostConfig,
+    paths::{read_private, replace_private, AuthorityPaths},
+};
 use devguard_client::{connect::connect_timeout, framing, peer, protocol::*};
 use devguard_contract::{
-    validate_id, AppliedResources, AttemptKey, AttemptPhase, AttemptRecord, Capability, Error,
-    ErrorCode, InstanceIdentity, ProcessIdentity, Result, ScopeIdentity, Secret, PROTOCOL_VERSION,
+    validate_id, AppliedResources, AttemptKey, AttemptPhase, AttemptRecord, Budget, Capability,
+    Error, ErrorCode, InstanceIdentity, ProcessIdentity, Result, ScopeIdentity, Secret,
+    PROTOCOL_VERSION,
 };
 use devguard_core::{
     Authority, AuthorityStorage, Backend as _, Clock, ConsumerRole, PressureState, Principal,
@@ -44,6 +48,21 @@ pub(crate) struct Options {
     /// Lets an isolated fixture pause reconciler passes, so a test can tell an
     /// owner's own observation apart from the background pass.
     pub reconcile_paused: Option<Arc<AtomicBool>>,
+    /// A candidate authority bounded by a parent lease.
+    pub candidate: Option<CandidateMode>,
+    /// Fixtures only: state no upgrade drain, as a release before C11 does.
+    pub without_upgrade_drain: bool,
+    /// Fixtures only: end the process when asked what is charged, as a
+    /// release that dies while an upgrade verifies it.
+    pub exit_on_quiescence: bool,
+}
+
+/// A candidate's leased capacity and its status reason. A candidate states
+/// no fenced launch and no parent leases: its workloads run as children of
+/// its parent lease, through the parent's launcher.
+pub(crate) struct CandidateMode {
+    pub capacity: Budget,
+    pub reason: String,
 }
 
 /// Exclusive storage, activated with actual host evidence when it is available.
@@ -68,19 +87,24 @@ pub struct Server {
     status: ServiceStatus,
     evidence: Evidence,
     launcher: Option<Launcher>,
+    /// A candidate states no fenced launch or parent lease and refuses both.
+    candidate: bool,
+    /// Whether the upgrade drain is stated to clients that require it.
+    upgrade_drain: bool,
+    exit_on_quiescence: bool,
 }
 
 /// Service receipts are JSON lines on stderr; they never include credentials.
 /// A failing stderr is ignored rather than allowed to panic a service thread.
 #[cfg(not(test))]
-fn receipt(value: serde_json::Value) {
+pub(crate) fn receipt(value: serde_json::Value) {
     use std::io::Write;
     let _ = writeln!(std::io::stderr().lock(), "{value}");
 }
 
 /// Unit tests keep receipts in the harness's captured output.
 #[cfg(test)]
-fn receipt(value: serde_json::Value) {
+pub(crate) fn receipt(value: serde_json::Value) {
     eprintln!("{value}");
 }
 
@@ -101,7 +125,8 @@ fn activate(
     config: &HostConfig,
     paths: &AuthorityPaths,
     substitute: Option<Box<dyn HostProbe>>,
-) -> Result<(Evidence, &'static str)> {
+    candidate: Option<&CandidateMode>,
+) -> Result<(Evidence, String)> {
     let host = match NativeHost::open() {
         Ok(host) => host,
         Err(error) => {
@@ -111,7 +136,7 @@ fn activate(
             } else {
                 FAILED_REASON
             };
-            return Ok((Evidence::Closed { _storage: storage }, reason));
+            return Ok((Evidence::Closed { _storage: storage }, reason.into()));
         }
     };
     let mut volumes = vec![paths.state()];
@@ -122,19 +147,27 @@ fn activate(
             Ok(probe) => Box::new(probe),
             Err(error) => {
                 receipt(json!({"event": "native_host_unavailable", "error": error}));
-                return Ok((Evidence::Closed { _storage: storage }, FAILED_REASON));
+                return Ok((Evidence::Closed { _storage: storage }, FAILED_REASON.into()));
             }
         },
     };
-    let policy = config.policy(host.capacity(), paths.uid())?;
+    // A candidate's policy capacity is its parent lease, never the host's.
+    let policy = match candidate {
+        Some(candidate) => config.candidate_policy(candidate.capacity, paths.uid())?,
+        None => config.policy(host.capacity(), paths.uid())?,
+    };
     let work_capacity = policy.work_capacity()?;
     let authority = Authority::from_storage(storage, policy, host.backend(), host.clock())?;
+    let capacity = match candidate {
+        Some(candidate) => json!({"source": "parent_lease", "budget": candidate.capacity}),
+        None => json!({"source": "host", "observed": host.capacity()}),
+    };
     receipt(json!({
         "event": "native_host",
         "boot_id": host.clock().boot_id(),
         "clock": "CLOCK_MONOTONIC_RAW milliseconds since boot",
         "started_at": host.clock().now(),
-        "capacity": host.capacity(),
+        "capacity": capacity,
         "work_capacity": work_capacity,
         "volumes": volumes,
         "sample_interval_ms": SAMPLE_INTERVAL_MS,
@@ -146,7 +179,10 @@ fn activate(
             backend: host.backend(),
             probe: Some(probe),
         },
-        LAUNCH_REASON,
+        candidate.map_or_else(
+            || LAUNCH_REASON.to_string(),
+            |candidate| candidate.reason.clone(),
+        ),
     ))
 }
 
@@ -268,8 +304,78 @@ fn poisoned() -> Error {
     unavailable("authority state is unavailable")
 }
 
+/// Capabilities stated only to clients that require them.
+pub(crate) fn echoed_capabilities() -> BTreeSet<Capability> {
+    BTreeSet::from([Capability::ParentLease, Capability::UpgradeDrain])
+}
+
+/// Admission closed by an administrator. The closure is kept in a private
+/// marker beside the journal, written before it takes effect, so a restarted
+/// service, or the next release, still finds admission closed.
+#[derive(Clone)]
+struct AdmissionGate {
+    marker: PathBuf,
+    closure: Arc<Mutex<Option<AdmissionClosure>>>,
+}
+
+impl AdmissionGate {
+    /// `honours_marker` is false only for fixtures acting as a release before
+    /// C11, which knew no marker.
+    fn open(paths: &AuthorityPaths, honours_marker: bool) -> Self {
+        let marker = paths.admission_marker();
+        let present = honours_marker && fs::symlink_metadata(&marker).is_ok();
+        let closure = present.then(|| {
+            read_private(&marker, paths.uid(), 4096)
+                .ok()
+                .and_then(|bytes| serde_json::from_slice::<AdmissionClosure>(&bytes).ok())
+                // A marker that cannot be read still keeps admission closed.
+                .unwrap_or(AdmissionClosure {
+                    reason: "the admission marker is unreadable".into(),
+                    since_unix_ms: 0,
+                })
+        });
+        if let Some(closure) = &closure {
+            receipt(json!({"event": "admission_closed_at_start", "closure": closure}));
+        }
+        Self {
+            marker,
+            closure: Arc::new(Mutex::new(closure)),
+        }
+    }
+
+    fn lock(&self) -> Result<std::sync::MutexGuard<'_, Option<AdmissionClosure>>> {
+        self.closure.lock().map_err(|_| poisoned())
+    }
+
+    /// Held for the whole of an admission, so a closure cannot interleave.
+    fn admitting(&self) -> Result<std::sync::MutexGuard<'_, Option<AdmissionClosure>>> {
+        let gate = self.lock()?;
+        if let Some(closure) = gate.as_ref() {
+            return Err(closed_admission(closure));
+        }
+        Ok(gate)
+    }
+}
+
+fn closed_admission(closure: &AdmissionClosure) -> Error {
+    Error::new(
+        ErrorCode::ResourceUnavailable,
+        format!(
+            "admission is closed ({}); queries, stops and reconciliation continue",
+            closure.reason
+        ),
+    )
+}
+
+fn unix_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|since| since.as_millis() as u64)
+        .unwrap_or(0)
+}
+
 /// The capabilities of a service with registration and fenced launch open.
-fn launch_capabilities() -> BTreeSet<Capability> {
+pub(crate) fn launch_capabilities() -> BTreeSet<Capability> {
     BTreeSet::from([
         Capability::DurableAdmission,
         Capability::FencedLaunch,
@@ -277,6 +383,20 @@ fn launch_capabilities() -> BTreeSet<Capability> {
         Capability::StaticControlReservations,
         Capability::MacosCooperative,
     ])
+}
+
+/// The capabilities of a candidate: admission without launch.
+pub(crate) fn candidate_capabilities() -> BTreeSet<Capability> {
+    let mut capabilities = launch_capabilities();
+    capabilities.remove(&Capability::FencedLaunch);
+    capabilities
+}
+
+fn candidate_refusal() -> Error {
+    Error::new(
+        ErrorCode::ResourcePolicyUnsupported,
+        "a candidate authority launches nothing and holds no parent leases; its workloads run as children of its parent lease",
+    )
 }
 
 /// A consumer's authenticated credential, kept only to register its instance.
@@ -299,6 +419,7 @@ struct Launcher {
     principals: Arc<Mutex<Principals>>,
     clock: BootClock,
     paused: Arc<AtomicBool>,
+    gate: AdmissionGate,
 }
 
 /// Whether `identity` still names a running process. A process of an earlier
@@ -317,6 +438,85 @@ fn still_running(
 impl Launcher {
     fn authority(&self) -> Result<std::sync::MutexGuard<'_, NativeAuthority>> {
         self.authority.lock().map_err(|_| poisoned())
+    }
+
+    /// Whether admission is open, and how much is still charged.
+    fn quiescence(&self) -> Result<Quiescence> {
+        let closure = self.gate.lock()?.clone();
+        let mut authority = self.authority()?;
+        let attempts = authority.attempts()?;
+        let leases = authority.leases()?;
+        Ok(Quiescence {
+            closure,
+            charged_attempts: attempts.len() as u64,
+            charged_leases: leases.len() as u64,
+            attempts: attempts
+                .into_iter()
+                .take(MAX_QUIESCENCE_KEYS)
+                .map(|record| record.key)
+                .collect(),
+            leases: leases
+                .into_iter()
+                .take(MAX_QUIESCENCE_KEYS)
+                .map(|lease| lease.key)
+                .collect(),
+        })
+    }
+
+    /// Close admission: the closure is written before it takes effect, and
+    /// Prepared attempts are cancelled while the gate is held, so none can be
+    /// admitted meanwhile. Closing again keeps the first closure.
+    fn close_admission(&self, reason: String) -> Result<Quiescence> {
+        if reason.is_empty()
+            || reason.len() > MAX_CLOSURE_REASON
+            || reason.chars().any(char::is_control)
+        {
+            return Err(Error::new(
+                ErrorCode::InvalidRequest,
+                "a closure reason is 1 to 256 bytes without control characters",
+            ));
+        }
+        let mut gate = self.gate.lock()?;
+        if gate.is_none() {
+            let closure = AdmissionClosure {
+                reason,
+                since_unix_ms: unix_ms(),
+            };
+            let bytes = serde_json::to_vec(&closure)
+                .map_err(|_| unavailable("cannot encode the admission closure"))?;
+            replace_private(&self.gate.marker, &bytes)?;
+            receipt(json!({"event": "admission_closed", "closure": closure}));
+            *gate = Some(closure);
+        }
+        let cancelled = self.authority()?.cancel_prepared()?;
+        if !cancelled.is_empty() {
+            receipt(json!({"event": "prepared_cancelled",
+                           "keys": cancelled.iter().map(|record| &record.key).collect::<Vec<_>>()}));
+        }
+        drop(gate);
+        self.quiescence()
+    }
+
+    /// Reopen admission; the marker is removed before it takes effect.
+    fn open_admission(&self) -> Result<Quiescence> {
+        let mut gate = self.gate.lock()?;
+        if gate.is_some() {
+            match fs::remove_file(&self.gate.marker) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(_) => return Err(unavailable("cannot remove the admission marker")),
+            }
+            // A crash must not bring the removed marker back.
+            if let Some(directory) = self.gate.marker.parent() {
+                fs::File::open(directory)
+                    .and_then(|directory| directory.sync_all())
+                    .map_err(|_| unavailable("cannot sync the admission marker's removal"))?;
+            }
+            receipt(json!({"event": "admission_opened", "closure": *gate}));
+            *gate = None;
+        }
+        drop(gate);
+        self.quiescence()
     }
 
     /// Register the OS-observed peer with its native start identity.
@@ -558,7 +758,26 @@ impl Launcher {
                 receipt(json!({"event": "reconcile_failed", "key": record.key, "error": error}));
             }
         }
+        self.reconcile_leases()?;
         self.reconcile_instances()
+    }
+
+    /// Fence leases whose owner has ended or whose deadline passed, and
+    /// release them once their children have settled.
+    fn reconcile_leases(&self) -> Result<()> {
+        let leases = self.authority()?.leases()?;
+        for lease in leases {
+            let owner_running = self.running(&lease.owner.process);
+            let reconciled = self
+                .authority()?
+                .reconcile_lease(&lease.key, owner_running)?;
+            if reconciled.phase != lease.phase {
+                receipt(json!({"event": "lease_reconciled", "lease": reconciled.key,
+                               "from": lease.phase, "phase": reconciled.phase,
+                               "end_reason": reconciled.end_reason}));
+            }
+        }
+        Ok(())
     }
 
     /// Settle every registered instance whose process is gone: retired when it
@@ -712,7 +931,14 @@ impl Server {
         paths.validate_existing()?;
         let config = HostConfig::load(paths)?;
         let storage = AuthorityStorage::open(&paths.journal())?;
-        let (evidence, reason) = activate(storage, &config, paths, options.probe)?;
+        let (evidence, reason) = activate(
+            storage,
+            &config,
+            paths,
+            options.probe,
+            options.candidate.as_ref(),
+        )?;
+        let candidate = options.candidate.is_some();
         // Registration and launch open only with native evidence, together
         // with the reconciler that run() starts.
         let launcher = match &evidence {
@@ -727,6 +953,7 @@ impl Server {
                 principals: Arc::default(),
                 clock: clock.clone(),
                 paused: options.reconcile_paused.unwrap_or_default(),
+                gate: AdmissionGate::open(paths, !options.without_upgrade_drain),
             }),
             Evidence::Closed { .. } => None,
         };
@@ -778,8 +1005,8 @@ impl Server {
         let status = ServiceStatus {
             storage_validated: true,
             registration_ready: launcher.is_some(),
-            execution_ready: launcher.is_some(),
-            reason: reason.into(),
+            execution_ready: launcher.is_some() && !candidate,
+            reason,
             configuration_fingerprint: config.fingerprint()?,
         };
         Ok(Self {
@@ -791,6 +1018,9 @@ impl Server {
             status,
             evidence,
             launcher,
+            candidate,
+            upgrade_drain: !options.without_upgrade_drain,
+            exit_on_quiescence: options.exit_on_quiescence,
         })
     }
 
@@ -868,10 +1098,15 @@ impl Server {
                     let status = self.status.clone();
                     let launcher = self.launcher.clone();
                     let stop = stop.clone();
+                    let flags = Flags {
+                        candidate: self.candidate,
+                        upgrade_drain: self.upgrade_drain,
+                        exit_on_quiescence: self.exit_on_quiescence,
+                    };
                     if let Ok(worker) = std::thread::Builder::new()
                         .name("devguard-session".into())
                         .spawn(move || {
-                            let _ = session(stream, uid, &config, &status, launcher, &stop);
+                            let _ = session(stream, uid, &config, &status, launcher, flags, &stop);
                         })
                     {
                         workers.push(worker);
@@ -982,6 +1217,16 @@ struct Session {
     principal: Option<Principal>,
     /// A helper session presents one grant and makes no other request.
     helper: bool,
+    /// A lease holder presents a lease token and asks only for its status.
+    lease_holder: bool,
+}
+
+/// What a session's service states and refuses.
+#[derive(Clone, Copy)]
+struct Flags {
+    candidate: bool,
+    upgrade_drain: bool,
+    exit_on_quiescence: bool,
 }
 
 struct Context<'a> {
@@ -990,6 +1235,8 @@ struct Context<'a> {
     config: &'a HostConfig,
     status: &'a ServiceStatus,
     launcher: Option<&'a Launcher>,
+    candidate: bool,
+    upgrade_drain: bool,
 }
 
 fn session(
@@ -998,6 +1245,7 @@ fn session(
     config: &HostConfig,
     status: &ServiceStatus,
     launcher: Option<Launcher>,
+    flags: Flags,
     stop: &AtomicBool,
 ) -> Result<()> {
     // Framing uses poll and per-call nonblocking I/O with an absolute deadline;
@@ -1012,6 +1260,8 @@ fn session(
         config,
         status,
         launcher: launcher.as_ref(),
+        candidate: flags.candidate,
+        upgrade_drain: flags.upgrade_drain,
     };
     let timeout = Duration::from_millis(FRAME_DEADLINE_MS);
     let mut state = Session::default();
@@ -1036,6 +1286,14 @@ fn session(
             )?;
             return Ok(());
         }
+        // A fixture acting as a release before C11 cannot decode what C11
+        // added, so, like that release, it closes the connection unanswered.
+        if !context.upgrade_drain && unknown_before_c11(&frame.body) {
+            return Ok(());
+        }
+        if flags.exit_on_quiescence && matches!(frame.body, Request::Quiescence) {
+            std::process::exit(70);
+        }
         let body = handle(&mut state, frame.body, &context)
             .unwrap_or_else(|error| Response::Error(error.into()));
         framing::write_frame(
@@ -1049,6 +1307,27 @@ fn session(
         )?;
     }
     Ok(())
+}
+
+/// Requests that a release before C11 could not decode.
+fn unknown_before_c11(request: &Request) -> bool {
+    match request {
+        Request::Hello { compatibility } => {
+            compatibility.required.contains(&Capability::UpgradeDrain)
+        }
+        Request::CloseAdmission { .. } | Request::OpenAdmission | Request::Quiescence => true,
+        _ => false,
+    }
+}
+
+/// The launcher, for a session authenticated as the administrator.
+fn administrator<'a>(session: &Session, context: &Context<'a>) -> Result<&'a Launcher> {
+    if session.role != Some(SessionRole::Administrator) {
+        return Err(unauthorized());
+    }
+    context
+        .launcher
+        .ok_or_else(|| unavailable("the authority is not open; there is no admission to close"))
 }
 
 /// The launcher and the instance registered in this session.
@@ -1072,6 +1351,28 @@ fn handle(session: &mut Session, request: Request, context: &Context<'_>) -> Res
             "a helper session makes no other request",
         ));
     }
+    if session.lease_holder && !matches!(request, Request::LeaseStatus { .. }) {
+        return Err(Error::new(
+            ErrorCode::Unauthorized,
+            "a lease-holder session only asks for its lease's status",
+        ));
+    }
+    if context.candidate
+        && matches!(
+            request,
+            Request::BeginLaunch { .. }
+                | Request::Launch { .. }
+                | Request::AdmitLease { .. }
+                | Request::AdmitChild { .. }
+                | Request::EndLease { .. }
+                | Request::LeaseStatus { .. }
+                | Request::CloseAdmission { .. }
+                | Request::OpenAdmission
+                | Request::Quiescence
+        )
+    {
+        return Err(candidate_refusal());
+    }
     match request {
         Request::Hello { compatibility } => {
             if session.greeted {
@@ -1080,10 +1381,24 @@ fn handle(session: &mut Session, request: Request, context: &Context<'_>) -> Res
                     "session already negotiated",
                 ));
             }
-            let capabilities = if context.launcher.is_some() {
-                launch_capabilities()
-            } else {
+            // A capability added after protocol 1 is stated only to a client
+            // that requires it, so an older client never receives a value it
+            // cannot decode.
+            let capabilities = if context.launcher.is_none() {
                 BTreeSet::new()
+            } else if context.candidate {
+                candidate_capabilities()
+            } else {
+                let mut capabilities = launch_capabilities();
+                capabilities.extend(
+                    echoed_capabilities()
+                        .intersection(&compatibility.required)
+                        .copied()
+                        .filter(|capability| {
+                            context.upgrade_drain || *capability != Capability::UpgradeDrain
+                        }),
+                );
+                capabilities
             };
             compatibility.check(PROTOCOL_VERSION, &capabilities)?;
             session.greeted = true;
@@ -1119,7 +1434,14 @@ fn handle(session: &mut Session, request: Request, context: &Context<'_>) -> Res
             if session.role.is_none() {
                 return Err(unauthorized());
             }
-            Ok(Response::Status(context.status.clone()))
+            let mut status = context.status.clone();
+            if let Some(launcher) = context.launcher {
+                if let Some(closure) = launcher.gate.lock()?.as_ref() {
+                    status.execution_ready = false;
+                    status.reason = closed_admission(closure).message;
+                }
+            }
+            Ok(Response::Status(status))
         }
         Request::Register { instance_id } => {
             validate_id(&instance_id)?;
@@ -1144,6 +1466,7 @@ fn handle(session: &mut Session, request: Request, context: &Context<'_>) -> Res
         }
         Request::Admit { request } => {
             let (launcher, principal) = registered(session, context)?;
+            let _gate = launcher.gate.admitting()?;
             let record = launcher.authority()?.admit(principal, request)?;
             receipt(
                 json!({"event": "admission", "key": record.key, "phase": record.phase,
@@ -1154,6 +1477,7 @@ fn handle(session: &mut Session, request: Request, context: &Context<'_>) -> Res
         }
         Request::BeginLaunch { key } => {
             let (launcher, principal) = registered(session, context)?;
+            let _gate = launcher.gate.admitting()?;
             let decision = launcher.authority()?.begin_launch(principal, &key)?;
             receipt(
                 json!({"event": "launch_committed", "key": decision.attempt.key,
@@ -1212,6 +1536,70 @@ fn handle(session: &mut Session, request: Request, context: &Context<'_>) -> Res
                 permit,
             )?))
         }
+        Request::AdmitLease {
+            key,
+            budget,
+            ttl_ms,
+        } => {
+            let (launcher, principal) = registered(session, context)?;
+            let _gate = launcher.gate.admitting()?;
+            let grant = launcher
+                .authority()?
+                .admit_lease(principal, &key, budget, ttl_ms)?;
+            // The token is returned to its owner only; receipts never hold it.
+            receipt(json!({"event": "lease_admitted", "lease": grant.lease,
+                           "token_issued": grant.token.is_some()}));
+            Ok(Response::LeaseGranted(LeaseGranted {
+                lease: grant.lease,
+                token: grant.token,
+            }))
+        }
+        Request::AdmitChild {
+            lease,
+            token,
+            request,
+        } => {
+            let (launcher, principal) = registered(session, context)?;
+            let _gate = launcher.gate.admitting()?;
+            let record = launcher
+                .authority()?
+                .admit_child(principal, &lease, &token, request)?;
+            receipt(
+                json!({"event": "admission", "key": record.key, "lease": lease,
+                           "phase": record.phase, "denial": record.denial,
+                           "quantities": record.reservation.as_ref().map(|r| r.quantities)}),
+            );
+            Ok(Response::Attempt(record))
+        }
+        Request::EndLease { key } => {
+            let (launcher, principal) = registered(session, context)?;
+            let view = launcher.authority()?.end_lease(principal, &key)?;
+            receipt(json!({"event": "lease_ended", "lease": view.lease,
+                           "remaining": view.remaining, "children": view.children}));
+            Ok(Response::Lease(view))
+        }
+        Request::LeaseStatus { key, token } => {
+            // A lease holder is not a caller: it presents only the token.
+            if !session.greeted || session.role.is_some() {
+                return Err(unauthorized());
+            }
+            session.lease_holder = true;
+            let launcher = context
+                .launcher
+                .ok_or_else(|| unavailable("parent leases are not open"))?;
+            Ok(Response::Lease(
+                launcher.authority()?.lease_status(&key, &token)?,
+            ))
+        }
+        Request::CloseAdmission { reason } => Ok(Response::Quiescence(
+            administrator(session, context)?.close_admission(reason)?,
+        )),
+        Request::OpenAdmission => Ok(Response::Quiescence(
+            administrator(session, context)?.open_admission()?,
+        )),
+        Request::Quiescence => Ok(Response::Quiescence(
+            administrator(session, context)?.quiescence()?,
+        )),
     }
 }
 
@@ -1549,6 +1937,465 @@ mod tests {
         ))));
     }
 
+    /// Parent leases over the wire: a capability stated only to clients that
+    /// require it, children admitted against the lease, token-only holder
+    /// sessions and release by the reconciler.
+    #[cfg(target_os = "macos")]
+    mod lease {
+        use super::*;
+        use crate::fixture::{TestAuthority, CONSUMER};
+        use devguard_contract::{
+            AdmissionRequest, AttemptKey, AttemptPhase, Budget, Capability, Compatibility,
+            LeasePhase, ResourceIntent, ResourceLevels, Secret,
+        };
+
+        struct Open {
+            authority: TestAuthority,
+            _directory: tempfile::TempDir,
+        }
+
+        fn open() -> Open {
+            let directory = tempfile::Builder::new()
+                .prefix("dg-l-")
+                .tempdir_in("/private/tmp")
+                .unwrap();
+            let authority = TestAuthority::start(directory.path()).unwrap();
+            authority
+                .wait_until_admitting(Duration::from_secs(10))
+                .unwrap();
+            Open {
+                authority,
+                _directory: directory,
+            }
+        }
+
+        fn connect(open: &Open, required: &[Capability]) -> Client {
+            Client::connect(
+                &open.authority.socket(),
+                open.authority.uid(),
+                Compatibility {
+                    minimum_protocol: 1,
+                    maximum_protocol: 1,
+                    required: required.iter().copied().collect(),
+                },
+            )
+            .unwrap()
+        }
+
+        fn owner(open: &Open, instance: &str) -> Client {
+            let mut client = connect(
+                open,
+                &[Capability::DurableAdmission, Capability::ParentLease],
+            );
+            client
+                .authenticate(open.authority.consumer().unwrap())
+                .unwrap();
+            client.register(instance.into()).unwrap();
+            client
+        }
+
+        fn holder(open: &Open) -> Client {
+            connect(open, &[Capability::ParentLease])
+        }
+
+        fn key(open: &Open, id: &str) -> AttemptKey {
+            AttemptKey {
+                consumer_id: CONSUMER.into(),
+                consumer_generation: open.authority.generation(),
+                attempt_id: id.into(),
+            }
+        }
+
+        /// Fits a 3-CPU host's 500 mCPU of work capacity, even halved.
+        fn lease_budget() -> Budget {
+            Budget {
+                cpu_milli: 200,
+                memory_bytes: 128 * 1024 * 1024,
+                tasks: 8,
+            }
+        }
+
+        fn child(open: &Open, id: &str) -> AdmissionRequest {
+            AdmissionRequest {
+                key: key(open, id),
+                execution_digest: devguard_contract::digest_bytes(b"lease child"),
+                intent: ResourceIntent {
+                    profile: "interactive".into(),
+                    requested: Budget {
+                        cpu_milli: 100,
+                        memory_bytes: 64 * 1024 * 1024,
+                        tasks: 4,
+                    },
+                    minimum: ResourceLevels::MACOS,
+                },
+            }
+        }
+
+        #[test]
+        fn lease_parent_lease_is_stated_only_to_clients_that_require_it() {
+            let open = open();
+            let plain = connect(
+                &open,
+                &[Capability::DurableAdmission, Capability::FencedLaunch],
+            );
+            assert!(!plain.hello.capabilities.contains(&Capability::ParentLease));
+            assert!(plain.hello.capabilities.contains(&Capability::FencedLaunch));
+            let asking = connect(&open, &[Capability::ParentLease]);
+            assert!(asking.hello.capabilities.contains(&Capability::ParentLease));
+        }
+
+        #[test]
+        fn lease_children_draw_on_the_lease_and_the_reconciler_releases_it() {
+            let open = open();
+            let mut owner = owner(&open, "lease-owner");
+            let lease = key(&open, "lease-1");
+            let granted = owner
+                .admit_lease(lease.clone(), lease_budget(), None)
+                .unwrap();
+            assert_eq!(granted.lease.phase, LeasePhase::Active);
+            let token = granted.token.unwrap();
+            assert!(owner
+                .admit_lease(lease.clone(), lease_budget(), None)
+                .unwrap()
+                .token
+                .is_none());
+            for id in ["child-1", "child-2"] {
+                let record = owner
+                    .admit_child(lease.clone(), token.clone(), child(&open, id))
+                    .unwrap();
+                assert_eq!(record.phase, AttemptPhase::Prepared, "{id}");
+            }
+            // The two children fill the lease; a third exceeds it.
+            let third = owner
+                .admit_child(lease.clone(), token.clone(), child(&open, "child-3"))
+                .unwrap();
+            assert_eq!(third.denial, Some(ErrorCode::ResourceUnavailable));
+            assert_eq!(open.authority.committed().unwrap(), lease_budget());
+            let view = holder(&open)
+                .lease_status(lease.clone(), token.clone())
+                .unwrap();
+            assert_eq!(view.remaining, Budget::ZERO);
+            assert_eq!(view.children.len(), 3);
+            // Ended: fenced, and released by the reconciler once the
+            // children are settled.
+            let ended = owner.end_lease(lease.clone()).unwrap();
+            assert_eq!(ended.lease.phase, LeasePhase::Ending);
+            let fenced = owner
+                .admit_child(lease.clone(), token.clone(), child(&open, "child-4"))
+                .unwrap();
+            assert_eq!(fenced.denial, Some(ErrorCode::InvalidTransition));
+            for id in ["child-1", "child-2"] {
+                assert_eq!(
+                    owner.cancel(key(&open, id)).unwrap().phase,
+                    AttemptPhase::Cancelled
+                );
+            }
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            loop {
+                let view = holder(&open)
+                    .lease_status(lease.clone(), token.clone())
+                    .unwrap();
+                if view.lease.phase == LeasePhase::Released {
+                    break;
+                }
+                assert!(std::time::Instant::now() < deadline, "{view:?}");
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            assert_eq!(open.authority.committed().unwrap(), Budget::ZERO);
+        }
+
+        #[test]
+        fn lease_a_holder_presents_only_the_token_and_makes_no_other_request() {
+            let open = open();
+            let mut owner = owner(&open, "lease-owner");
+            let lease = key(&open, "lease-1");
+            let token = owner
+                .admit_lease(lease.clone(), lease_budget(), None)
+                .unwrap()
+                .token
+                .unwrap();
+            let wrong = Secret::new("d".repeat(64)).unwrap();
+            assert_eq!(
+                holder(&open)
+                    .lease_status(lease.clone(), wrong)
+                    .unwrap_err()
+                    .code,
+                ErrorCode::Unauthorized
+            );
+            // A caller cannot turn its session into a lease holder's.
+            let mut caller = connect(&open, &[Capability::ParentLease]);
+            caller
+                .authenticate(open.authority.consumer().unwrap())
+                .unwrap();
+            assert_eq!(
+                caller
+                    .lease_status(lease.clone(), token.clone())
+                    .unwrap_err()
+                    .code,
+                ErrorCode::Unauthorized
+            );
+            // A holder session asks only for its lease's status.
+            let mut holder = holder(&open);
+            holder.lease_status(lease.clone(), token.clone()).unwrap();
+            assert_eq!(
+                holder
+                    .authenticate(open.authority.consumer().unwrap())
+                    .unwrap_err()
+                    .code,
+                ErrorCode::Unauthorized
+            );
+            owner.end_lease(lease).unwrap();
+        }
+    }
+
+    /// Closing admission for an upgrade: an administrator's request, echoed
+    /// only to clients that require it, kept across a restart, and leaving
+    /// queries and reconciliation open.
+    #[cfg(target_os = "macos")]
+    mod drain {
+        use super::*;
+        use crate::fixture::{TestAuthority, CONSUMER};
+        use devguard_contract::{
+            AdmissionRequest, AttemptKey, Budget, Capability, Compatibility, ResourceIntent,
+            ResourceLevels, Secret,
+        };
+
+        fn base() -> tempfile::TempDir {
+            tempfile::Builder::new()
+                .prefix("dg-d-")
+                .tempdir_in("/private/tmp")
+                .unwrap()
+        }
+
+        fn started(base: &std::path::Path, restart: bool) -> TestAuthority {
+            let authority = if restart {
+                TestAuthority::restart(base).unwrap()
+            } else {
+                TestAuthority::start(base).unwrap()
+            };
+            authority
+                .wait_until_admitting(Duration::from_secs(10))
+                .unwrap();
+            authority
+        }
+
+        fn connect(authority: &TestAuthority, required: &[Capability]) -> Client {
+            Client::connect(
+                &authority.socket(),
+                authority.uid(),
+                Compatibility {
+                    minimum_protocol: 1,
+                    maximum_protocol: 1,
+                    required: required.iter().copied().collect(),
+                },
+            )
+            .unwrap()
+        }
+
+        fn administrator(authority: &TestAuthority) -> Client {
+            let secret = Secret::new(
+                String::from_utf8(
+                    read_private(&authority.paths().admin_credential(), authority.uid(), 64)
+                        .unwrap(),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+            let mut client = connect(authority, &[Capability::UpgradeDrain]);
+            client
+                .authenticate(CallerCredential::Administrator { secret })
+                .unwrap();
+            client
+        }
+
+        fn workload(authority: &TestAuthority) -> Client {
+            let mut client = connect(
+                authority,
+                &[Capability::DurableAdmission, Capability::ParentLease],
+            );
+            client.authenticate(authority.consumer().unwrap()).unwrap();
+            client.register("drain-owner".into()).unwrap();
+            client
+        }
+
+        fn request(authority: &TestAuthority, id: &str) -> AdmissionRequest {
+            AdmissionRequest {
+                key: AttemptKey {
+                    consumer_id: CONSUMER.into(),
+                    consumer_generation: authority.generation(),
+                    attempt_id: id.into(),
+                },
+                execution_digest: devguard_contract::digest_bytes(b"drain"),
+                intent: ResourceIntent {
+                    profile: "interactive".into(),
+                    requested: Budget {
+                        cpu_milli: 100,
+                        memory_bytes: 64 * 1024 * 1024,
+                        tasks: 4,
+                    },
+                    minimum: ResourceLevels::MACOS,
+                },
+            }
+        }
+
+        #[test]
+        fn drain_closes_admission_for_the_administrator_only_and_keeps_it_across_a_restart() {
+            let directory = base();
+            let authority = started(directory.path(), false);
+            let plain = connect(&authority, &[Capability::DurableAdmission]);
+            assert!(!plain.hello.capabilities.contains(&Capability::UpgradeDrain));
+            // A workload cannot close admission.
+            assert_eq!(
+                workload(&authority)
+                    .close_admission("not mine".into())
+                    .unwrap_err()
+                    .code,
+                ErrorCode::Unauthorized
+            );
+            let prepared = workload(&authority)
+                .admit(request(&authority, "prepared"))
+                .unwrap();
+            assert_eq!(prepared.phase, AttemptPhase::Prepared);
+            let staged = workload(&authority)
+                .admit(request(&authority, "staged"))
+                .unwrap();
+            assert_eq!(
+                administrator(&authority)
+                    .close_admission(String::new())
+                    .unwrap_err()
+                    .code,
+                ErrorCode::InvalidRequest
+            );
+            let closed = administrator(&authority)
+                .close_admission("upgrade to test".into())
+                .unwrap();
+            let since = closed.closure.clone().unwrap().since_unix_ms;
+            // The Prepared attempt was cancelled, so nothing is charged.
+            assert!(closed.quiet(), "{closed:?}");
+            assert_eq!(
+                workload(&authority)
+                    .lookup(prepared.key.clone())
+                    .unwrap()
+                    .phase,
+                AttemptPhase::Cancelled
+            );
+            for refused in [
+                workload(&authority)
+                    .admit(request(&authority, "late"))
+                    .err(),
+                workload(&authority)
+                    .admit_lease(
+                        request(&authority, "lease").key,
+                        request(&authority, "lease").intent.requested,
+                        None,
+                    )
+                    .err(),
+            ] {
+                let error = refused.expect("admission is closed");
+                assert_eq!(error.code, ErrorCode::ResourceUnavailable);
+                assert!(error.message.contains("admission is closed"), "{error:?}");
+            }
+            // No launch is committed while admission is closed, so no helper
+            // can arrive for an attempt the drain cancelled.
+            assert_eq!(
+                workload(&authority)
+                    .begin_launch(staged.key.clone())
+                    .unwrap_err()
+                    .code,
+                ErrorCode::ResourceUnavailable
+            );
+            let status = workload(&authority).status().unwrap();
+            assert!(!status.execution_ready && status.registration_ready);
+            assert!(status.reason.contains("upgrade to test"));
+            // Closing again keeps the first closure.
+            let again = administrator(&authority)
+                .close_admission("another reason".into())
+                .unwrap();
+            assert_eq!(again.closure.unwrap().since_unix_ms, since);
+            let marker = authority.paths().admission_marker();
+            assert!(read_private(&marker, authority.uid(), 4096).is_ok());
+            // A restarted service starts with admission still closed.
+            drop(authority);
+            let authority = started(directory.path(), true);
+            assert_eq!(
+                workload(&authority)
+                    .admit(request(&authority, "after-restart"))
+                    .unwrap_err()
+                    .code,
+                ErrorCode::ResourceUnavailable
+            );
+            let opened = administrator(&authority).open_admission().unwrap();
+            assert!(opened.closure.is_none());
+            assert!(!marker.exists());
+            assert_eq!(
+                workload(&authority)
+                    .admit(request(&authority, "reopened"))
+                    .unwrap()
+                    .phase,
+                AttemptPhase::Prepared
+            );
+            // Quiescence reports what is charged again.
+            let charged = administrator(&authority).quiescence().unwrap();
+            assert_eq!(charged.attempts.len(), 1);
+            assert!(!charged.quiet());
+            // Opening twice changes nothing.
+            assert!(administrator(&authority)
+                .open_admission()
+                .unwrap()
+                .closure
+                .is_none());
+        }
+
+        #[test]
+        fn a_quiescence_report_counts_everything_and_names_at_most_sixteen() {
+            let directory = base();
+            let authority = started(directory.path(), false);
+            for index in 0..20 {
+                let mut request = request(&authority, &format!("held-{index}"));
+                request.intent.requested = Budget {
+                    cpu_milli: 10,
+                    memory_bytes: 1024 * 1024,
+                    tasks: 1,
+                };
+                let record = workload(&authority).admit(request).unwrap();
+                assert_eq!(record.phase, AttemptPhase::Prepared, "{index}");
+                workload(&authority).begin_launch(record.key).unwrap();
+            }
+            let report = administrator(&authority).quiescence().unwrap();
+            assert_eq!(report.charged_attempts, 20);
+            assert_eq!(report.attempts.len(), MAX_QUIESCENCE_KEYS);
+            // Closing admission keeps committed launches, which a drain waits for.
+            let closed = administrator(&authority)
+                .close_admission("counting".into())
+                .unwrap();
+            assert_eq!(closed.charged_attempts, 20);
+            assert_eq!(closed.attempts.len(), MAX_QUIESCENCE_KEYS);
+        }
+
+        #[test]
+        fn an_unreadable_marker_keeps_admission_closed_until_an_administrator_reopens_it() {
+            let directory = base();
+            drop(started(directory.path(), false));
+            let paths = AuthorityPaths::fixture(directory.path());
+            crate::paths::write_new_private(&paths.admission_marker(), b"not a closure").unwrap();
+            let authority = started(directory.path(), true);
+            let error = workload(&authority)
+                .admit(request(&authority, "closed"))
+                .unwrap_err();
+            assert_eq!(error.code, ErrorCode::ResourceUnavailable);
+            assert!(error.message.contains("unreadable"), "{error:?}");
+            administrator(&authority).open_admission().unwrap();
+            assert!(!paths.admission_marker().exists());
+            assert_eq!(
+                workload(&authority)
+                    .admit(request(&authority, "open"))
+                    .unwrap()
+                    .phase,
+                AttemptPhase::Prepared
+            );
+        }
+    }
+
     /// Sessions of a service with registration and fenced launch open.
     #[cfg(target_os = "macos")]
     mod launch {
@@ -1874,7 +2721,7 @@ mod tests {
                 let paths = AuthorityPaths::fixture(directory.path());
                 let config = config::initialize(&paths).unwrap();
                 let storage = AuthorityStorage::open(&paths.journal()).unwrap();
-                let (evidence, reason) = activate(storage, &config, &paths, None).unwrap();
+                let (evidence, reason) = activate(storage, &config, &paths, None, None).unwrap();
                 assert_eq!(reason, LAUNCH_REASON);
                 let Evidence::Native {
                     authority, clock, ..

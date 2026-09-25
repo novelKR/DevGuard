@@ -218,6 +218,20 @@ pub fn digest_bytes(value: &[u8]) -> String {
     format!("{:x}", Sha256::digest(value))
 }
 
+/// The SHA-256 of everything `reader` yields, read in bounded chunks, for
+/// files too large to hold in memory.
+pub fn digest_reader(mut reader: impl std::io::Read) -> std::io::Result<String> {
+    let mut hasher = Sha256::new();
+    let mut buffer = vec![0u8; 64 * 1024];
+    loop {
+        let read = reader.read(&mut buffer)?;
+        if read == 0 {
+            return Ok(format!("{:x}", hasher.finalize()));
+        }
+        hasher.update(&buffer[..read]);
+    }
+}
+
 /// The runner computes this digest locally. The authority only persists the digest.
 /// The struct field order and BTreeMap order define semantic encoding version 1.
 #[derive(Debug, Clone, Serialize)]
@@ -526,6 +540,68 @@ pub enum Capability {
     StaticControlReservations,
     MacosCooperative,
     LinuxCgroupV2,
+    /// Bounded parent leases whose children are admitted against the lease,
+    /// not the host. A service states it only to a client that requires it,
+    /// so a client that cannot decode it never receives it.
+    ParentLease,
+    /// An administrator can close admission for an upgrade, reopen it and
+    /// ask what is still charged. Stated only to a client that requires it.
+    UpgradeDrain,
+}
+
+/// A parent lease's phase. An Ending lease admits no new child and is released
+/// once every child is settled.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LeasePhase {
+    Active,
+    Ending,
+    Released,
+}
+
+/// Why a lease stopped admitting children.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LeaseEndReason {
+    /// Its owner ended it.
+    Ended,
+    /// Its owner process ended, or belonged to an earlier boot.
+    OwnerGone,
+    /// Its deadline passed.
+    Expired,
+}
+
+/// A bounded budget reserved from the host, from which child executions are
+/// admitted. The budget stays charged until the lease is released.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LeaseRecord {
+    pub key: AttemptKey,
+    pub owner: InstanceIdentity,
+    pub policy_revision: String,
+    pub budget: Budget,
+    pub phase: LeasePhase,
+    pub created_at: ObservationTime,
+    /// Monotonic milliseconds in `created_at`'s boot after which no child is admitted.
+    pub deadline_ms: Option<u64>,
+    pub end_reason: Option<LeaseEndReason>,
+}
+
+impl LeaseRecord {
+    /// A lease holds its whole budget until it is released.
+    pub fn charged(&self) -> bool {
+        self.phase != LeasePhase::Released
+    }
+}
+
+/// A lease as its holders see it: its record, the budget its charged children
+/// leave, and every child admitted under it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LeaseView {
+    pub lease: LeaseRecord,
+    pub remaining: Budget,
+    pub children: Vec<AttemptKey>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

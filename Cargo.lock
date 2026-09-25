@@ -134,6 +134,7 @@ dependencies = [
  "devguard-client",
  "devguard-contract",
  "devguard-core",
+ "devguard-daemon",
  "devguard-macos",
  "libc",
  "serde",
