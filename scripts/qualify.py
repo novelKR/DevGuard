@@ -125,12 +125,20 @@ SUITES = {
           "upgrade-after-recovery", "stop-failed", "repair-closure", "upgrade-completed",
           "upgrade-cancelled", "upgrade-died-verifying", "repair-completed"]),
     ],
+    "dg1-macos": [
+        ("workloads", ["-p", "devguard-qualify", "--lib"]),
+        ("protocol-analysis", ["unittest", "test_measure.py"]),
+        ("native-control", ["-p", "devguard-qualify", "--test", "control"],
+         ["control-probe", "control-stopped", "control-refused"]),
+        ("native-fixture", ["unittest", "test_fixture.py"], ["fixture-check"]),
+    ],
 }
 # Binaries a suite's tests start but whose package the suite does not test.
 PREBUILD = {
     "dg1-cli": [["-p", "devguard-launch", "--bin", "devguard-launch"]],
     "dg1-cargo": [["-p", "devguard-launch", "--bin", "devguard-launch"]],
     "dg1-self-use": [["-p", "devguard-launch", "--bin", "devguard-launch"]],
+    "dg1-macos": [["-p", "devguard-launch", "--bin", "devguard-launch"]],
 }
 STAGE_TIMEOUT_SECONDS = 1800
 SCOPES = {
@@ -144,13 +152,14 @@ SCOPES = {
     "dg1-bootstrap": "installation of a release as the current user's LaunchAgent against isolated authorities: package validation, immutable release and recovery copies, verification that launchd runs the release's own binary before it is selected, refusals, concurrent installers, and under launchd itself a crash restart, a SIGTERM stop and a fail-closed start that is not restarted; functional artifacts only, not SLO qualification",
     "dg1-reconcile": "native macOS reconciliation through isolated authorities: prepared cancellation and expiry, owner reports that no helper exists, releases only on scope termination, sticky escape and tracking loss, scope termination signals, dead owners, and a daemon crash with restart",
     "dg1-upgrade": "replacement and repair of the installed service against isolated authorities with a fake service manager: compatibility checks that refuse an incompatible downgrade, admission closed by an administrator and kept across a restart, drains that finish or time out with every charge kept, quiescent backups, a new release started closed and verified before admission reopens, a failed start or stop, or a release that dies while it is verified, giving way to the previous release on the same journal, a drain cancelled by a signal, an interrupted upgrade completed by running it again, a release that cannot drain replaced only when stopped with nothing charged, and repair that never starts a second authority, completes an interrupted repair, returns to the release an upgrade replaced, uses the recovery copy of a damaged release and keeps a journal that cannot be opened closed; functional fixtures only, not the real upgrade of the installed service",
+    "dg1-macos": "the SLO protocol's harness against isolated authorities: bounded workloads, the standalone control probe that owns its targets and measures status and termination acknowledgement, the protocol's percentile, validity and verdict rules, and the foreground fixture observed through headless Chrome, which is never a valid observation; the SLO protocol itself is scripts/measure.py macos on the target host",
     "dg1-self-use": "parent leases and candidate authorities against isolated authorities: a lease charged once against the host, children admitted only against its remainder with its token, fencing when it ends, its owner goes or its deadline passes, release once every child is settled, and a candidate authority run as a lease child through the real launch helper that admits within its leased capacity, launches nothing and closes with its lease; functional fixtures only, not real self-use under the installed parent",
 }
 # Suites that start real workloads through the launch helper (in fixtures).
-LAUNCHING = {"dg1-launch", "dg1-reconcile", "dg1-cli", "dg1-cargo", "dg1-self-use"}
+LAUNCHING = {"dg1-launch", "dg1-reconcile", "dg1-cli", "dg1-cargo", "dg1-self-use", "dg1-macos"}
 # Native suites observe the actual host; elsewhere they are not run, never passed.
 NATIVE = {"dg1-probes", "dg1-scopes", "dg1-launch", "dg1-reconcile", "dg1-cli", "dg1-cargo", "dg1-bootstrap",
-          "dg1-self-use", "dg1-upgrade"}
+          "dg1-self-use", "dg1-upgrade", "dg1-macos"}
 
 
 def host_facts():
@@ -226,7 +235,10 @@ def main():
             entry["status"]="passed"
         for name,selectors,*expected in SUITES[args.suite]:
             expected=expected[0] if expected else None
-            command=["cargo","test","--locked",*(["--offline"] if args.offline else []),*selectors]
+            if selectors[0]=="unittest":
+                command=[sys.executable,"-B","-m","unittest","discover","-s","scripts","-p",selectors[1]]
+            else:
+                command=["cargo","test","--locked",*(["--offline"] if args.offline else []),*selectors]
             stage={"name":name,"command":command,"status":"failed","log":name+".log"}
             report["stages"].append(stage);started=time.monotonic()
             stage_environment=dict(environment)
@@ -239,7 +251,10 @@ def main():
             stage["seconds"]=round(time.monotonic()-started,3)
             log=(output/stage["log"])
             stage["log_sha256"]=hashlib.sha256(log.read_bytes()).hexdigest()
-            stage["tests_passed"]=sum(map(int,re.findall(r"test result: ok\. (\d+) passed",log.read_text(errors="replace"))))
+            text=log.read_text(errors="replace")
+            stage["tests_passed"]=sum(map(int,re.findall(r"test result: ok\. (\d+) passed",text)))
+            if selectors[0]=="unittest" and re.search(r"^OK$",text,re.M):
+                stage["tests_passed"]=sum(map(int,re.findall(r"^Ran (\d+) tests? in",text,re.M)))
             if result.returncode or not stage["tests_passed"]: raise RuntimeError("failed or empty suite: "+name)
             if expected:
                 files=sorted(path for path in raw.iterdir() if path.is_file())

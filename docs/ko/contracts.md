@@ -1,6 +1,6 @@
 # 구현된 authority 계약
 
-이 문서는 구현된 DG-0 authority, C01/C02 서비스·저장소·transport 동작, C03 native macOS 호스트 증거, C04 협조적 정책·scope 증거, C05 fenced launch helper, C06 대조, C07 명령행 owner, C08 Cargo adapter, 현재 사용자 LaunchAgent로의 C09 설치, C10 부모 lease와 후보 authority, C11 upgrade와 repair를 설명한다. PR과 병합 후 main 전달 증거는 구현과 별도로 추적한다. 실제 제공 명령은 [운영 문서](operations.md)에 있다. Native 호스트 증거가 있으면 서비스는 등록·launch·대조를 열며, CodeSpace 결합은 아직 구현하지 않았다. [영문 정본](../contracts.md).
+이 문서는 구현된 DG-0 authority, C01/C02 서비스·저장소·transport 동작, C03 native macOS 호스트 증거, C04 협조적 정책·scope 증거, C05 fenced launch helper, C06 대조, C07 명령행 owner, C08 Cargo adapter, 현재 사용자 LaunchAgent로의 C09 설치, C10 부모 lease와 후보 authority, C11 upgrade와 repair, C12 SLO 판정 harness를 설명한다. PR과 병합 후 main 전달 증거는 구현과 별도로 추적한다. 실제 제공 명령은 [운영 문서](operations.md)에 있다. Native 호스트 증거가 있으면 서비스는 등록·launch·대조를 열며, CodeSpace 결합은 아직 구현하지 않았다. [영문 정본](../contracts.md).
 
 ## Authority와 transport 경계
 
@@ -253,6 +253,65 @@ DG1-C11은 과금 중인 작업을 잃거나 중복하지 않고, 후보의 admi
   - 설치된 release가 손상되었으면 복구 사본을 대신 실행하며, status와 이후 upgrade도 이를 받아들인다.
   - 남아 있는 job이 endpoint와 lock을 놓으면 교체하고 실행 중인 바이너리를 검증한다. Load되지 않은 서비스의 bootout은 `launchctl`이 3으로 끝나더라도 성공으로 처리한다. Release가 제공하는 즉시 repair를 선택 기록에 남기고, 그다음 중단된 upgrade가 닫아 둔 admission을 다시 연다.
 - **범위.** Upgrade에는 유휴 서비스가 필요하다. 실행 중인 작업은 끝날 때까지 기다리며 중단하지 않는다. C11 이전 release에는 `upgrade` 명령이 없다. 그 release로 돌아갈 때는 서비스를 멈춘 뒤 그 release 자신의 installer를 쓰며, 그 release는 닫기 marker를 무시한다.
+
+## SLO 판정 (C12)
+
+DG1-C12는 기능 시험의 성공으로 응답성을 추론하지 않고 release를 측정한다. Harness는 `devguard-qualify`(`crates/qualify`, release 패키지에 들어가지 않는다)와 `scripts/measure.py`이다. 설치된 서비스 자신의 release, 그 정책과 그 호스트를 측정하며, worktree 바이너리는 측정 대상 artifact가 되지 않는다.
+
+- **제어 probe.** `devguard-qualify control`은 `devguard`처럼 경로나 authority를 바꾸는 옵션 없이 정규 authority의 평범한 `dev-cli` owner로 등록한다. 자신이 소유한 attempt만 측정하며, 대상은 작은 `/bin/sleep` target(50 mCPU, 16 MiB, task 2개)이다. 각 target은 admit·commit한 뒤 측정 대상 release의 `devguard-launch`로 시작하며, reap하기 전에 관측한다.
+  - 상태 표본은 실행 중인 target을 새로 등록한 session(connect, hello, authenticate, register, lookup)으로 `Lookup`하는 것이다. 명령행 owner가 매 호출을 하는 방식대로 1초마다 한 번 잰다.
+  - 종료 표본은 20초마다 새 target을 시작하고 `Terminate(SIGTERM)`부터 `Terminated`까지를 잰다. 신호 전달은 해제 증거가 아니므로 target의 종료와 attempt의 해제는 따로 보고한다.
+  - 용량이나 압력 때문에 거절된 admission은 다시 시도하고 기록하지만 지연 표본은 아니다.
+  - SIGINT나 SIGTERM은 표본 채취를 끝내지만, probe는 자신이 시작한 모든 target을 정리한다.
+- **전경 fixture.** Fixture는 고정 로컬 페이지 `crates/qualify/fixture/foreground.html`이며, 모든 보고서에 hash를 기록한다. 새 profile의 Google Chrome에서 `--remote-debugging-pipe`로 구동하므로 수신 port가 없고, scheduling이나 throttling을 바꾸는 flag도 쓰지 않는다.
+  - **입력.** 브라우저가 `Input.dispatch*`로 합성한다. 500 ms ± 100 ms마다 key, click, wheel 한 단계 중 하나를 보낸다.
+  - **입력부터 다음 paint까지.** Event의 timestamp부터, 입력으로 생긴 화면 변화 뒤의 다음 frame까지를 잰다. 다음 frame은 다음 animation frame에서 보낸 message로 표시한다. 브라우저가 Event Timing duration을 보고하면 그 값까지 올려 잡는다. 브라우저 이전의 운영체제 입력 경로는 포함하지 않는다.
+  - **Frame 정지.** 연속한 animation frame 사이가 500 ms를 넘는 경우다.
+- **부하.** 소비자 6개가 측정 대상 release의 `devguard exec --wait`로 동시에 실행하므로 admission·압력·대기열은 서비스 자신의 것이다. 어떤 부하도 admission을 우회하지 않으며 모든 실행의 receipt를 보존한다.
+
+  | 소비자 | 작업 | 예산 |
+  | --- | --- | --- |
+  | Cargo | release 자신의 source(`--adapter cargo-pipeline`): workspace build 뒤 core·contract 시험 | Cargo 기본값 |
+  | CPU | thread 2개 | CPU 2개, 256 MiB, task 8개 |
+  | 메모리 | 1.5 GiB를 쓰고 유지 | 250 mCPU, 2 GiB, task 4개 |
+  | I/O | 512 MiB를 쓰고 sync한 뒤 다시 읽고 삭제 | 250 mCPU, 256 MiB, task 4개 |
+  | 출력 압력 | 표준 출력으로 256 MiB | 250 mCPU, 128 MiB, task 4개 |
+  | 느린 입력 | 100 ms마다 한 줄씩 읽기 | 100 mCPU, 64 MiB, task 4개 |
+
+  Probe의 target까지 더한 동시 예산은 로컬 호스트의 작업 용량(5,500 mCPU, 11.75 GiB, task 144개) 안에 들어간다.
+- **Protocol.**
+  - 조합은 두 가지다. `cold`는 Cargo build마다 새 target directory를 쓰고, `warm`은 반복 전에 build한 target directory를 다시 쓴다.
+  - 조합마다 반복 세 번을 실행한다. 각 반복은 idle 10분 뒤 최소 30분의 부하다.
+  - 부하 기한 전에 시작한 작업은 끝날 때까지 관측하고, 기한 뒤에는 아무것도 시작하지 않는다.
+- **백분위수와 누락 표본.** p99는 한 구간의 원시 값에 대한 nearest-rank 값이다.
+  - 누락 표본은 모든 값보다 위에 둔다. 처리되지 않았거나 paint되지 않은 입력, 응답 없는 상태 호출이나 종료가 이에 해당한다.
+  - 누락된 입력은 1초를 넘는 응답으로도 센다.
+- **유효성.** 다음을 모두 만족해야 구간이 유효한 관측이다.
+  - fixture가 headful로 실행되고 계속 전면 application이다.
+  - 페이지가 계속 보이고 focus를 유지하며, visibility나 focus가 바뀌지 않는다.
+  - 화면이 잠기지 않는다.
+  - 서비스가 내내 측정 대상 release를 실행한다.
+  - 모든 지표가 일정의 90% 이상(종료는 80%)을 가진다.
+  - admit된 부하가 부하 구간의 절반 이상 동안 실행된다.
+
+  `caffeinate`로 화면을 깨어 있게 한다. 유효하지 않은 구간은 `inconclusive`이며 결코 통과가 아니다.
+- **판정.** 모든 목표를 지킨 구간만 통과한다.
+  - 상태: p99 ≤ 500 ms, 연결 유실 없음.
+  - 종료 확인: p99 ≤ 1초, 연결 유실 없음, 신호를 받은 모든 target 해제.
+  - 입력부터 다음 paint까지: p99 ≤ 100 ms, 1초 초과 없음.
+  - Frame: 정지 없음.
+  - 부하: 불확실한 실행, 연결 유실, 중복 launch 없음.
+  - 충전된 채 남은 것 없음.
+
+  Idle 기준선과 부하가 모두 통과해야 반복이 통과하며, idle 기준선이 실패하면 그 반복은 inconclusive다. 세 반복이 모두 통과해야 조합이 qualified이고, 값을 반복 사이에서 합치지 않는다. Rehearsal(짧게 줄인 구간)이나 headless fixture는 언제나 inconclusive다.
+- **승격.** `measure.py promote`는 전체 protocol의 qualified 요약만 받는다. Run header와 release manifest가 바뀌지 않았고, 서비스가 여전히 그 release를 실행해야 한다.
+  - 비공개 상태 directory에 `qualifications/<release>.json`을 쓴다. 이는 읽기 전용 `devguard-release-qualification/v1` 기록이다.
+  - 기록에는 release, 그 manifest와 artifact hash, 정책, 환경, harness와 계획, 모든 반복의 판정, 증거 hash가 들어간다.
+  - 그 뒤 서비스가 그 release를 실행하는지 검증한다. Release manifest는 바꾸지 않는다. `slo_qualified: false`는 승격이 아니라 패키지를 기술한다.
+- **한계.**
+  - 이 판정은 측정한 호스트·artifact·정책에서의 독립 제어, 개발, 제한된 자기 적용만 보증한다. 다른 호스트나 release는 따로 측정해야 한다.
+  - Fixture 통과가 모든 website를 보장하지는 않는다.
+  - Linux 강제와 CodeSpace 결합은 판정하지 않는다.
 
 ## 내구성 admission과 launch
 

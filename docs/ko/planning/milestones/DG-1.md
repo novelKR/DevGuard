@@ -4,7 +4,13 @@
 
 아래 ID·제목·PR 묶음은 **예정 값**이다. 실제 SHA나 GitHub PR 번호가 아니다. 모듈 경로는 구현 전까지 예정 책임을 나타낸다. 현재 daemon/client crate는 존재하며 launcher·platform-macos·cli·adapters는 후속 책임이다. crate 추가는 해당 PR에서 명시적 의존 allowlist와 전체 그래프 검증을 함께 확장하고 검사를 제거하지 않는다. 실제 상태는 ledger가 소유한다.
 
-구현된 C01은 정상 경로·명시 bootstrap·배타 journal 검사를 제공한다. C02는 foreground devguardd serve, 제한된 인증 UDS 통신, OS UID/PID 관측, 엄격한 client 호환성과 private 자격 FD 전달을 추가한다. C03은 `devguard-macos`의 boot 시계, native PID/start 정체성, 호스트 용량과 serve에서 journal을 활성화하는 2초 압력 sampler를 추가한다. C04는 협조적 QoS/nice 적용과 readback, 이탈·추적 상실이 고정되는 관측 process group scope, 정체성을 확인한 종료를 추가한다. C05는 wire 등록과 fenced `devguard-launch` helper를 추가한다. Grant마다 claim된 helper는 하나이며, READY와 exec 전에 scope binding과 authorization을 거치고, transcript와 exec 실패 보고를 분리하며, payload descriptor를 정리한다. C06은 서비스 reconciler를 추가한다. 관측된 scope 종료, helper가 없다는 owner 보고, 이전 boot에서만 회수하며, reap 전 owner 관측, scope 종료, instance 폐기, 재시작 전후의 Suspect 회계를 제공한다. Native 증거가 있으면 서비스는 등록·launch·대조를 연다. C07은 `devguard` 명령행 owner를 추가한다. 명시적이고 제한된 대기, terminal·signal 전달, reap 전 관측, receipt, doctor 진단을 갖춘 관리 실행을 제공하며, 관리되지 않는 대체 실행은 없다. C08은 Cargo adapter를 추가한다. Compiler job을 예약에 맞춰 조정하거나 거절하며, pipeline과 중첩 Cargo 실행이 jobserver 하나를 공유하게 한다. C09는 패키지로 만든 release를 현재 사용자 LaunchAgent로 설치한다. hash와 컴파일된 호환성을 담은 manifest, 변경 불가능한 release·복구 사본을 두며, launchd가 그 release의 바이너리를 실행한다고 검증한 뒤에만 선택한다. C10은 부모 lease와 후보 authority를 추가한다. Lease는 호스트에 한 번 과금되고, 자식은 lease의 남은 예산에 대해서만 admission되며 lease가 끝나면 fence된다. 후보 authority는 lease로 제한되며 launch 없이 admission만 한다. `devguard test-candidate`는 후보 tree의 build·시험·authority를 lease 하나의 자식으로 실행한다. C11은 upgrade와 repair를 추가한다. 관리자 drain은 admission을 닫으며 재시작 뒤에도 유지된다. Staged release는 drain, quiescent 백업, 닫힌 채 시작한 새 release의 검증을 거친 뒤에만 현재 release를 교체한다. 새 release가 실패하면 이전 release를 같은 journal로 다시 시작한다. 호환되지 않는 downgrade는 거절한다. Repair는 last known good release나 그 복구 사본으로 복구하며 두 번째 authority를 시작하지 않는다. PR과 병합 후 main 전달 증거는 별도로 추적한다. [운영 문서](../../operations.md)를 참조한다.
+구현된 C01은 정상 경로·명시 bootstrap·배타 journal 검사를 제공한다. C02는 foreground devguardd serve, 제한된 인증 UDS 통신, OS UID/PID 관측, 엄격한 client 호환성과 private 자격 FD 전달을 추가한다. C03은 `devguard-macos`의 boot 시계, native PID/start 정체성, 호스트 용량과 serve에서 journal을 활성화하는 2초 압력 sampler를 추가한다. C04는 협조적 QoS/nice 적용과 readback, 이탈·추적 상실이 고정되는 관측 process group scope, 정체성을 확인한 종료를 추가한다. C05는 wire 등록과 fenced `devguard-launch` helper를 추가한다. Grant마다 claim된 helper는 하나이며, READY와 exec 전에 scope binding과 authorization을 거치고, transcript와 exec 실패 보고를 분리하며, payload descriptor를 정리한다. C06은 서비스 reconciler를 추가한다. 관측된 scope 종료, helper가 없다는 owner 보고, 이전 boot에서만 회수하며, reap 전 owner 관측, scope 종료, instance 폐기, 재시작 전후의 Suspect 회계를 제공한다. Native 증거가 있으면 서비스는 등록·launch·대조를 연다. C07은 `devguard` 명령행 owner를 추가한다. 명시적이고 제한된 대기, terminal·signal 전달, reap 전 관측, receipt, doctor 진단을 갖춘 관리 실행을 제공하며, 관리되지 않는 대체 실행은 없다. C08은 Cargo adapter를 추가한다. Compiler job을 예약에 맞춰 조정하거나 거절하며, pipeline과 중첩 Cargo 실행이 jobserver 하나를 공유하게 한다. C09는 패키지로 만든 release를 현재 사용자 LaunchAgent로 설치한다. hash와 컴파일된 호환성을 담은 manifest, 변경 불가능한 release·복구 사본을 두며, launchd가 그 release의 바이너리를 실행한다고 검증한 뒤에만 선택한다. C10은 부모 lease와 후보 authority를 추가한다. Lease는 호스트에 한 번 과금되고, 자식은 lease의 남은 예산에 대해서만 admission되며 lease가 끝나면 fence된다. 후보 authority는 lease로 제한되며 launch 없이 admission만 한다. `devguard test-candidate`는 후보 tree의 build·시험·authority를 lease 하나의 자식으로 실행한다. C11은 upgrade와 repair를 추가한다. 관리자 drain은 admission을 닫으며 재시작 뒤에도 유지된다. Staged release는 drain, quiescent 백업, 닫힌 채 시작한 새 release의 검증을 거친 뒤에만 현재 release를 교체한다. 새 release가 실패하면 이전 release를 같은 journal로 다시 시작한다. 호환되지 않는 downgrade는 거절한다. Repair는 last known good release나 그 복구 사본으로 복구하며 두 번째 authority를 시작하지 않는다. C12는 SLO 판정 harness를 추가한다.
+- 자기 target을 소유하고 상태와 종료 확인을 재는 제어 probe
+- `devguard exec`로 실행하는 제한된 작업 부하
+- 전경 브라우저 fixture
+- `scripts/measure.py`: 설치된 release에 대해 protocol을 실행하고, 구간·반복·조합을 판정하며, qualified release만 승격한다.
+
+PR과 병합 후 main 전달 증거는 별도로 추적한다. [운영 문서](../../operations.md)를 참조한다.
 
 ## PR 순서와 활성화 경계
 
@@ -17,7 +23,7 @@
 | DG1-P5 | DG1-C09, DG1-C10, DG1-C11 | DG1-P4 | 설치·후보·독립 복구를 묶어 자기 적용 활성화 |
 | DG1-P6 | DG1-C12 | DG1-P5 | 기능 기준 artifact와 SLO 안정 artifact를 구분해 승격 |
 
-공통 현재 명령 python3 scripts/validate.py --offline은 Rust 1.95.0 계약 회귀를 확인하며 fake backend로 native 동작을 입증하지 않는다. C01 authority, C02 인증·transport, C03 native probe, C04 native scope, C05 native launch, C06 native 대조, C07 CLI, C08 Cargo, C09 설치, C10 부모 lease, C11 upgrade suite는 현재 제공한다. 아래에서 예정이라고 명시한 나머지 명령은 미제공이며 각 PR에서 fixture·실행 case 수·log·정리를 함께 구현하고 제공 상태를 갱신한다. 이름만 있는 테스트나 0개 실행을 통과로 처리하지 않는다. 공통 toolchain·증거·SLO 규칙은 상위 검증 문서에 있다.
+공통 현재 명령 python3 scripts/validate.py --offline은 Rust 1.95.0 계약 회귀를 확인하며 fake backend로 native 동작을 입증하지 않는다. C01 authority, C02 인증·transport, C03 native probe, C04 native scope, C05 native launch, C06 native 대조, C07 CLI, C08 Cargo, C09 설치, C10 부모 lease, C11 upgrade, C12 SLO harness suite는 현재 제공한다. 아래에서 예정이라고 명시한 나머지 명령은 미제공이며 각 PR에서 fixture·실행 case 수·log·정리를 함께 구현하고 제공 상태를 갱신한다. 이름만 있는 테스트나 0개 실행을 통과로 처리하지 않는다. 공통 toolchain·증거·SLO 규칙은 상위 검증 문서에 있다.
 
 P1은 runtime을 닫아 두고 P2는 실제 probe, P3는 launch·안전 정리, P4는 개발 진입점, P5는 설치·부모 예산·repair, P6는 측정·승격을 제공한다. C08까지 foreground daemon과 최소 단일 Cargo job·test thread bootstrap을 사용한다. P4 bundle은 삭제할 build 경로 밖에 보존한다. C10에서 부모 예산을 포함한 artifact를 먼저 기능 시험·동결한 직후 제한된 실제 자기 적용을 시작하며 SLO qualification은 C12에서 확립한다.
 
@@ -172,7 +178,7 @@ P1은 runtime을 닫아 두고 P2는 실제 probe, P3는 launch·안전 정리, 
 - 대상/산출물: 예정 macOS qualification harness·3회 결과·안정 artifact manifest와 지원 환경표; DG1 capability 문서.
 - 불변 조건: idle 10분/부하 최소 30분/3회, cold/warm 분리; DG-1 종료가 CS-RG 구현에 의존하지 않음. 미구현 MCP 결합 SLO는 여기서 합격시키지 않는다.
 - 시험: generic/Cargo 동시 소비 정상; daemon/probe/후보 실패; 부하 중 취소·재시작·late helper; foreground와 standalone 조회/종료 지연 측정.
-- 검증 명령: 현재 공통 회귀 + 예정 `python3 scripts/qualify.py dg1-macos`; 실제 CodeSpace 결합은 CSRG-C08에서 수행한다.
+- 검증 명령: 현재 공통 회귀 + **제공** `python3 scripts/qualify.py dg1-macos --offline`. macOS 전용이며 다른 플랫폼은 `not_run`으로 기록한다. SLO가 아니라 harness를 검사한다. SLO protocol 자체는 **제공** `python3 scripts/measure.py macos --release ID ...`이다. 따로 비워 둔 시간에 대상 호스트의 설치 release에 대해 실행하며, 그 판정과 승격은 완료 증거로 기록한다. 실제 CodeSpace 결합은 CSRG-C08에서 수행한다.
 - 완료 증거: source/artifact/policy/host 조합, 유효 baseline, 모든 원시 표본·p99·실패/거절/peak/처리량, 자기 적용 제한과 통과 범위.
 - rollback: 기준 artifact로 신규 개발 진입을 전환하고 실패한 조합 승격을 취소; 보존된 증거는 삭제하지 않는다.
 - 인계: CSRG-C01은 이 qualification 조합에서 pin 후보를 선정한다. DG-CACHE/DG-ADAPTERS도 이 결과 이후 시작하며 구현 완료와 플랫폼 자격은 별도 기록한다.
