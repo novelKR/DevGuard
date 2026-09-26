@@ -6,6 +6,7 @@ The repository implements **DG-0 contracts and a durable authority core** and **
 
 - [Authoritative design reference](docs/design.md) · [Korean translation](docs/ko/design.md)
 - [Historical approved design (Korean, immutable)](docs/design.ko.md)
+- [Design revision 1: CS-RG execution ownership and reuse policy](docs/design-revision-1.md) · [Korean translation](docs/ko/design-revision-1.md)
 - [Implemented contracts and trust boundaries](docs/contracts.md)
 - [Service boundary operations](docs/operations.md)
 - [Milestones and the CodeSpace dependency path](docs/milestones.md)
@@ -45,7 +46,7 @@ The approved local checkout is `/Volumes/DevData/Projects/IdeaProjects/DevGuard`
 
 The public source repository is [novelKR/DevGuard](https://github.com/novelKR/DevGuard). CodeSpace runtime consumption begins at CS-RG, which may pin the qualified release. Crates are not published; a release is installed from a local package as the current user's LaunchAgent (see the operating guide).
 
-The detailed plan defines 46 proposed implementation commit units in 23 logical PR groups. It records single registration by the execution-owning Runner and opt-in Gateway restart recovery while an independent Runner remains alive. Planning completion does not change runtime milestone status. See the [consumer readiness gates](docs/planning/consumer-readiness.md), [CodeSpace mapping](docs/planning/codespace-integration.md), and [verification and evidence rules](docs/planning/verification.md).
+The detailed plan defines 48 proposed implementation commit units in 25 logical PR groups. It records single registration by the execution-owning Runner and opt-in Gateway restart recovery while an independent Runner remains alive. Design revision 1 (2026-09-27) makes CodeSpace's execution state and ownership common, verifies the execution boundary first (CSRG-C00) and decides the legacy execution backends before final CS-RG qualification (CSRG-C09); DevGuard stays free of Codex dependencies as a present engineering choice. Planning completion does not change runtime milestone status. See the [consumer readiness gates](docs/planning/consumer-readiness.md), [CodeSpace mapping](docs/planning/codespace-integration.md), and [verification and evidence rules](docs/planning/verification.md).
 
 English is the editorial source for maintained design/planning documents. See the [translation registry](docs/translations.json); `python3 scripts/check_docs.py` validates reviewed hashes and planning references. DG-1 delivery is sequential through normal merge/main CI and cleanup. Bounded real self-use begins at C10 after freezing a functionally tested parent containing parent-budget support; C12 separately qualifies and promotes the measured release.
 

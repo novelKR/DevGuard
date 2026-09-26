@@ -18,7 +18,7 @@ class DocumentationChecks(unittest.TestCase):
             shutil.copy2(check_docs.ROOT / name, self.root / name)
 
     def test_current_pairs_and_complete_plan(self):
-        self.assertEqual(check_docs.check(self.root)["work_units"], 46)
+        self.assertEqual(check_docs.check(self.root)["work_units"], 48)
 
     def test_edit_requires_review_of_changed_pair(self):
         for name in ("docs/planning/README.md", "docs/ko/planning/README.md"):
@@ -62,6 +62,12 @@ class DocumentationChecks(unittest.TestCase):
         text = path.read_text().replace("- Prerequisites: DG-0.", "- Prerequisites: DG1-C12.", 1)
         path.write_text(text)
         with self.assertRaisesRegex(ValueError, "cycle"):
+            check_docs.check_planning(self.root)
+
+    def test_unit_numbering_is_explicit(self):
+        path = self.root / "docs/planning/milestones/CS-RG.md"
+        path.write_text(path.read_text().replace("CSRG-C00", "CSRG-C10"))
+        with self.assertRaisesRegex(ValueError, "expected 48 work definitions/assignments and 25 logical groups"):
             check_docs.check_planning(self.root)
 
     def test_missing_test_field_fails(self):

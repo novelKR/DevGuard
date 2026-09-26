@@ -4,7 +4,7 @@ Owner: DevGuard. Implementation: `implemented`; qualification: exact-source repo
 
 ## Actual history and scope
 
-Commit [`d59cbd43d206a9a9281328a946eddf1dc199f710`](https://github.com/novelKR/DevGuard/commit/d59cbd43d206a9a9281328a946eddf1dc199f710), `feat: establish DG-0 resource contracts and durable authority`, supplied all records below. DG0-R IDs are historical classifications, excluded from the 46 proposed runtime units.
+Commit [`d59cbd43d206a9a9281328a946eddf1dc199f710`](https://github.com/novelKR/DevGuard/commit/d59cbd43d206a9a9281328a946eddf1dc199f710), `feat: establish DG-0 resource contracts and durable authority`, supplied all records below. DG0-R IDs are historical classifications, excluded from the 48 proposed runtime units.
 
 | Record | Actual deliverable | Behavior/invariant | Normal/failure/race coverage |
 | --- | --- | --- | --- |

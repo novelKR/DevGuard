@@ -1,7 +1,7 @@
 # DevGuard design reference
 
-Reference date: 2026-09-22. Local source: `/Volumes/DevData/Projects/IdeaProjects/DevGuard`.
-This is the **English editorial reference** for ongoing development, with a [maintained Korean counterpart](ko/design.md). The complete historical approval remains byte-for-byte in [design.ko.md](design.ko.md), verified by [design-source.json](design-source.json). This reference consolidates that design and the subsequently approved [decisions](planning/decisions.md); it does not claim to be the original approval artifact. Concrete work boundaries and source mapping are in [planning](planning/README.md); [contracts](contracts.md) describe implemented behavior only.
+Reference date: 2026-09-22; revised 2026-09-27 by [design revision 1](design-revision-1.md). Local source: `/Volumes/DevData/Projects/IdeaProjects/DevGuard`.
+This is the **English editorial reference** for ongoing development, with a [maintained Korean counterpart](ko/design.md). The complete historical approval remains byte-for-byte in [design.ko.md](design.ko.md), verified by [design-source.json](design-source.json). This reference consolidates that design, the subsequently approved [decisions](planning/decisions.md) and the design revisions the user directs, such as [revision 1](design-revision-1.md); it does not claim to be the original approval artifact. The historical approval preserves the decisions of its time, this reference is the current editorial baseline, and milestone status changes only with actual implementation and verification. Concrete work boundaries and source mapping are in [planning](planning/README.md); [contracts](contracts.md) describe implemented behavior only.
 
 ## Purpose and trust boundary
 
@@ -13,7 +13,7 @@ The initial trust scope is one operating account and registered **cooperative wo
 
 ## Responsibilities and identity
 
-The daemon owns capacity, static reservations, admission, leases, pressure policy and eventual registered-cache policy. The launcher verifies pre-payload scope and policy; it is not a general process server. The CLI controls commands it starts. Product adapters translate policy without moving product types into authority core. Contract/client, core, native backend, launcher, daemon/CLI and language adapters remain separate. DevGuard must build/test/release without CodeSpace or Codex; CodeSpace later pins the small client by full SHA.
+The daemon owns capacity, static reservations, admission, leases, pressure policy and eventual registered-cache policy. The launcher verifies pre-payload scope and policy; it is not a general process server. The CLI controls commands it starts. Product adapters translate policy without moving product types into authority core. Contract/client, core, native backend, launcher, daemon/CLI and language adapters remain separate. The contract, core and generic client contain no Codex product types, model sessions, CodeSpace workspace authority or PTY ownership. DevGuard's default distribution and shared client currently build, test and release without CodeSpace or Codex, and CodeSpace pins the small client by full SHA. This is the present engineering choice, not a permanent prohibition: reusing a low-level utility in an execution or platform adapter is decided by the code it actually replaces, contract fit, dependency propagation, recovery path and requalification cost ([revision 1, D3](design-revision-1.md#103-d3--devguard-dependency-policy)).
 
 One normal authority exists per operating account/executor host, using canonical protected state and exclusive ownership. Alternate socket/state paths cannot create another normal budget. Remote workers consume their execution host's authority; physical host and guest capacities are not summed as independent headroom.
 
@@ -21,7 +21,7 @@ One normal authority exists per operating account/executor host, using canonical
 
 Authenticate socket parent 0700, socket 0600, OS peer UID/PID and separate consumer role/generation secret. UID alone cannot grant control_service. Separate caller-registration secrets, one-time helper permits and administrative authority. Transfer credentials through private FDs, then close them before user payload; never leave them in argv/environment/debug/journal. Project settings may tighten operator policy but cannot raise capacity/roles or impersonate consumers.
 
-For CodeSpace, the execution-owning Runner registers once: Gateway PID for InProcess, worker PID for UDS. A single static reservation covers Gateway and Runner. SDK service-exec prepares startup/credentials and the selected Runner completes registration. Service-plus-subworker registration is deferred until actual multi-Runner/shared-reservation need.
+For CodeSpace, the execution-owning Runner registers one instance: Gateway PID for InProcess, worker PID for UDS. Each bounded session registers that instance again. A single static reservation covers Gateway and Runner. There is no separate service-exec path: the Gateway hands the consumer credential to a UDS worker through `CredentialHandoff`, and InProcess reads it directly. Service-plus-subworker registration is deferred until actual multi-Runner/shared-reservation need.
 
 ## Budget and pressure policy
 
@@ -67,11 +67,23 @@ Python, JS, make/ninja, VM/container and learned estimates are later work. Limit
 
 Future GC: exclusive use/reclaim coordination → durable mark → same-filesystem trash rename → interruptible bounded sweep → measured free space. Validate identity/no symlink escape; trash remains occupied across restart. Initial inactive TTL seven days and cache target min(8% storage, 50 GiB) apply only to eligible classes and remain unqualified defaults. APFS du is not physical space recovery. Do not automatically change CARGO_TARGET_DIR or enable sccache.
 
+## Execution ownership (revision 1)
+
+[Design revision 1](design-revision-1.md) keeps the correctness goals and re-evaluates how they are implemented. The goals: one party reaps each process; a managed execution never loses its observation before reaping; permit, credential and transcript descriptors never reach unrelated executions or payloads; a lost reply, timeout, EOF or root reap alone never proves non-execution or whole-scope termination; a preparation is consumed once and uncertain work never re-executes automatically; a failed new grant never blocks status or termination; termination, output cleanup, workspace release and lease return stay distinct; implementation, functional, platform and SLO evidence are recorded separately.
+
+CodeSpace coordinates execution identity, approval linkage, state, timeout, termination requests, output and release in one layer. It confines the differences between PTY, pipe and resource-managed execution to a narrow backend boundary: OS child creation, I/O attachment, terminal setup, exit observation and the actual reap. A backend that reaps by itself (`BackendReaped`, the initial legacy `off` paths) never advertises an unreaped-exit state. The `required` path uses `OwnerControlledReap` and observes before reaping through the one object that owns the child. A preparation is an owned, one-time object, never cloned or rebuilt from argv.
+
+- **D1.** `required` execution defaults to a CodeSpace-owned Unix transport at the current pin. Before writing new code, record the reuse options and their contract differences: a public API, an upstream candidate with the same contract, bounded adaptation with recorded provenance (A4), then in-house code. Codex's `ProcessDriver` qualifies only under its output-loss, backpressure and Drop criteria.
+- **D2.** Before final CS-RG qualification, the legacy `off` backends are either integrated and removed or kept as a limited compatibility backend on recorded grounds.
+- **D3.** As stated under [responsibilities and identity](#responsibilities-and-identity).
+
+Revision 1 keeps the Codex pin; changing it is a separate decision based on verification. [ADR-006](planning/decisions.md#adr-006--codespace-execution-ownership-and-reuse-policy) records the adaptation policy and the revisit triggers.
+
 ## Consumer integration and recovery
 
-[CodeSpace integration](planning/codespace-integration.md) owns fixed source paths, errors and flow. Preserve existing Codex pin. Compatibility has separate source/client SHA, installed daemon/helper hashes and product wire/capability axes. Strict decoding requires real old/new fixtures; added fields are not inherently compatible. Resource settings default off; required never silently degrades.
+[CodeSpace integration](planning/codespace-integration.md) owns fixed source paths, errors and flow. Revision 1 keeps the existing Codex pin; a later change is a separate decision based on verification. Compatibility has separate source/client SHA, installed daemon/helper hashes and product wire/capability axes. Strict decoding requires real old/new fixtures; added fields are not inherently compatible. Resource settings default off; required never silently degrades.
 
-After existing authorization/workspace FIFO, acquire a Runner slot and PrepareExec before consuming approval. Fail preparation promptly within 250 ms; no long product resource queue. On success, same-attempt approval CAS precedes ExecPrepared. Track non-start, confirmed helper, READY, executable failure and unknown separately. Resource shortage, control-service failure and unsupported policy have separate errors. Preserve `terminate_process`, existing workspace errors and patch-operation boundaries.
+After existing authorization/workspace FIFO, acquire a Runner slot and PrepareExec before consuming approval. Fail preparation promptly within 250 ms; no long product resource queue. The 250 ms preparation budget, the five-second Prepared lifetime and DG-1's 250 ms per-frame deadline are distinct limits. On success, same-attempt approval CAS precedes ExecPrepared. Track non-start, confirmed helper, READY, executable failure and unknown separately. Resource shortage, control-service failure and unsupported policy have separate errors. Preserve `terminate_process`, existing workspace errors and patch-operation boundaries.
 
 Control/data processing and transport must have separate capacity and bounded aggregate queues/bytes/retention, including locks, writers and callbacks. Planned work concurrency is eight with 64 queued, while control retains independent capacity. Inflight replay shares dispatch; eviction never enables another execution. Existing handles remain queryable/terminable during authority failure.
 

@@ -6,7 +6,7 @@
 
 | 예정 PR | 작업 | 선행 PR | 안전 경계 |
 | --- | --- | --- | --- |
-| DGL-P1 | DGL-C01, DGL-C02 | CSRG-P4 | 유효 용량 probe와 실제 자원 제어 |
+| DGL-P1 | DGL-C01, DGL-C02 | CSRG-P5 | 유효 용량 probe와 실제 자원 제어 |
 | DGL-P2 | DGL-C03, DGL-C04 | DGL-P1 | payload 전 containment와 자손 종료·정리 |
 | DGL-P3 | DGL-C05, DGL-C06 | DGL-P2 | 실제 환경 fault/pressure와 제품 qualification |
 

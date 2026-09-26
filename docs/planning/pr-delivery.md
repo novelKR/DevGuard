@@ -12,14 +12,24 @@ The authorized execution completes documentation preparation, then DG1-C01–C12
 | DGP-D04 | Same branch | Index, README/roadmap and ledger links | Cross-references/DG-0 regression → PR #1 |
 | CSP-D01 | CodeSpace `codex/devguard-planning-links` | Bilingual adoption, Runner registration and recovery scope | Reviewed pair → D02 |
 | CSP-D02 | Same branch | Immutable DevGuard revision/PR links and registry | Site build/integrity → PR #65 |
+| CSP-D03 | CodeSpace `codex/devguard-dg1-status` | DG-1 completion and the unstarted CS-RG in the integration roadmap | Reviewed pair/site build → [CodeSpace #66](https://github.com/novelKR/CodeSpace/pull/66), merge `a1166870acbba9791d7170da6496a39dde6f4a69` |
+| DGP-D05 | DevGuard `codex/cs-rg-plan-review` | CS-RG, integration specification, ADR-001 and contracts aligned with the implemented DG-1 consumer interface | Plan review → D06 |
+| DGP-D06 | Same branch | [Design revision 1](../design-revision-1.md), adopted at the user's instruction: execution ownership and reuse policy, CSRG-C00/C09 and the revised planning set | User review before merge → CSP-D04 |
+| CSP-D04 | CodeSpace, branch created when the unit starts | Counterpart documentation for design revision 1: integration roadmap, architecture, execution substrate, Codex reuse, upstream update, dependency rules and CI selection | Links the merged DevGuard SHA → before CSRG-P0 |
 
-These existing documentation commits are separate from the 46 runtime units. DevGuard started from `d59cbd43d206a9a9281328a946eddf1dc199f710`. CodeSpace PR #65 includes roadmap `fb822fc24c98f6628dce62d33a5cc67275f8ca34` over runtime `e94d21475643608ad2a466256fb57266b86faa47`. Preserve the original CodeSpace checkout, user branch and staged `.codex/config.toml`.
+These documentation units are separate from the 48 runtime units. DevGuard started from `d59cbd43d206a9a9281328a946eddf1dc199f710`. CodeSpace PR #65 includes roadmap `fb822fc24c98f6628dce62d33a5cc67275f8ca34` over runtime `e94d21475643608ad2a466256fb57266b86faa47`. Preserve the original CodeSpace checkout, user branch and staged `.codex/config.toml`.
 
 Append preparation changes to [DevGuard #1](https://github.com/novelKR/DevGuard/pull/1); do not rewrite existing commits or immutable links. Preserve `docs/design.ko.md` and its checksum as historical approval, add an English design reference and maintained Korean counterpart, convert planning to English authority and enforce reviewed translation hashes. Update C10 early self-use guidance.
 
 Update [CodeSpace #65](https://github.com/novelKR/CodeSpace/pull/65) to the resulting **actual full documentation SHA**, review both languages and refresh only the relevant registry entry. Do not link an unmerged path on main. A documentation revision is independent of runtime dependency pins.
 
 Validate and merge DevGuard #1 first, verify its push-main workflows, then validate/merge CodeSpace #65 and verify runtime main CI plus the existing documentation publication workflow. Existing checks are not waived because a PR changes documentation. Only after both delivery cycles finish may DG1-P1 begin.
+
+## Design revisions, documentation PRs and code PRs
+
+Design revision 1 rests on the user's explicit instruction of 2026-09-27, after DG-1 completed, to re-examine the CS-RG design. Past approval identifies what changes; it is not grounds for rejecting an alternative. A documentation PR such as DGP-D05/D06 limits its file changes to documentation and documentation checks, but it changes design decisions that bind later implementation. It neither implements nor qualifies anything, and it does not invalidate DG-1 qualification. A code PR that changes a runtime artifact never presents earlier verification as verification of the new implementation.
+
+For CS-RG the final head is verified in this order: CSRG-C07 parity, then the CSRG-C09 decision, rerunning the affected parity if C09 changes code, then CSRG-C08 on that head. Record PR-head results and post-merge main results separately. CSP-D04 records immutable DevGuard links only after the DevGuard merge commit exists.
 
 ## One implementation PR at a time
 
@@ -47,7 +57,7 @@ If merge or post-merge verification fails, keep the relevant worktree and eviden
 | DG1-P5 | DG1-C09/C10/C11 | Protected installation, parent-budget self-use and independent recovery |
 | DG1-P6 | DG1-C12 | Real functional/failure/foreground qualification and measured promotion |
 
-Other logical groups remain future work: CSRG four, P1R three, DGL three, DGC three, DGA four. Cross-repository Linux work may require linked PRs; 23 is a logical grouping, not a promised count of GitHub PR objects. Do not enable partial launch without cleanup, lanes without aggregate bounds or cache rename without restart-safe sweep.
+Other logical groups remain future work: CSRG six (P0–P5), P1R three, DGL three, DGC three, DGA four. Cross-repository Linux work may require linked PRs; 25 is a logical grouping, not a promised count of GitHub PR objects. Do not enable partial launch without cleanup, lanes without aggregate bounds or cache rename without restart-safe sweep.
 
 ## Bootstrap and early self-use
 

@@ -6,7 +6,7 @@
 
 | 예정 PR | 작업 | 선행 PR | 함께 검토할 경계 |
 | --- | --- | --- | --- |
-| P1R-P1 | P1R-C01, P1R-C02 | CSRG-P4 | opt-in 수명과 process 전용 기록; 복구 활성화 전 상태 일관성 |
+| P1R-P1 | P1R-C01, P1R-C02 | CSRG-P5 | opt-in 수명과 process 전용 기록; 복구 활성화 전 상태 일관성 |
 | P1R-P2 | P1R-C03, P1R-C04 | P1R-P1 | 제어권 fence와 workspace/승인/lease 대조를 함께 제공 |
 | P1R-P3 | P1R-C05, P1R-C06 | P1R-P2 | 관측 손실·Runner 손실 처리와 반복 장애 qualification |
 

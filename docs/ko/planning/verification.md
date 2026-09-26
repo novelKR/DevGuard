@@ -6,13 +6,13 @@
 
 | 범위 ID | 대상과 소유 | 합격 판단 | 현재 제공 여부 |
 | --- | --- | --- | --- |
-| V-DOC-DG | 이번 DevGuard 문서/메타데이터 | checksum·license·ID·DAG·링크·46작업/23묶음·필수 항목·상태 보존 | 문서 검토 및 아래 재현 검사 가능 |
+| V-DOC-DG | 이번 DevGuard 문서/메타데이터 | checksum·license·ID·DAG·링크·48작업/25묶음·필수 항목·상태 보존 | 문서 검토 및 아래 재현 검사 가능 |
 | V-DG0 | contract/core, DevGuard | Rust1.95.0 fmt/clippy·44개 계약·의존 graph·source fingerprint | 기존 validator 제공 |
 | V-DG1-FUNCTION | 실제 auth/probe/launch/reconcile/CLI/운영 | DG1-C01~C11 정상·실패·경쟁 및 기능 artifact | C01 authority·C02 로컬 인증/transport·C03 native probe·C04 native scope 제공; 후속 범위는 각 묶음에서 제공 |
 | V-DG1-SLO | 독립 CLI/daemon·개발·self-use | DG1-C12 개발/foreground 및 standalone control 측정 | 대상 호스트에서 release `0.1.0-5daee5d-b3fa569e`에 대해 qualified(protocol-2: cold·warm 각 세 반복 모두 통과, 승격); CS-RG 기능을 선행 요구하지 않음 |
 | V-CS-DOC | CodeSpace 한·영 registry/site | paired hash·기존 docs tests·고정 환경 build·integrity·화면 검토 | 기존 명령 제공 |
 | V-CS-UPSTREAM | CodeSpace 기존 Codex qualification | pin/policy/format/dependency/adapter/PTY/filesystem/platform gates | 기존 제공, 실제 platform별 수행 |
-| V-CS-RG | CodeSpace 결합 | CSRG-C07/C08의 모드 동등성·승인·replay·관제 포화 SLO | 미구현 |
+| V-CS-RG | CodeSpace 결합 | CSRG-C00 실행 경계 적합성, 한 프로세스 안의 혼합 실행을 포함한 C07 모드 동등성, C09 backend 결정, C08 승인·replay·관제 포화 SLO | 미구현 |
 | V-P1 | 독립 Runner+Gateway 재시작 | P1R-C06의 동일 실행·fence·timeout·출력/unknown | 미구현 |
 | V-LINUX | 실제 Linux scope와 제품 조합 | DGL-C05/C06 controller·ancestor·권한·자손·SLO | 미구현; fake cgroup과 분리 |
 | V-CACHE / V-ADAPTER | cache/tool/executor | DGC-C06, DGA-C02/C04/C06/C08의 해당 조합 | 미구현 |
@@ -70,8 +70,8 @@ python3 scripts/validate-upstream.py linux-isolation
 V-DOC-DG는 scripts/check_docs.py와 수동 의미 검토로 영어/한국어 hash·작업·링크를 검사하며 기존 runtime 검증을 보존한다. 실행 로그와 결과를 ignored evidence에 보존한다.
 
 1. `docs/design-source.json`의 SHA-256을 실제 설계 byte와 비교하고 기준 commit의 LICENSE/NOTICE·runtime·Cargo·workflow를 대조하고 validator의 기존 gate가 제거되지 않았는지 확인한다.
-2. 7개 milestone 파일의 `### PREFIX-Cnn` 정의가 DG1 12, CSRG 8, P1R 6, DGL 6, DGC 6, DGA 8로 총46개인지 확인한다. DG0-R 이행 기록과 이번 DGP/CSP 문서 commit을 제외한다.
-3. PR table의 고유 계획 ID가 6+4+3+3+3+4=23개인지, 각 작업이 한 묶음에 속하는지 확인한다. 각 `선행` 필드와 milestone ledger graph를 추출해 정의되지 않은 참조와 cycle을 거절한다.
+2. 7개 milestone 파일의 `### PREFIX-Cnn` 정의가 DG1 12, CSRG 10(C00~C09), P1R 6, DGL 6, DGC 6, DGA 8로 총48개인지 확인한다. DG0-R 이행 기록과 이번 DGP/CSP 문서 commit을 제외한다.
+3. PR table의 고유 계획 ID가 6+6+3+3+3+4=25개(CSRG는 P0~P5)인지, 각 작업이 한 묶음에 속하는지 확인한다. 각 `선행` 필드와 milestone ledger graph를 추출해 정의되지 않은 참조와 cycle을 거절한다.
 4. 작업마다 소유/예정 제목·문제/동작·선행·대상/산출물·불변 조건·정상/실패/경쟁 시험·명령 제공 상태·완료 증거·rollback·인계가 있는지 확인하고 내용의 구체성은 사람이 다시 읽는다.
 5. Markdown 로컬 링크와 `milestones.json` 문서 경로, 기존 영어 진입점, 외부 고정 source 링크를 확인한다. 미래 SHA/PR 번호와 현재 없는 CLI를 실행 지침처럼 쓰지 않는다.
 6. `milestones.json`의 기존 상태/선행/critical_path를 원본과 비교한다. 정본 design/document 참조 외의 기존 상태·선행은 보존한다.
@@ -169,6 +169,7 @@ Framing은 poll·descriptor O_NONBLOCK·호출별 nonblocking I/O로 Darwin time
 | launch | helper 생성 전/READY 전/READY 후 실패, cancel/expiry/late helper | DG1-C05/C06, CSRG-C07 |
 | 수명 | root 종료/자손 잔류·PID reuse·tracking loss·원래 boot deadline | DG1-C03/C04/C06, DGL-C04 |
 | 관제 | 큐·누적 byte 포화·느린 stdin/reader·shared lock/callback·동시 replay | CSRG-C05~C08 |
+| 실행 소유권 | 단일 회수자·FD/PTY 구성·legacy/관리 혼합 spawn·bridge 손실·backend 수렴 | CSRG-C00/C03/C06/C07/C09 |
 | 자기 적용/upgrade | 후보 crash·과도 budget·parent 소실·정책/journal 실패·구신 strict decoding | DG1-C09~C12 |
 | Gateway 복구 | 동시 Gateway·stale epoch·종료/reconnect·Runner loss·출력 gap | P1R-C01~C06 |
 | Linux | 실제 controller/ancestor/권한·sandbox/proxy·OOM·자손 회수 | DGL-C01~C06 |
@@ -176,6 +177,41 @@ Framing은 poll·descriptor O_NONBLOCK·호출별 nonblocking I/O로 Darwin time
 | adapter/executor | 옵션 충돌·중첩 token/FD·자식 budget·CLI와 executor 수명 차이 | DGA-C01~C08 |
 
 실패 주입은 시험 전용 scope/root와 명시 budget에서 수행한다. 최초 R1은 제한된 기능 시험이며, 모든 부하를 일상 호스트에 무제한 주입하는 권한이 아니다. 시험 중단은 신규 작업을 닫고 실제 scope를 대조하며 결과를 실패/불확실 그대로 보존한다.
+
+## CS-RG 실행 검증
+
+[설계 개정 1](../design-revision-1.md)이 CS-RG에 정한 요구다. 기본 행렬은 자원 모드(`off`/`required`) × transport(pipe/PTY) × Runner 모드(InProcess/UDS)이며, 경로별 단독 성공만으로 spawn·descriptor 보호가 검증되지 않으므로 한 프로세스 안의 혼합 실행을 별도 축으로 둔다.
+
+| 검증 영역 | 필수 사례 | 담당 작업 |
+| --- | --- | --- |
+| 슬롯·준비 | 동시 한도 초과, 준비 만료, 취소, 늦은 worker 실행 | CSRG-C03 |
+| 실행 identity | 동일 attempt 재요청, 의미 변경 충돌, 응답 유실 | CSRG-C04 |
+| helper | permit 유실, 잘못된 helper, READY 전후 실패 | CSRG-C04/C07 |
+| 회수 | root 즉시 종료, 생존 자손, timeout·terminate·shutdown 경쟁 | CSRG-C00/C03 |
+| 소유권 | waiter 취소, backend Drop, `ECHILD`, 이중 회수 방지 | CSRG-C00/C03 |
+| descriptor | 관계없는 동시 spawn, payload 검사, jobserver 유지, 실패 정리 | CSRG-C00/C02/C07 |
+| PTY | 초기 크기, resize, controlling terminal, session·group, EOF | CSRG-C00/C07 |
+| 출력 | 큰 출력, 느린 reader, bridge lag, tail 보존, 상한 초과 | CSRG-C06 |
+| authority 장애 | 회수 전 `Observe` 장애, daemon 재시작, 신규 허가 실패 중 기존 제어 | CSRG-C05/C07 |
+| rollback | 신규 시작 차단, 기존 실행 drain, unknown 보존, stale journal 복원 금지 | CSRG-C07/C08 |
+
+실패 주입 시험에서 모든 자원이 즉시 반환될 필요는 없다. 불확실성이 남으면 Suspect나 점유 상태가 올바른 결과일 수 있다. 다만 그 상태를 관찰할 수 있어야 하며 허위 성공·자동 재실행·잘못된 자원 재할당으로 이어지지 않아야 한다.
+
+**증거 수준.** 모든 주장의 증거 수준을 밝힌다: 기록(PR 본문·보고서·ledger), 고정 revision의 코드 검토, 시험 실행, 원시 데이터 재검증. 미검증이라고 하기 전에 기록을 찾아보며, 낮은 수준의 증거를 높은 수준처럼 제시하지 않는다.
+
+**backend 적합성과 유지보수.** CSRG-C09는 “코드가 짧아졌다”만이 아니라 다음 측정값으로 D2를 결정한다.
+- 제품의 spawn 진입점과 실제 회수 지점 수
+- 독립 수명주기 구현과 중복 unsafe·descriptor 코드
+- 추가되거나 제거된 bridge·queue·task
+- 실제 graph에서의 runtime·build 의존 변화
+- 시험 중복과 범위(삭제한 시험과 공통 계약으로 통합한 시험을 구분)
+- pin 변경 때 검토해야 할 파일과 계약
+
+정량화하지 않은 개발 시간은 추정치로 표시하고, “A1은 저비용, A4는 고비용” 같은 상대 평가에도 어떤 항목을 셌는지 적는다. `ProcessDriver`나 이식 코드 후보는 [CodeSpace 결합 명세](codespace-integration.md#오류관제수명)와 [ADR-006](decisions.md#adr-006--codespace-실행-소유권과-재사용-정책)의 계약 기준을 만족해야 한다.
+
+**의존성 측정.** 근거로 쓰는 의존성 수치에는 SHA, target, feature, runtime/build/dev 구분, 그 수치를 만든 명령을 함께 기록한다. 이 정보가 없으면 채택 기준이 아니라 검토 메모로만 남는다.
+
+**플랫폼과 SLO 기록.** hosted CI는 그 환경에서 가능한 기능·호환성·장애 시험을 실행하고 나머지는 `not_run`으로 기록한다. qualification 호스트의 성공이 hosted CI를 대신하지 않으며, hosted skip이 결합 실패를 뜻하지도 않는다. 결과마다 CodeSpace·DevGuard client source SHA, daemon/helper release와 hash, Codex SHA, backend, wire/capability, 운영 정책, OS·architecture·호스트, 실제 수행한 시험과 `not_run` 사유, 원시 로그·보고서 hash를 함께 기록한다. 문서만 바뀌었다고 DG-1 qualification을 무효화하지 않으며, runtime artifact가 바뀌었다면 이전 검증을 새 구현의 검증처럼 제시하지 않는다.
 
 ## SLO와 반복 방법
 
