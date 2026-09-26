@@ -11,6 +11,13 @@
       "reviewed_translation_sha256": "ec2dcf5640d16b1d6a0194b3f2f20cc261517a7752befb4ee40557316c2bcfc5"
     },
     {
+      "id": "design-revision-1",
+      "source": "docs/design-revision-1.md",
+      "translation": "docs/ko/design-revision-1.md",
+      "reviewed_source_sha256": "da447f08e51270189887f79640765d0eef38a92fb1cfd477c12325d06a8d8cc4",
+      "reviewed_translation_sha256": "35be92cdf1314f5ef461152c88a249329e5bb563e664e2617dbbc60b553fffe3"
+    },
+    {
       "id": "planning-readme",
       "source": "docs/planning/README.md",
       "translation": "docs/ko/planning/README.md",
