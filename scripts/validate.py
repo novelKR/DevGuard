@@ -79,6 +79,9 @@ def dependency_boundary(offline, environment, output):
         "devguard-cli": {"devguard-contract", "devguard-client", "devguard-daemon", "devguard-cargo"},
         # The Cargo adapter is a pure transformation over the contract types.
         "devguard-cargo": {"devguard-contract"},
+        # The qualification harness measures a service as an ordinary CLI owner;
+        # it is never packaged in a release.
+        "devguard-qualify": {"devguard-contract", "devguard-client", "devguard-daemon", "devguard-cli"},
     }
     if roots != set(allowed):
         raise RuntimeError("unexpected workspace graph; update explicit boundaries with new crates")
@@ -100,6 +103,11 @@ def dependency_boundary(offline, environment, output):
     if any(d["name"] == "devguard-daemon" and "test-fixtures" in d.get("features", []) and d.get("kind") != "dev"
            for d in cli["dependencies"]):
         raise RuntimeError("devguard-cli may enable daemon test fixtures only for tests")
+    # Like the CLI, the harness compiles fixture authorities for its tests only.
+    qualify = next(p for p in packages if p["name"] == "devguard-qualify")
+    if any(d["name"] == "devguard-daemon" and "test-fixtures" in d.get("features", []) and d.get("kind") != "dev"
+           for d in qualify["dependencies"]):
+        raise RuntimeError("devguard-qualify may enable daemon test fixtures only for tests")
     contract = next(p for p in packages if p["name"] == "devguard-contract")
     if {d["name"] for d in contract["dependencies"]} != {"serde", "serde_json", "sha2"}:
         raise RuntimeError("contract must remain independent of persistence and host adapters")
@@ -142,8 +150,9 @@ def main():
         source_contract()
         report["stages"].append({"name": "source-contract", "status": "passed"})
         subprocess.run([sys.executable, "scripts/check_docs.py"], cwd=ROOT, check=True)
-        subprocess.run([sys.executable, "-B", "-m", "unittest", "discover", "-s", "scripts",
-                        "-p", "test_check_docs.py"], cwd=ROOT, check=True)
+        for tests in ("test_check_docs.py", "test_measure.py"):
+            subprocess.run([sys.executable, "-B", "-m", "unittest", "discover", "-s", "scripts",
+                            "-p", tests], cwd=ROOT, check=True)
         report["stages"].append({"name": "documentation", "status": "passed"})
         dependency_boundary(args.offline, environment, output)
         report["stages"].append({"name": "dependency-boundary", "status": "passed"})

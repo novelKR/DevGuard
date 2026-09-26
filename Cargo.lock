@@ -171,6 +171,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "devguard-qualify"
+version = "0.1.0"
+dependencies = [
+ "devguard-cli",
+ "devguard-client",
+ "devguard-contract",
+ "devguard-daemon",
+ "libc",
+ "serde_json",
+ "tempfile",
+ "uuid",
+]
+
+[[package]]
 name = "digest"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"

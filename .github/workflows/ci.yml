@@ -64,6 +64,11 @@ jobs:
       - name: Native upgrade and repair functional checks
         if: runner.os == 'macOS'
         run: python3 scripts/qualify.py dg1-upgrade --output target/qualification/dg1-upgrade
+      - name: Native SLO harness functional checks
+        if: runner.os == 'macOS'
+        # The fixture case needs Google Chrome; a runner without it records the
+        # case not run, and the summary shows incomplete. No SLO is measured here.
+        run: python3 scripts/qualify.py dg1-macos --allow-incomplete --output target/qualification/dg1-macos
       - name: Preserve qualification evidence
         if: always()
         uses: actions/upload-artifact@v6
@@ -78,9 +83,9 @@ jobs:
           import json, os
           from pathlib import Path
           with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as out:
-              for name in ['ci', 'dg1-authority', 'dg1-auth', 'dg1-probes', 'dg1-scopes', 'dg1-launch', 'dg1-reconcile', 'dg1-cli', 'dg1-cargo', 'dg1-bootstrap', 'dg1-self-use', 'dg1-upgrade']:
+              for name in ['ci', 'dg1-authority', 'dg1-auth', 'dg1-probes', 'dg1-scopes', 'dg1-launch', 'dg1-reconcile', 'dg1-cli', 'dg1-cargo', 'dg1-bootstrap', 'dg1-self-use', 'dg1-upgrade', 'dg1-macos']:
                   path = Path('target/qualification') / name / 'report.json'
                   status = json.loads(path.read_text())['status'] if path.exists() else 'not_run'
                   out.write(name + ': ' + status + '\n\n')
-              out.write('Contract regression, service/UDS, native host evidence, native scope, launch helper, reconciliation, command-line owner, Cargo adapter, installation, parent lease, upgrade and repair functional checks only; native suites run on macOS. Real self-use under an installed parent and foreground SLO qualification are not run.\n')
+              out.write('Contract regression, service/UDS, native host evidence, native scope, launch helper, reconciliation, command-line owner, Cargo adapter, installation, parent lease, upgrade and repair, and SLO harness functional checks only; native suites run on macOS. Real self-use under an installed parent and the SLO protocol itself are not run.\n')
           PY

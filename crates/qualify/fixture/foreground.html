@@ -1,0 +1,139 @@
+<!doctype html>
+<!-- DevGuard foreground fixture (DG1-C12). Fixed page for the SLO protocol:
+     measures input to next paint and frame progression, and records every
+     visibility and focus change. Reports are hashed with this file. -->
+<html lang="en">
+<meta charset="utf-8">
+<title>DevGuard foreground fixture</title>
+<style>
+  body { font: 16px -apple-system, system-ui, sans-serif; margin: 24px; }
+  #spinner { width: 48px; height: 48px; background: #2f6fd6; animation: spin 1s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  #field { width: 320px; font-size: 16px; }
+  #scroller { height: 240px; width: 360px; overflow-y: scroll; border: 1px solid #888; margin-top: 12px; }
+  #content { height: 20000px; background: repeating-linear-gradient(#fff 0 40px, #e8f0ff 40px 80px); }
+  #counter { margin-top: 12px; font-variant-numeric: tabular-nums; }
+</style>
+<div id="spinner"></div>
+<p><input id="field" autocomplete="off"> <button id="button">Press</button></p>
+<div id="scroller"><div id="content"></div></div>
+<div id="counter">0</div>
+<script>
+"use strict";
+// An input whose next frame has not been produced after this long is
+// reported without a paint; the harness counts it as a failure.
+const PAINT_LIMIT_MS = 5000;
+const state = {
+  frames: [],
+  pending: [],
+  inputs: [],
+  timing: [],
+  validity: [],
+  handled: { keydown: 0, pointerdown: 0, wheel: 0 },
+  sequence: 0,
+};
+
+function frame(time) {
+  state.frames.push(time);
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+// The next frame after a change is produced once the animation frame
+// callbacks have run; a message posted from that callback is handled after
+// the frame, which marks its paint.
+function markNextPaint(record) {
+  requestAnimationFrame(() => {
+    const channel = new MessageChannel();
+    channel.port1.onmessage = () => { record.paint = performance.now(); };
+    channel.port2.postMessage(0);
+  });
+}
+
+const counter = document.getElementById("counter");
+function handle(event) {
+  state.handled[event.type] += 1;
+  state.sequence += 1;
+  const record = {
+    sequence: state.sequence,
+    type: event.type,
+    stamp: event.timeStamp,
+    handled: performance.now(),
+    paint: null,
+  };
+  counter.textContent = event.type + " " + state.sequence;
+  const field = document.getElementById("field");
+  if (field.value.length > 64) field.value = "";
+  counter.style.color = state.sequence % 2 ? "#2f6fd6" : "#d62f6f";
+  state.pending.push(record);
+  markNextPaint(record);
+}
+// Key input is heard wherever focus is on the page: a click moves it to the button.
+document.addEventListener("keydown", handle);
+document.getElementById("button").addEventListener("pointerdown", handle);
+document.getElementById("scroller").addEventListener("wheel", handle, { passive: true });
+
+new PerformanceObserver((list) => {
+  for (const entry of list.getEntries()) {
+    if (!(entry.name in state.handled)) continue;
+    state.timing.push({
+      name: entry.name,
+      start: entry.startTime,
+      duration: entry.duration,
+      processing_start: entry.processingStart,
+      processing_end: entry.processingEnd,
+    });
+  }
+}).observe({ type: "event", durationThreshold: 16, buffered: true });
+
+function observe(kind) {
+  state.validity.push({
+    event: kind,
+    time: performance.now(),
+    visible: document.visibilityState === "visible",
+    focus: document.hasFocus(),
+  });
+}
+document.addEventListener("visibilitychange", () => observe("visibilitychange"));
+window.addEventListener("blur", () => observe("blur"));
+window.addEventListener("focus", () => observe("focus"));
+window.addEventListener("pagehide", () => observe("pagehide"));
+
+// Everything recorded since the last drain, as one JSON text. Inputs are
+// returned once painted, or without a paint after PAINT_LIMIT_MS.
+window.drain = () => {
+  const now = performance.now();
+  const kept = [];
+  for (const record of state.pending) {
+    if (record.paint !== null || now - record.handled > PAINT_LIMIT_MS) state.inputs.push(record);
+    else kept.push(record);
+  }
+  state.pending = kept;
+  const out = {
+    now,
+    visible: document.visibilityState === "visible",
+    focus: document.hasFocus(),
+    handled: Object.assign({}, state.handled),
+    pending: kept.length,
+    frames: state.frames,
+    inputs: state.inputs,
+    timing: state.timing,
+    validity: state.validity,
+  };
+  state.frames = [];
+  state.inputs = [];
+  state.timing = [];
+  state.validity = [];
+  return JSON.stringify(out);
+};
+
+// The geometry the harness aims its input at.
+window.targets = () => {
+  const box = (id) => {
+    const r = document.getElementById(id).getBoundingClientRect();
+    return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+  };
+  return JSON.stringify({ field: box("field"), button: box("button"), scroller: box("scroller") });
+};
+</script>
+</html>

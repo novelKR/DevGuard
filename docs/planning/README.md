@@ -35,7 +35,7 @@ DG-1 qualifies standalone daemon/CLI, development workloads and bounded self-use
 | Milestone | Owner | Proposed work commits | Logical PR groups | Baseline state |
 | --- | --- | --- | --- | --- |
 | [DG-0](milestones/DG-0.md) | DevGuard | One actual initial commit, documented retrospectively | No invented historical PRs | Implemented contract/fake scope |
-| [DG-1](milestones/DG-1.md) | DevGuard | 12 | 6 | In progress: C01 configuration/storage and C02 authenticated transport; execution closed |
+| [DG-1](milestones/DG-1.md) | DevGuard | 12 | 6 | Implemented (C01–C12); macOS SLO qualified for release `0.1.0-5daee5d-b3fa569e` |
 | [CS-RG](milestones/CS-RG.md) | CodeSpace | 8 | 4 | Not started |
 | [P1-RECOVERY](milestones/P1-RECOVERY.md) | CodeSpace | 6 | 3 | Not started |
 | [DG-LINUX](milestones/DG-LINUX.md) | DevGuard and CodeSpace | 6 | 3 | Not started; required overall |

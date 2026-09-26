@@ -1,0 +1,26 @@
+[package]
+name = "devguard-qualify"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "DevGuard native qualification harness: standalone control probes and bounded workloads for the macOS SLO protocol"
+
+[[bin]]
+name = "devguard-qualify"
+path = "src/main.rs"
+
+[dependencies]
+devguard-contract = { path = "../contract" }
+devguard-client = { path = "../client" }
+devguard-daemon = { path = "../daemon" }
+devguard-cli = { path = "../cli" }
+libc.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+devguard-daemon = { path = "../daemon", features = ["test-fixtures"] }
+tempfile.workspace = true
