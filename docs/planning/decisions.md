@@ -1,20 +1,25 @@
 # Decisions and source baselines
 
-Reference date: 2026-09-22. English is authoritative; see the [reviewed Korean translation](../ko/planning/decisions.md). Approved decisions and completed implementation/qualification are separate facts.
+Reference date: 2026-09-22; ADR-006 added on 2026-09-27. English is authoritative; see the [reviewed Korean translation](../ko/planning/decisions.md). Approved decisions and completed implementation/qualification are separate facts.
 
 ## Baselines and document authority
 
 | Subject | Fixed reference | Meaning |
 | --- | --- | --- |
 | DevGuard implementation | [`d59cbd43d206a9a9281328a946eddf1dc199f710`](https://github.com/novelKR/DevGuard/tree/d59cbd43d206a9a9281328a946eddf1dc199f710) | DG-0 contract/core and fake-backend tests |
-| CodeSpace runtime | [`e94d21475643608ad2a466256fb57266b86faa47`](https://github.com/novelKR/CodeSpace/tree/e94d21475643608ad2a466256fb57266b86faa47) | Source inspection baseline; no DevGuard integration |
+| CodeSpace runtime | [`e94d21475643608ad2a466256fb57266b86faa47`](https://github.com/novelKR/CodeSpace/tree/e94d21475643608ad2a466256fb57266b86faa47) | Historical inspection baseline of the initial integration design; no DevGuard integration |
+| CodeSpace confirmation baseline | [`b6e7ed22e2c730ac987297455e250cbd6e8e8b0c`](https://github.com/novelKR/CodeSpace/tree/b6e7ed22e2c730ac987297455e250cbd6e8e8b0c) | Baseline of design revision 1; runtime paths unchanged from `e94d214` except the patch helper's test reuse; no DevGuard integration |
 | Original CodeSpace roadmap | `fb822fc24c98f6628dce62d33a5cc67275f8ca34` | Existing local documentation commit included in PR #65 |
-| Codex pin | `6b9826e3aa83b1a5947db50f4332cb9c65f1b340` | Preserved; independent of this documentation revision |
+| DevGuard after DG-1 | [`395315d34b5d458ea1774446727f0cb14bd8a120`](https://github.com/novelKR/DevGuard/tree/395315d34b5d458ea1774446727f0cb14bd8a120) | Baseline of the integration plan after DG-1 completion |
+| DevGuard PR #8 head revised | `92a34721d88f39a22cdde4603958d6c447c90e76` | Documentation head that design revision 1 revised |
+| Codex pin | `6b9826e3aa83b1a5947db50f4332cb9c65f1b340` | Kept by design revision 1; a later change is a separate decision based on verification |
+| Codex comparison snapshot | `b334d5b3f2d9441b95286a8c2af8c2152737d977` | Upstream `main` examined in the 2026-09-27 review; not a deployment pin or an automatic adoption target |
+| Design revision 1 | [design-revision-1.md](../design-revision-1.md) | Current baseline for CS-RG execution ownership and reuse, adopted 2026-09-27 |
 | Historical approval | [design.ko.md](../design.ko.md), [source metadata](../design-source.json) | Immutable bytes and checksum |
 | Approval SHA-256 | `97b67a1f9518c1781156a4b3b26829b285f84f5c9a44da60f3c5dcf1bc768df8` | Clarifications do not modify the approved artifact |
 | License | [Apache-2.0](../../LICENSE) | Same license as CodeSpace; preserve LICENSE and NOTICE |
 
-The [English design reference](../design.md) is the editorial source for subsequent work; [its Korean counterpart](../ko/design.md) is maintained separately. It does not replace the historical approval bytes. `docs/contracts.md` owns implemented contracts; `milestones.json` owns IDs/dependencies/status; milestone documents own commit/test/PR boundaries. A documentation revision is not a runtime dependency pin or artifact promotion.
+The [English design reference](../design.md) is the editorial source for subsequent work; [its Korean counterpart](../ko/design.md) is maintained separately. The layers stay distinct: the historical approval preserves the decisions of its time; the design reference is the current editorial baseline and applies the revisions the user directs, such as [design revision 1](../design-revision-1.md); `docs/contracts.md` describes implemented behavior only; `milestones.json` owns IDs/dependencies/status and changes only as implementation and verification progress; milestone documents own commit/test/PR boundaries. A documentation revision is not a runtime dependency pin or artifact promotion, and revising the design does not make CS-RG implemented or qualified.
 
 ## ADR-001 — One registration by the execution owner
 
@@ -28,16 +33,13 @@ The [English design reference](../design.md) is the editorial source for subsequ
 
 InProcess registers inside the Runner using the Gateway PID. UDS registers in the worker. One static reservation includes Gateway and Runner control costs. Configured instance limits remain binding; no worker or Gateway receives another full host budget.
 
-For an SDK consumer, `service-exec` prepares credentials and startup; the selected Runner completes registration. This refines the original generic service-exec wording and prohibits double registration by launcher and Runner. Non-SDK service support needs its own contract rather than weakening PID validation.
-
-The smallest change is a private Runner client/startup adapter and credential FD. Core does not acquire CodeSpace process IDs, PTY or workspace policy. CodeSpace's PTY wrapper currently supplies an empty inherited-FD list; the pinned Codex PTY already accepts selected FDs. Extend the wrapper, close credentials before payload exec and test both pipe/PTY. Do not expose credentials/FDs in public MCP input or change the Codex pin for this feature.
+**Current rule.** One instance is registered per execution owner, and each bounded session registers that same instance again, so "registers once" means one instance per execution owner. There is no separate `service-exec` path: the Gateway passes the consumer credential to a UDS worker through `CredentialHandoff`, and InProcess reads it directly. No launcher registers a second instance, and non-SDK service support needs its own contract rather than weakened PID validation. The smallest change is a private Runner client/startup adapter and credential FD. Core does not acquire CodeSpace process IDs, PTY or workspace policy. Close credentials before payload exec, test both pipe and PTY, and never expose credentials or FDs in public MCP input. How the Runner creates, observes and reaps managed executions is decided by [ADR-006](#adr-006--codespace-execution-ownership-and-reuse-policy).
 
 Compatibility affects operator settings, capabilities and private startup. Cost is moderate; authentication, FD leakage and under-reservation are the main risks. Verify UID/PID/start identity, PID reuse, both modes, concurrent slots and payload FD absence. Roll back by closing new admission, reconciling live leases and returning to a compatible combination; never erase credentials or journals to reset accounting. Revisit service/subworker registration only when multiple independent Runners or shared control reservations are actually needed.
 
-**DG-1 implementation note (2026-09-26).** The decision stands, but DG-1 implements it differently from the wording above:
-- There is no `service-exec` path. The Gateway passes the consumer credential to a UDS worker through `CredentialHandoff`, and InProcess reads it directly.
-- Each bounded session registers the same instance again, so "registers once" means one instance per execution owner.
-- The pinned Codex spawn functions reap their child internally and keep only inheritable descriptors. Managed launches therefore use DG-1's `HelperCommand` with Runner-owned pipes or PTY and observe before reaping, and the Codex pin stays unchanged.
+**Superseded wording (historical).** The decision stands. The DG-1 implementation note of 2026-09-26 and ADR-006 replaced two passages of the original text, which are kept here only as history:
+- "For an SDK consumer, `service-exec` prepares credentials and startup; the selected Runner completes registration." DG-1 has no `service-exec` path; see the current rule.
+- "CodeSpace's PTY wrapper currently supplies an empty inherited-FD list; the pinned Codex PTY already accepts selected FDs. Extend the wrapper [...] Do not [...] change the Codex pin for this feature." The pinned spawn functions reap their child internally and keep only inheritable descriptors, so extending the wrapper cannot carry a managed launch; ADR-006 decides the execution path and scopes the pin decision.
 
 See [CodeSpace integration](codespace-integration.md#registration-and-startup) and [CS-RG](milestones/CS-RG.md#dg-1-consumer-interface).
 
@@ -73,7 +75,7 @@ Necessary bootstrap builds use one Cargo job and one test thread. Preserve a tes
 
 **Required; high confidence:** strict decoding (`deny_unknown_fields`) requires actual old/new reader/writer fixtures for contract, wire and journal changes. Additive fields are not automatically compatible. Validate source/client, daemon/helper and CodeSpace wire independently. Include migration and downgrade rules in the changing PR; never restore an old DB snapshot after new admission.
 
-**Required; high confidence:** CodeSpace's post-spawn slot check, serial dispatch, shared writer and completed-response replay need changes before integration. Acquire slots before spawn; bound concurrent work, queues, total bytes and retention across control/data paths. Two sockets cannot solve shared mutex/callback starvation. CSRG-C03–C08 group preparation with cleanup and saturation/lost-reply testing. Main risks are duplicate execution/approval and leaked lifecycle state.
+**Required; high confidence:** CodeSpace's post-spawn slot check, serial dispatch, shared writer and completed-response replay need changes before integration. Acquire slots before spawn; bound concurrent work, queues, total bytes and retention across control/data paths. Two sockets cannot solve shared mutex/callback starvation. CSRG-C03–C09 group preparation with cleanup, saturation/lost-reply testing and the backend decision. Main risks are duplicate execution/approval and leaked lifecycle state.
 
 **Strongly Recommended; high confidence:** `crates/runner/src/files.rs` reads/hashes whole files before applying a response window. Response size is not an allocation bound. An explicit file-size rejection is the smallest remedy; streaming read/hash preserves wider functionality. API errors/hash consistency need review; cost is moderate. Test large/concurrent/changing files and peak memory. This remains a separate follow-up, outside this sequence; until resolved, bound qualification file size/concurrency and do not advertise arbitrary-file protection.
 
@@ -86,3 +88,23 @@ English PR bodies and authoritative documents have reviewed Korean counterparts 
 Use `codex/dg1-p1` through `codex/dg1-p6`, each from freshly verified main. Complete review, current-head CI, normal exact-head merge, main CI and evidence-preserving cleanup before the next group. Keep remote branches, original CodeSpace checkout/index and protected toolchains/journals/artifacts. [Delivery](pr-delivery.md) specifies commands and cleanup checks. Request a further decision only for a material change in scope, privilege, ownership, compatibility, workload assumptions or acceptance criteria.
 
 The critical path remains DG-0 → DG-1 → CS-RG → P1-RECOVERY. Linux remains required for overall completion; cache/additional adapters do not become P1 prerequisites. Record later decisions and affected IDs without rewriting historical approval or measurement results.
+
+## ADR-006 — CodeSpace execution ownership and reuse policy
+
+**Accepted by the user's explicit instruction on 2026-09-27; Required.** [Design revision 1](../design-revision-1.md) holds the full specification, and [CodeSpace integration](codespace-integration.md#execution-ownership) applies it. This decision re-evaluates whether the design still fits, rather than checking conformance with it. Earlier decisions identify what changes and what must be verified again; they are not grounds for rejecting an alternative.
+
+The pinned high-level Codex spawn cannot carry a DG-1 managed execution unchanged, because its reap-ownership and descriptor-passing contracts differ (F1a, F1b). The same finding covers concurrent spawns (F1c), loss and Drop behavior in output bridges (F1d) and duplicate backends that could stay indefinitely (F1e). Evidence level: code review at the pinned revisions, listed in the revision's appendix.
+
+| Decision | Alternatives | Evidence and cost | Decision |
+| --- | --- | --- | --- |
+| D1: `required` execution | A1 CodeSpace-owned Unix transport at the current pin; the pinned high-level spawn unchanged; a newer Codex pin; A4 limited adaptation; `ProcessDriver` | The pinned spawn reaps internally and keeps only inheritable descriptors; newer upstream APIs were only compared at a snapshot; the pinned `ProcessDriver` skips lagged output and terminates on Drop; A1 still maintains master/slave lifetime, session setup, resize, failure cleanup, output and shutdown | A1 by default. A4 under the policy below. `ProcessDriver` only when it meets its output, backpressure and Drop criteria. A pin change is a separate decision based on verification |
+| D2: legacy `off` backends | Integrate and remove; keep a limited compatibility backend; defer indefinitely | Deferral leaves two lifecycles and two spawn protections to maintain; either outcome must show its maintenance cost | Decide in CSRG-C09, before CSRG-C08 |
+| D3: DevGuard dependency on Codex | C0: none; conditional reuse of low-level utilities in an adapter | No part of `HelperCommand`, the launcher or native observation has been shown to be replaced | C0 now; revisit on the triggers below |
+
+**Current rules.** One reaper per child: on the `required` path nothing outside the owning object calls `wait`, `try_wait` or `waitpid`, and termination, timeout and shutdown send intents to the supervisor. `helper_command` and `HelperCommand::spawn` take `spawn_guard` themselves, so no caller holds it around them; every other child-creation path in the same process holds the common guard, or a verified equivalent, only around descriptor creation, inheritance setup and the spawn. A pre-reap `Observe` has an overall budget, proposed at 1 s and validated in CSRG-C00; its failure keeps the lease charged. A preparation is consumed once. Output converges on one CodeSpace collector, and unknown loss is never reported as `output_lost=false`.
+
+**Adaptation policy (A4).** Permitted for clearly separated execution mechanisms: PTY allocation, terminal setup, resize and limited I/O helpers. Never permitted for `codex-core` product semantics, session authority, the agent loop, broad crate copies or duplication that evades dependency checks. Each adaptation records the source repository, full SHA and file path, the scope taken, the reason, the intended behavioral differences, its tests, the condition for re-examination when upstream updates, and the condition for removal or reconvergence. CodeSpace's prohibition on copying upstream crates to hide incompatible dependencies stays.
+
+**Dependency boundary (D3).** `devguard-contract`, `devguard-core` and the generic client contract contain no Codex product types, model sessions, CodeSpace workspace authority or PTY ownership. DevGuard's default distribution and shared client currently do not depend on Codex. Reusing a low-level utility in an execution or platform adapter is decided by the code it actually replaces, contract fit, dependency propagation, recovery path and requalification cost. Revisit when DG-LINUX starts, when a public general descriptor-attachment or external reap-ownership API appears, when DevGuard's child supervision expands, or when the same OS defect is fixed repeatedly. A trigger reopens the comparison; a feature name alone never adopts a dependency. A dependency count used as evidence needs the SHA, target, features, the runtime/build/dev split and the command run. The validator's dependency-boundary stage (`scripts/validate.py`) rejects any `codex-` or `codespace-` package in DevGuard's graph and so enforces C0; a decision to reuse such a crate in an adapter changes that gate in the same PR.
+
+The rollout adds CSRG-C00 before CSRG-P1 and CSRG-C09 between C07 and C08, so CS-RG has 10 units in 6 groups. The decision changes documents that bind later implementation, not implementation or qualification status. Rollback is a new documentation revision; no runtime state depends on this decision yet.

@@ -7,8 +7,8 @@
       "id": "design",
       "source": "docs/design.md",
       "translation": "docs/ko/design.md",
-      "reviewed_source_sha256": "efb3783329e4960c6e673550efc83e8b76c32e6b80d219cc3d5426ff72d84603",
-      "reviewed_translation_sha256": "ec2dcf5640d16b1d6a0194b3f2f20cc261517a7752befb4ee40557316c2bcfc5"
+      "reviewed_source_sha256": "f13594a4ff05c37a1bbee6a444f92e6a5893d09d428bbb9310ea390865d239ba",
+      "reviewed_translation_sha256": "d4fa965f5a2bda6ddd0f730d4549b8f9558e1a3f524ea55f790d39b973de5b13"
     },
     {
       "id": "design-revision-1",
@@ -21,43 +21,43 @@
       "id": "planning-readme",
       "source": "docs/planning/README.md",
       "translation": "docs/ko/planning/README.md",
-      "reviewed_source_sha256": "b7b3a45eca1133ed588c4f888db3f278190a5e0e2e85ef9e7fe8670c06d6374f",
-      "reviewed_translation_sha256": "3a745701012fee21af63a8985a7c6a3d07bd2c4fdb97231f8a1e7b171eeae18c"
+      "reviewed_source_sha256": "e106592a0d0ecbee25406ad45d285986f17cdf08b4244170efac5e137b7c8133",
+      "reviewed_translation_sha256": "240a2f791c0da4f347d05a014739f0c59dc662166607a0694549255e23ecf76b"
     },
     {
       "id": "planning-codespace-integration",
       "source": "docs/planning/codespace-integration.md",
       "translation": "docs/ko/planning/codespace-integration.md",
-      "reviewed_source_sha256": "51c34f933f83c47135f888bcd69077dd92e166e0461f7c9fa741a392b8190c7b",
-      "reviewed_translation_sha256": "423bafff542d30d4f9a5dbdcac52754768faba17258884667292dd1f225d0f6f"
+      "reviewed_source_sha256": "49bf6c8098bc8ea0758c6af98abeea6d762c2e47199e9d9164ef63579eaee6bd",
+      "reviewed_translation_sha256": "c3d3b4a024c63c4f34e8e44ba4c4e89906c0199734c1e12368583b93025d32da"
     },
     {
       "id": "planning-consumer-readiness",
       "source": "docs/planning/consumer-readiness.md",
       "translation": "docs/ko/planning/consumer-readiness.md",
-      "reviewed_source_sha256": "08573499af828fcceb5aad72bf8e1326116a0defe3eb1b47006c66e0c1c46c3c",
-      "reviewed_translation_sha256": "b05cad4b2d35a08e625a156f527ddf714b115ccf2a423adabae1f97a07397f41"
+      "reviewed_source_sha256": "4736e1dd5c8d2e9159f0495a8e99451328903a8aa5e51a3c64c1becfb6bd8d8f",
+      "reviewed_translation_sha256": "f936ec582850fe221f4e6a35aed1804fd94ee898acebc3f1ec19413795ce6aaa"
     },
     {
       "id": "planning-decisions",
       "source": "docs/planning/decisions.md",
       "translation": "docs/ko/planning/decisions.md",
-      "reviewed_source_sha256": "7691ec6b188851cc7ebbb6a222c95857f84e56fcaf852b66816ea7b5ec28e073",
-      "reviewed_translation_sha256": "651145340d0f4897df63133a5dca9fd062168bc62a0c79d7ebe262877772a867"
+      "reviewed_source_sha256": "794ca316283b262497a5ba5872d2f5a802de0e7be8d018bfa4cc73910f895d1f",
+      "reviewed_translation_sha256": "8f7fdedd63a593ce41afd026c122c42d4e6d1fbe8446d117bb522ec41dbe7825"
     },
     {
       "id": "planning-milestones-cs-rg",
       "source": "docs/planning/milestones/CS-RG.md",
       "translation": "docs/ko/planning/milestones/CS-RG.md",
-      "reviewed_source_sha256": "19aa89dc95470fa7a3a484c77601adbf97102284fe57d8178dd35f005b72eb97",
-      "reviewed_translation_sha256": "fe15d0e737748237b486fd914ee0751c1a554d361c59b59d9607b7e3780f60f2"
+      "reviewed_source_sha256": "37dfe204a982d5870072add6a2cc0b68438f62aeabdd742c5bf7b0cac38bf68e",
+      "reviewed_translation_sha256": "81d3c56d114bb355a71dce380830cbf937d57cd23b67800bb0b39d014d89cbd9"
     },
     {
       "id": "planning-milestones-dg-0",
       "source": "docs/planning/milestones/DG-0.md",
       "translation": "docs/ko/planning/milestones/DG-0.md",
-      "reviewed_source_sha256": "abe48a99b4b5c360b785c0f1bc0fbb3ad9b039533085d6ce857f2af40ac7370d",
-      "reviewed_translation_sha256": "cd40e42e483160f2d2e6ce24da24505b3cb564fa7d132fcfd88d26d72a98e4fc"
+      "reviewed_source_sha256": "cc4ff71aadd1c880798f5a009dfdb6f367322b03b117a2610d5cee97a6fed914",
+      "reviewed_translation_sha256": "d0186b1750d59353d41852704cf206e892e79aa23381f5696ba38fdcf5eabba9"
     },
     {
       "id": "planning-milestones-dg-1",
@@ -85,28 +85,28 @@
       "source": "docs/planning/milestones/DG-LINUX.md",
       "translation": "docs/ko/planning/milestones/DG-LINUX.md",
       "reviewed_source_sha256": "66a309edd7e57f7be117c67616a32651b34cbd1cd030b208950eba0c733c462f",
-      "reviewed_translation_sha256": "3dc09f492e8865f46378d47d42912bc7ca29b900be9cce54fd40ddd7eebfd0ae"
+      "reviewed_translation_sha256": "3a2f858160973f6a3dc2f918515b0af7b8c7f7a764dc026f27c1c580c51312e4"
     },
     {
       "id": "planning-milestones-p1-recovery",
       "source": "docs/planning/milestones/P1-RECOVERY.md",
       "translation": "docs/ko/planning/milestones/P1-RECOVERY.md",
       "reviewed_source_sha256": "35cd557b220a40978c76be300560007fc117f64dcd0b4182e01771a209fc12d5",
-      "reviewed_translation_sha256": "f36cc2fdc9cf7959feb4122cff8bbb347295536d7f68019c6c28f652742e2373"
+      "reviewed_translation_sha256": "b605ed445a446c1a547ee0786f6de179a305351cc2a1fe7783b53d95494267b1"
     },
     {
       "id": "planning-pr-delivery",
       "source": "docs/planning/pr-delivery.md",
       "translation": "docs/ko/planning/pr-delivery.md",
-      "reviewed_source_sha256": "4d484e7466dac7169a4c17adc7d77dfb461b11fd03795f500186ce1ca26707aa",
-      "reviewed_translation_sha256": "9f4e937bc41dab27b2076bdd92182f932cdd261b5116cd34a211f8a718f31327"
+      "reviewed_source_sha256": "c394ce3a61de1ac4f65d6f2ea7f62d53b927388abb04531af24dc03710dbfe5b",
+      "reviewed_translation_sha256": "414d43f768e83056f8592933571499451601c726560240e522f619e987763afd"
     },
     {
       "id": "planning-verification",
       "source": "docs/planning/verification.md",
       "translation": "docs/ko/planning/verification.md",
-      "reviewed_source_sha256": "589c32a9912342cfac0241052988a23521a52c2535f83ab32b8a1eeac6ed4dd3",
-      "reviewed_translation_sha256": "6781e0273b043b0636ece372fc5fe79e533ce65642b67ed9596bee274216c7c7"
+      "reviewed_source_sha256": "882ba8f9d6a7609af179f851c40bd431247635eae81c4ec578a632c050a9a4d0",
+      "reviewed_translation_sha256": "9e5e03d88a3d25e13d1ef3f8e8ac9e7eb4dd48f6553bef0d568e5c52a142ff28"
     },
     {
       "id": "operations",

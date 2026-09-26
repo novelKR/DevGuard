@@ -9,7 +9,7 @@ These gates are language/product independent. Only CodeSpace's actual code paths
 | R0 contract review | DG-0 source, contracts and 44-test baseline | Design types, errors and state transitions | No daemon, OS control or SLO claim |
 | R1 bounded functional testing | DG1-C01–C08 real authentication, launch and reclamation; explicit test environment/budget | Candidate functionality and fault tests | Not everyday development qualification |
 | R2 macOS development | DG1-C12 qualification, actual probes, sufficient budget and explicit entrypoint | Qualified generic/Cargo commands on the measured host combination | Reject or qualify other tools/hosts |
-| R3 CodeSpace macOS runtime | R2 plus CSRG-C08 and supported client/artifact/wire | Required consumption and control protection in qualified modes | No automatic switch from off |
+| R3 CodeSpace macOS runtime | R2 plus CSRG-C08 on the head left by the CSRG-C09 backend decision: the common execution lifecycle with one reaper, mixed legacy/managed execution in one process verified or that combination unsupported, and supported client/artifact/wire | Required consumption and control protection in qualified modes | No automatic switch from off |
 | R4 Linux enforced protection | DGL-C06 in the actual Linux environment | Verified resource-specific kernel controls and scope | Reject missing controller/ancestor/privilege requirements |
 | RS bounded self-use | C09 protected artifacts; C10 functionally tested and frozen parent with parent-budget capability, isolated candidate and independent repair | Candidate development/testing under the existing budget, beginning at C10 | Functional parent and C12 SLO release remain distinct |
 
@@ -22,9 +22,9 @@ RS is an independent axis. C08/C09 artifacts are not assumed to support C10 pare
 | G01 execution host/authority | Executor identity, canonical socket/state, UID/lock, one normal authority | Operator; DG1-C01/C02; DGA-C07 for VMs | Reject another full-host budget via alternate paths |
 | G02 actual consumption | argv → adapter → attempt → lease → scope receipt | Consumer; DG1-C07/C08, CSRG-C03/C04 | A config file alone leaves execution unmanaged |
 | G03 sufficient capacity | Effective capacity minus host headroom and static control reservations fits the minimum job | Authority; DG1-C03, DGL-C01 | Refuse rather than force one worker |
-| G04 identity/credentials | OS peer matches the owner/generation; no secret in payload FDs/logs | DG1-C02/C05, CSRG-C02 | Unauthorized; never trust caller-declared peer identity |
+| G04 identity/credentials | OS peer matches the owner/generation; no secret in payload FDs/logs; one spawn protection covers every child-creation path | DG1-C02/C05, CSRG-C00/C02 | Unauthorized; never trust caller-declared peer identity |
 | G05 per-resource capability | Requested, supported and applied method/level with fresh evidence | DG1-C04, DGL-C02 | Block execution on unsupported requirement or partial apply failure |
-| G06 execution lifecycle | Expiry, lost replies, cancel, restart and tracking-loss fixtures | DG1-C05/C06, CSRG-C03/C04 | Preserve uncertainty; never auto-replay |
+| G06 execution lifecycle | Expiry, lost replies, cancel, restart and tracking-loss fixtures; one reaper per child and observation before reap | DG1-C05/C06, CSRG-C00/C03/C04 | Preserve uncertainty; never auto-replay |
 | G07 independent control | Existing handle query/termination while new admission fails | Consumer; CSRG-C05–C08 | Refuse new work without requiring grants to control old work |
 | G08 compatibility | Full client SHA, actual daemon/helper hashes, wire/capability fixtures | DG1-C11, CSRG-C01/C08 | Reject unsupported combinations; version labels are insufficient |
 | G09 protected state | Journal, Git, evidence and reference/recovery artifacts excluded from cache reclaim | Operator; DGC-C01/C02 | No automatic reclaim of unclassified roots |

@@ -4,11 +4,17 @@
 
 ## 문서 이력과 준비
 
-DGP-D01은 기준/결정,D02는7개 milestone·46작업·23묶음,D03은 소비/결합/검증/전달,D04는 index/README/ledger다. CSP-D01은 이중언어 소비·단일 Runner·복구 범위,D02는 immutable 문서/PR 링크·registry다. CSP-D03은 CodeSpace 결합 로드맵에 DG-1 완료와 CS-RG 미시작 상태를 반영하고([CodeSpace #66](https://github.com/novelKR/CodeSpace/pull/66), merge `a1166870acbba9791d7170da6496a39dde6f4a69`), DGP-D05는 CS-RG 계획·결합 명세·ADR-001·계약을 구현된 DG-1 소비 인터페이스에 맞춘다. 이 기존 문서 commit은 runtime46개와 별개다. DevGuard 기준d59cbd43d206a9a9281328a946eddf1dc199f710,CodeSpace runtime e94d21475643608ad2a466256fb57266b86faa47와 로드맵fb822fc24c98f6628dce62d33a5cc67275f8ca34를 보존한다. 원래 CodeSpace checkout·사용자 branch·staged .codex/config.toml은 유지한다.
+DGP-D01은 기준/결정,D02는7개 milestone·46작업·23묶음,D03은 소비/결합/검증/전달,D04는 index/README/ledger다. CSP-D01은 이중언어 소비·단일 Runner·복구 범위,D02는 immutable 문서/PR 링크·registry다. CSP-D03은 CodeSpace 결합 로드맵에 DG-1 완료와 CS-RG 미시작 상태를 반영하고([CodeSpace #66](https://github.com/novelKR/CodeSpace/pull/66), merge `a1166870acbba9791d7170da6496a39dde6f4a69`), DGP-D05는 CS-RG 계획·결합 명세·ADR-001·계약을 구현된 DG-1 소비 인터페이스에 맞춘다. 같은 branch의 DGP-D06은 사용자 지시로 채택한 [설계 개정 1](../design-revision-1.md)(실행 소유권·재사용 정책, CSRG-C00/C09, 개정된 계획 문서)을 반영하며 병합 전 사용자 검토를 거친다. CSP-D04는 병합된 DevGuard SHA에 연결하는 CodeSpace 대응 문서(결합 로드맵·architecture·execution substrate·Codex 재사용·upstream 갱신·의존 규칙·CI 선택)이며 작업을 시작할 때 branch를 만들고 CSRG-P0 전에 끝낸다. 이 문서 작업은 runtime48개와 별개다. DevGuard 기준d59cbd43d206a9a9281328a946eddf1dc199f710,CodeSpace runtime e94d21475643608ad2a466256fb57266b86faa47와 로드맵fb822fc24c98f6628dce62d33a5cc67275f8ca34를 보존한다. 원래 CodeSpace checkout·사용자 branch·staged .codex/config.toml은 유지한다.
 
 [DevGuard #1](https://github.com/novelKR/DevGuard/pull/1)에 추가 commit으로 영문 정본·관리 한국어 번역·hash 검사와 C10 지침을 반영한다. 승인 docs/design.ko.md와 checksum 및 기존 commit/link를 바꾸지 않는다. [CodeSpace #65](https://github.com/novelKR/CodeSpace/pull/65)는 실제 전체 DevGuard 문서 SHA로 연결하고 해당 번역 pair만 검토/기록한다. 미병합 main의 없는 경로를 링크하지 않는다. 문서 revision과 runtime pin은 별개다.
 
 DevGuard #1 검증·병합·push-main 확인 후 CodeSpace #65의 검증·병합·runtime main CI·기존 문서 배포를 확인한다. 문서 PR이라는 이유로 기존 gate를 면제하지 않는다. 두 cycle 완료 전 P1을 시작하지 않는다.
+
+## 설계 개정과 문서·코드 PR
+
+설계 개정 1의 근거는 DG-1 완료 뒤 2026-09-27에 사용자가 CS-RG 설계의 재검토를 명시적으로 지시한 것이다. 과거 승인은 무엇을 바꾸는지 알려 줄 뿐 대안을 기각하는 근거가 아니다. DGP-D05/D06 같은 문서 PR은 파일 변경을 문서와 문서 검사에 한정하지만 후속 구현을 구속하는 설계 결정은 바꾼다. 구현이나 qualification을 완료하지 않으며 DG-1 qualification을 무효화하지도 않는다. runtime artifact를 바꾸는 코드 PR은 이전 검증을 새 구현의 검증처럼 제시하지 않는다.
+
+CS-RG의 최종 head는 CSRG-C07 동등성, CSRG-C09 결정(C09가 코드를 바꾸면 영향받는 동등성 재실행), 그 head를 측정하는 CSRG-C08 순서로 검증한다. PR head 결과와 병합 후 main 결과를 따로 기록한다. CSP-D04는 DevGuard 병합 commit이 생긴 뒤에만 그 SHA로 immutable 링크를 기록한다.
 
 ## 구현 PR 하나씩 전달
 
@@ -27,7 +33,7 @@ DevGuard #1 검증·병합·push-main 확인 후 CodeSpace #65의 검증·병합
 
 ## 묶음과 자기 적용
 
-P1=C01/C02 canonical authority/인증,실제 probe 전 readiness closed. P2=C03/C04 native 관측/적용. P3=C05/C06 launch와 안전 cleanup 동시. P4=C07/C08 generic/Cargo·jobserver. P5=C09/C10/C11 설치·bounded 후보·독립복구. P6=C12 실제 qualification/승격이다. 후속 CSRG4·P1R3·DGL3·DGC3·DGA4 묶음은 별도이며 Linux 양 저장소는 연계 PR이 추가될 수 있어23은 논리 묶음 수다. launch만 있고 회수 없는 상태나 lane만 있고 buffer상한 없는 상태를 활성화하지 않는다.
+P1=C01/C02 canonical authority/인증,실제 probe 전 readiness closed. P2=C03/C04 native 관측/적용. P3=C05/C06 launch와 안전 cleanup 동시. P4=C07/C08 generic/Cargo·jobserver. P5=C09/C10/C11 설치·bounded 후보·독립복구. P6=C12 실제 qualification/승격이다. 후속 CSRG6(P0~P5)·P1R3·DGL3·DGC3·DGA4 묶음은 별도이며 Linux 양 저장소는 연계 PR이 추가될 수 있어25는 논리 묶음 수다. launch만 있고 회수 없는 상태나 lane만 있고 buffer상한 없는 상태를 활성화하지 않는다.
 
 기능 전까지 최소 단일Cargo job/시험thread bootstrap을 명시 기록한다. C08까지 foreground daemon이며 P4 정리 전 시험된 기능 bundle을 target 밖에 보존한다. SLO 릴리스가 아니다. C09는 manifest·보호 release/recovery·현재 사용자 LaunchAgent를 설치하며 서비스는 worktree target을 실행하지 않는다. 재시작은 기존 journal을 열어 대조하고 누락/손상은 closed다. 명시 bootstrap/repair 예외를 기록하되 자동 비관리 fallback은 없다.
 

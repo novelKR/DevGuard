@@ -4,7 +4,7 @@
 
 ## 실제 이력과 범위
 
-실제 commit은 [`d59cbd43d206a9a9281328a946eddf1dc199f710`](https://github.com/novelKR/DevGuard/commit/d59cbd43d206a9a9281328a946eddf1dc199f710), 제목은 `feat: establish DG-0 resource contracts and durable authority`다. 아래 DG0-R01~R06은 이행 기록 ID이며 후속 46개 예정 commit 수에 포함하지 않는다. 모두 이 하나의 commit에서 제공되었다.
+실제 commit은 [`d59cbd43d206a9a9281328a946eddf1dc199f710`](https://github.com/novelKR/DevGuard/commit/d59cbd43d206a9a9281328a946eddf1dc199f710), 제목은 `feat: establish DG-0 resource contracts and durable authority`다. 아래 DG0-R01~R06은 이행 기록 ID이며 후속 48개 예정 commit 수에 포함하지 않는다. 모두 이 하나의 commit에서 제공되었다.
 
 | 이행 ID | 실제 산출물 | 해결한 문제와 보존한 계약 | 정상·실패·경쟁 시험 |
 | --- | --- | --- | --- |
