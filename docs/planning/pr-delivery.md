@@ -12,6 +12,8 @@ The authorized execution completes documentation preparation, then DG1-C01–C12
 | DGP-D04 | Same branch | Index, README/roadmap and ledger links | Cross-references/DG-0 regression → PR #1 |
 | CSP-D01 | CodeSpace `codex/devguard-planning-links` | Bilingual adoption, Runner registration and recovery scope | Reviewed pair → D02 |
 | CSP-D02 | Same branch | Immutable DevGuard revision/PR links and registry | Site build/integrity → PR #65 |
+| CSP-D03 | CodeSpace `codex/devguard-dg1-status` | DG-1 completion and the unstarted CS-RG in the integration roadmap | Reviewed pair/site build → [CodeSpace #66](https://github.com/novelKR/CodeSpace/pull/66), merge `a1166870acbba9791d7170da6496a39dde6f4a69` |
+| DGP-D05 | DevGuard `codex/cs-rg-plan-review` | CS-RG, integration specification, ADR-001 and contracts aligned with the implemented DG-1 consumer interface | Plan review → user decision before CSRG-P1 |
 
 These existing documentation commits are separate from the 46 runtime units. DevGuard started from `d59cbd43d206a9a9281328a946eddf1dc199f710`. CodeSpace PR #65 includes roadmap `fb822fc24c98f6628dce62d33a5cc67275f8ca34` over runtime `e94d21475643608ad2a466256fb57266b86faa47`. Preserve the original CodeSpace checkout, user branch and staged `.codex/config.toml`.
 

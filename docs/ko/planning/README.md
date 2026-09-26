@@ -2,7 +2,7 @@
 
 문서 기준일: 2026-09-22. 기준 저장소: `/Volumes/DevData/Projects/IdeaProjects/DevGuard`. 이 문서 집합은 승인 설계를 구현 가능한 작업·도입 gate·시험·PR 경계로 구체화한다. 영문 문서가 편집 정본이며 이 문서는 검토된 한국어 번역이다. CodeSpace 소비 안내도 영어·한국어를 함께 유지한다.
 
-**계약 기준은 DG-0 회계·영속성·fake backend 시험이다.** DG-1은 현재 C01 정상 설정·저장소와 C02 인증 foreground transport를 제공하며 native 등록·workload 실행·자원 제어 qualification은 닫혀 있다. DG-1의 여섯 구현 PR은 순차 진행하도록 승인되었지만 승인 자체가 구현·검증 완료를 뜻하지 않는다. 실제 이행 기록은 [DG-0](milestones/DG-0.md), 선택 근거와 immutable source는 [결정 기록](decisions.md)에 있다.
+**계약 기준은 DG-0 회계·영속성·fake backend 시험이다.** DG-1은 완료되었다. 여섯 구현 PR로 C01~C12를 전달했고, 측정한 호스트와 정책에서 release `0.1.0-5daee5d-b3fa569e`의 macOS SLO qualification을 마쳤다. Linux 강제 보호와 CodeSpace 결합은 아직 qualification하지 않았다. 실제 이행 기록은 [DG-0](milestones/DG-0.md), 선택 근거와 immutable source는 [결정 기록](decisions.md)에 있다.
 
 ## 읽는 순서와 문서 소유권
 
@@ -48,7 +48,7 @@ VM/container는 작업 단위에서 실제 Linux qualification 등 추가 조건
 
 ## 사용 규칙
 
-`DG1-C01` 같은 ID는 안정적인 예정 작업 ID이고 제목도 예정 값이다. 실제 commit SHA·PR URL은 생성 후 PR과 검증 report에서 연결한다. 이번 문서 작성의 DGP-D01~D04, CSP-D01~D02는 후속 runtime 46개에 포함하지 않는다.
+`DG1-C01` 같은 ID는 안정적인 예정 작업 ID이고 제목도 예정 값이다. 실제 commit SHA·PR URL은 생성 후 PR과 검증 report에서 연결한다. 문서 작업 DGP-D01~D05, CSP-D01~D03은 후속 runtime 46개에 포함하지 않는다.
 
 `scripts/qualify.py dg1-authority`는 C01 경계를, `scripts/qualify.py dg1-auth`는 C02 로컬 인증·transport를 검증한다. 그 밖의 suite와 CodeSpace `scripts/qualify-devguard.py`는 후속 구현이 제공할 예정 명령이다. 명령 이름이나 설정 파일·인증 세션만으로 실행이 governor를 통과했다고 판단하지 않는다.
 

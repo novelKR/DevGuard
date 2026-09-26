@@ -3,7 +3,7 @@
 Reference date: 2026-09-22. Repository: `/Volumes/DevData/Projects/IdeaProjects/DevGuard`.
 English is the authoritative editorial source. [Reviewed Korean translations](../ko/planning/README.md) are maintained through the [translation registry](../translations.json).
 
-The contract baseline is DG-0: accounting, persistence and fake-backend tests. DG-1 now includes C01 canonical configuration/storage and C02 authenticated foreground transport; native registration, workload execution and resource-control qualification remain closed. The six DG-1 implementation PRs are authorized for sequential delivery; authorization does not establish implementation or qualification. The [ledger](../../milestones.json) owns milestone IDs, dependencies and status. Individual milestone documents own work IDs, commit boundaries, tests, evidence and rollback.
+The contract baseline is DG-0: accounting, persistence and fake-backend tests. DG-1 is complete: its six implementation PRs delivered C01–C12, and its macOS SLO is qualified for release `0.1.0-5daee5d-b3fa569e` on the measured host and policy. Linux enforcement and CodeSpace integration remain unqualified. The [ledger](../../milestones.json) owns milestone IDs, dependencies and status. Individual milestone documents own work IDs, commit boundaries, tests, evidence and rollback.
 
 ## Reading order and ownership
 
@@ -45,7 +45,7 @@ DG-1 qualifies standalone daemon/CLI, development workloads and bounded self-use
 
 ## Execution rules
 
-IDs such as `DG1-C01`, commit titles and logical PR labels are proposed values. Record real SHAs and PR URLs only after creation. Documentation work DGP-D01–D04 and CSP-D01–D02 is separate from these 46 units; append-only preparation changes preserve their history and immutable links.
+IDs such as `DG1-C01`, commit titles and logical PR labels are proposed values. Record real SHAs and PR URLs only after creation. Documentation work DGP-D01–D05 and CSP-D01–D03 is separate from these 46 units; append-only preparation changes preserve their history and immutable links.
 
 `scripts/qualify.py dg1-authority` verifies the C01 boundary, and `scripts/qualify.py dg1-auth` verifies C02 local authentication/transport. Other qualification suites and CodeSpace's `scripts/qualify-devguard.py` remain planned until their implementation PR provides them. A configuration file or authenticated session alone does not prove that a command consumes the central budget.
 

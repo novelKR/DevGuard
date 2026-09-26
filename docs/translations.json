@@ -14,36 +14,36 @@
       "id": "planning-readme",
       "source": "docs/planning/README.md",
       "translation": "docs/ko/planning/README.md",
-      "reviewed_source_sha256": "6635c436c2113b2968d1c1b9e9fb99515657797b14f6e858765b419cdc8b9586",
-      "reviewed_translation_sha256": "353c04e02ecf40e8211122d4e9f2a28aa633289a56335f54e0f1a101b2fa6a20"
+      "reviewed_source_sha256": "b7b3a45eca1133ed588c4f888db3f278190a5e0e2e85ef9e7fe8670c06d6374f",
+      "reviewed_translation_sha256": "3a745701012fee21af63a8985a7c6a3d07bd2c4fdb97231f8a1e7b171eeae18c"
     },
     {
       "id": "planning-codespace-integration",
       "source": "docs/planning/codespace-integration.md",
       "translation": "docs/ko/planning/codespace-integration.md",
-      "reviewed_source_sha256": "51319a381fbb25eff8a3957f8ec51a60c3d859fa3ed6e2675f4c0bed19d6ff57",
-      "reviewed_translation_sha256": "34fe2777f9aa2a840cbae9a57c5962ce55a12f4ffaa98b52c7cbac22903ef23a"
+      "reviewed_source_sha256": "51c34f933f83c47135f888bcd69077dd92e166e0461f7c9fa741a392b8190c7b",
+      "reviewed_translation_sha256": "423bafff542d30d4f9a5dbdcac52754768faba17258884667292dd1f225d0f6f"
     },
     {
       "id": "planning-consumer-readiness",
       "source": "docs/planning/consumer-readiness.md",
       "translation": "docs/ko/planning/consumer-readiness.md",
-      "reviewed_source_sha256": "50167fc9f52b7c0c34499d6f6fbfdcd9d1336300ff408b89276edf7c4e87a4d7",
-      "reviewed_translation_sha256": "fda6d8f7b0aa2f13198abf0f170b08adf27120f9355b6ee497b39e2bb9e46d57"
+      "reviewed_source_sha256": "08573499af828fcceb5aad72bf8e1326116a0defe3eb1b47006c66e0c1c46c3c",
+      "reviewed_translation_sha256": "b05cad4b2d35a08e625a156f527ddf714b115ccf2a423adabae1f97a07397f41"
     },
     {
       "id": "planning-decisions",
       "source": "docs/planning/decisions.md",
       "translation": "docs/ko/planning/decisions.md",
-      "reviewed_source_sha256": "c2ddfb2420dc2ace3ba5375f7c1eef1d97efa9bb6e6c8bc964e693e4a1fc6da5",
-      "reviewed_translation_sha256": "84be58de2228368fb63d53ad3e1c4692815987baf84f859760b8635e69ffdc95"
+      "reviewed_source_sha256": "7691ec6b188851cc7ebbb6a222c95857f84e56fcaf852b66816ea7b5ec28e073",
+      "reviewed_translation_sha256": "651145340d0f4897df63133a5dca9fd062168bc62a0c79d7ebe262877772a867"
     },
     {
       "id": "planning-milestones-cs-rg",
       "source": "docs/planning/milestones/CS-RG.md",
       "translation": "docs/ko/planning/milestones/CS-RG.md",
-      "reviewed_source_sha256": "4e1a8f2267d501a2fefe8f9a9d666b1a32b2337dff3a0cdcab1fb342dd191b4f",
-      "reviewed_translation_sha256": "de7682db13846c894360ec12e17553d86159ec77213641837734548fe3661913"
+      "reviewed_source_sha256": "19aa89dc95470fa7a3a484c77601adbf97102284fe57d8178dd35f005b72eb97",
+      "reviewed_translation_sha256": "fe15d0e737748237b486fd914ee0751c1a554d361c59b59d9607b7e3780f60f2"
     },
     {
       "id": "planning-milestones-dg-0",
@@ -91,8 +91,8 @@
       "id": "planning-pr-delivery",
       "source": "docs/planning/pr-delivery.md",
       "translation": "docs/ko/planning/pr-delivery.md",
-      "reviewed_source_sha256": "4f1d5ad0b6a528bb16ba505454b393f26c213281bd704745660a82c790f251af",
-      "reviewed_translation_sha256": "4113b2711fadadc4ddaf9bdee5edc32df2d4764fc2f0ea9987764f6f55a0ca44"
+      "reviewed_source_sha256": "4d484e7466dac7169a4c17adc7d77dfb461b11fd03795f500186ce1ca26707aa",
+      "reviewed_translation_sha256": "9f4e937bc41dab27b2076bdd92182f932cdd261b5116cd34a211f8a718f31327"
     },
     {
       "id": "planning-verification",
@@ -112,8 +112,8 @@
       "id": "contracts",
       "source": "docs/contracts.md",
       "translation": "docs/ko/contracts.md",
-      "reviewed_source_sha256": "ce05766020f5ffc28a396374b4226b22a7d9133ee8a9a85bb4e5f8e98cc9e77b",
-      "reviewed_translation_sha256": "7005c65aaaa638290720774c0a136f5dc56b6f2063d471613f8f2d268b10a1fc"
+      "reviewed_source_sha256": "5d03b457f7ed589b8b08975e110090615d1001c43f7be1cdd78a775aa9c32bf0",
+      "reviewed_translation_sha256": "e724c912563fadacbd4470236eb61abcdc856b3396f0f9e982ae6bfbb7e17acb"
     }
   ]
 }

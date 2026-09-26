@@ -34,6 +34,13 @@ The smallest change is a private Runner client/startup adapter and credential FD
 
 Compatibility affects operator settings, capabilities and private startup. Cost is moderate; authentication, FD leakage and under-reservation are the main risks. Verify UID/PID/start identity, PID reuse, both modes, concurrent slots and payload FD absence. Roll back by closing new admission, reconciling live leases and returning to a compatible combination; never erase credentials or journals to reset accounting. Revisit service/subworker registration only when multiple independent Runners or shared control reservations are actually needed.
 
+**DG-1 implementation note (2026-09-26).** The decision stands, but DG-1 implements it differently from the wording above:
+- There is no `service-exec` path. The Gateway passes the consumer credential to a UDS worker through `CredentialHandoff`, and InProcess reads it directly.
+- Each bounded session registers the same instance again, so "registers once" means one instance per execution owner.
+- The pinned Codex spawn functions reap their child internally and keep only inheritable descriptors. Managed launches therefore use DG-1's `HelperCommand` with Runner-owned pipes or PTY and observe before reaping, and the Codex pin stays unchanged.
+
+See [CodeSpace integration](codespace-integration.md#registration-and-startup) and [CS-RG](milestones/CS-RG.md#dg-1-consumer-interface).
+
 ## ADR-002 — Gateway recovery while an independent Runner survives
 
 **Accepted; Required; high confidence.** This specializes approved design §§2.1, 3.4 and 5.2. `crates/server/src/runtime.rs` owns the managed worker; Runner handles and I/O are in memory. Recording a PID cannot reconstruct that ownership.

@@ -4,7 +4,7 @@
 
 ## 문서 이력과 준비
 
-DGP-D01은 기준/결정,D02는7개 milestone·46작업·23묶음,D03은 소비/결합/검증/전달,D04는 index/README/ledger다. CSP-D01은 이중언어 소비·단일 Runner·복구 범위,D02는 immutable 문서/PR 링크·registry다. 이 기존 문서 commit은 runtime46개와 별개다. DevGuard 기준d59cbd43d206a9a9281328a946eddf1dc199f710,CodeSpace runtime e94d21475643608ad2a466256fb57266b86faa47와 로드맵fb822fc24c98f6628dce62d33a5cc67275f8ca34를 보존한다. 원래 CodeSpace checkout·사용자 branch·staged .codex/config.toml은 유지한다.
+DGP-D01은 기준/결정,D02는7개 milestone·46작업·23묶음,D03은 소비/결합/검증/전달,D04는 index/README/ledger다. CSP-D01은 이중언어 소비·단일 Runner·복구 범위,D02는 immutable 문서/PR 링크·registry다. CSP-D03은 CodeSpace 결합 로드맵에 DG-1 완료와 CS-RG 미시작 상태를 반영하고([CodeSpace #66](https://github.com/novelKR/CodeSpace/pull/66), merge `a1166870acbba9791d7170da6496a39dde6f4a69`), DGP-D05는 CS-RG 계획·결합 명세·ADR-001·계약을 구현된 DG-1 소비 인터페이스에 맞춘다. 이 기존 문서 commit은 runtime46개와 별개다. DevGuard 기준d59cbd43d206a9a9281328a946eddf1dc199f710,CodeSpace runtime e94d21475643608ad2a466256fb57266b86faa47와 로드맵fb822fc24c98f6628dce62d33a5cc67275f8ca34를 보존한다. 원래 CodeSpace checkout·사용자 branch·staged .codex/config.toml은 유지한다.
 
 [DevGuard #1](https://github.com/novelKR/DevGuard/pull/1)에 추가 commit으로 영문 정본·관리 한국어 번역·hash 검사와 C10 지침을 반영한다. 승인 docs/design.ko.md와 checksum 및 기존 commit/link를 바꾸지 않는다. [CodeSpace #65](https://github.com/novelKR/CodeSpace/pull/65)는 실제 전체 DevGuard 문서 SHA로 연결하고 해당 번역 pair만 검토/기록한다. 미병합 main의 없는 경로를 링크하지 않는다. 문서 revision과 runtime pin은 별개다.
 

@@ -364,7 +364,6 @@ Every resource carries its own level and method. Accounting is not an OS memory 
 
 ## Boundaries deliberately left to later milestones
 
-- Remaining DG-1: measured macOS SLOs and the promotion of a measured release (C12).
 - CS-RG: Runner slots and transport lanes, approval migration, pinned client, process status integration and regression qualification.
 - DG-LINUX: actual cgroup hierarchy, controllers, ancestor constraints and sandbox/proxy inclusion.
 - DG-CACHE / DG-ADAPTERS: registered cache reclamation and additional tool-specific controls.

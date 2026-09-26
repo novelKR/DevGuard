@@ -38,6 +38,13 @@ SDK를 사용하는 CodeSpace에서 `service-exec`는 자격 FD 전달과 서비
 
 재검토 조건은 한 서비스가 동시에 여러 독립 Runner를 사용하거나 여러 서비스가 제어 예약을 공유해야 하는 실제 배치다. 그때 하위 등록의 생애·generation·예산 귀속을 별도 결정으로 설계한다.
 
+**DG-1 구현 보충(2026-09-26).** 결정은 유지하지만 DG-1은 위 서술과 다르게 구현되었다.
+- 별도의 `service-exec` 경로는 없다. Gateway는 소비자 자격을 `CredentialHandoff`로 UDS worker에 넘기고, InProcess는 직접 읽는다.
+- 한정된 세션마다 같은 instance를 다시 등록하므로 "단일 등록"은 실행 소유자당 instance 하나를 뜻한다.
+- 고정된 Codex spawn 함수는 child를 내부에서 회수하고 이미 상속 가능한 descriptor만 유지한다. 따라서 관리 실행은 DG-1의 `HelperCommand`에 Runner가 소유한 pipe나 PTY를 붙여 시작하고 회수 전에 관측한다. Codex pin은 그대로 둔다.
+
+[CodeSpace 결합 명세](codespace-integration.md#등록과-시작의-단일-소유자)와 [CS-RG](milestones/CS-RG.md#dg-1-소비-인터페이스)를 참조한다.
+
 ## ADR-002 — 살아 있는 독립 Runner에 대한 Gateway 복구
 
 **결정: 채택. 분류: Required. 근거 신뢰도: 높음.** 승인 설계 §2.1의 책임 분리, §3.4의 연결 소실 정책, §5.2의 P1-RECOVERY를 구체화한다.
