@@ -9,8 +9,11 @@ import sys
 from urllib.parse import unquote
 
 ROOT = Path(__file__).resolve().parents[1]
-COUNTS = {"DG1": 12, "CSRG": 8, "P1R": 6, "DGL": 6, "DGC": 6, "DGA": 8}
-GROUPS = {"DG1": 6, "CSRG": 4, "P1R": 3, "DGL": 3, "DGC": 3, "DGA": 4}
+# Numbering is explicit: design revision 1 added CSRG-C00 in group CSRG-P0.
+UNITS = {"DG1": range(1, 13), "CSRG": range(0, 10), "P1R": range(1, 7), "DGL": range(1, 7),
+         "DGC": range(1, 7), "DGA": range(1, 9)}
+GROUPS = {"DG1": range(1, 7), "CSRG": range(0, 6), "P1R": range(1, 4), "DGL": range(1, 4),
+          "DGC": range(1, 4), "DGA": range(1, 5)}
 FIELDS = ("Owner / proposed PR", "Problem → behavior", "Prerequisites", "Modules / deliverables",
           "Invariants", "Tests (normal / failure / race)", "Completion evidence", "Rollback",
           "Handoff", "Verification command")
@@ -110,10 +113,11 @@ def check_planning(root):
                 raise ValueError("PR membership mismatch: " + work)
             prerequisites = re.search(r"^- Prerequisites: ([^.]+)", section, re.M).group(1)
             graph[work] = re.findall(WORK_ID, prerequisites)
-    expected = {f"{prefix}-C{i:02}" for prefix, count in COUNTS.items() for i in range(1, count+1)}
-    expected_groups = {f"{prefix}-P{i}" for prefix, count in GROUPS.items() for i in range(1, count+1)}
+    expected = {f"{prefix}-C{i:02}" for prefix, numbers in UNITS.items() for i in numbers}
+    expected_groups = {f"{prefix}-P{i}" for prefix, numbers in GROUPS.items() for i in numbers}
     if set(graph) != expected or set(assignments) != expected or memberships != expected_groups:
-        raise ValueError("expected 46 work definitions/assignments and 23 logical groups")
+        raise ValueError(f"expected {len(expected)} work definitions/assignments and "
+                         f"{len(expected_groups)} logical groups")
     acyclic(graph)
     ledger = json.loads((root / "milestones.json").read_text())
     milestone_graph = {}

@@ -1,7 +1,7 @@
 # DevGuard 설계 참조
 
-기준일: 2026-09-22. 로컬 소스: `/Volumes/DevData/Projects/IdeaProjects/DevGuard`.
-이 문서는 [영문 편집 정본](../design.md)의 관리되는 한국어 대응 문서다. 전체 승인 원문 [design.ko.md](../design.ko.md)와 [checksum](../design-source.json)은 byte 그대로 보존한다. 이 참조 문서는 승인 설계와 후속 [결정](planning/decisions.md)을 종합하며 원래 승인 artifact라고 주장하지 않는다. 구체 작업은 [계획](planning/README.md), 현재 구현 사실은 [계약](../contracts.md)이 소유한다.
+기준일: 2026-09-22, [설계 개정 1](design-revision-1.md)로 2026-09-27 개정. 로컬 소스: `/Volumes/DevData/Projects/IdeaProjects/DevGuard`.
+이 문서는 [영문 편집 정본](../design.md)의 관리되는 한국어 대응 문서다. 전체 승인 원문 [design.ko.md](../design.ko.md)와 [checksum](../design-source.json)은 byte 그대로 보존한다. 이 참조 문서는 승인 설계, 후속 [결정](planning/decisions.md), [개정 1](design-revision-1.md)처럼 사용자가 지시한 설계 개정을 종합하며 원래 승인 artifact라고 주장하지 않는다. 역사적 승인본은 당시 결정을 보존하고 이 참조는 현재 편집 기준이며, 마일스톤 상태는 실제 구현·검증에 따라서만 바뀐다. 구체 작업은 [계획](planning/README.md), 현재 구현 사실은 [계약](../contracts.md)이 소유한다.
 
 ## 목적과 신뢰 범위
 
@@ -11,7 +11,7 @@
 
 ## 책임과 정체성
 
-daemon은 용량·정적 예약·admission·lease·압력과 후속 cache 정책을 소유한다. launcher는 payload 전 scope·정책을 확인하며 범용 프로세스 서버가 아니다. CLI는 직접 시작한 명령을 관제한다. contract/client·core·native backend·launcher·daemon/CLI·언어 adapter를 분리하고 core에 제품 타입을 넣지 않는다. DevGuard는 CodeSpace/Codex 없이 빌드·시험·릴리스할 수 있어야 하며 CodeSpace가 작은 client를 전체 SHA로 고정해 소비한다.
+daemon은 용량·정적 예약·admission·lease·압력과 후속 cache 정책을 소유한다. launcher는 payload 전 scope·정책을 확인하며 범용 프로세스 서버가 아니다. CLI는 직접 시작한 명령을 관제한다. contract/client·core·native backend·launcher·daemon/CLI·언어 adapter를 분리하고 core에 제품 타입을 넣지 않는다. contract·core·범용 client에는 Codex 제품 타입·모델 세션·CodeSpace workspace 권한·PTY 소유권을 넣지 않는다. DevGuard의 기본 배포와 공용 client는 현재 CodeSpace/Codex 없이 빌드·시험·릴리스하며 CodeSpace가 작은 client를 전체 SHA로 고정해 소비한다. 이는 영구 금지가 아니라 현재의 공학적 선택이다. 실행·플랫폼 adapter의 저수준 유틸리티 재사용은 실제로 대체하는 코드·계약 적합성·의존성 전파·복구 경로·재검증 비용으로 결정한다([개정 1, D3](design-revision-1.md#103-d3--devguard-의존성-정책)).
 
 운영 계정·executor 호스트마다 canonical state와 배타 소유권을 가진 정상 authority 하나만 둔다. 다른 socket/state 경로로 정상 전체 예산을 추가할 수 없다. 원격 worker는 실제 실행 호스트의 authority를 소비하며 host와 guest의 용량을 독립 여유분으로 합산하지 않는다.
 
@@ -19,7 +19,7 @@ consumer_id는 운영자 등록, instance_id는 PID/start/boot, attempt_id는 tr
 
 소켓 부모0700·소켓0600, OS peer UID/PID와 역할·generation 자격을 검증한다. UID만으로 control_service를 허용하지 않는다. 등록 자격·일회성 helper permit·관리 권한을 구분한다. private FD 자격은 payload 전에 닫고 argv/env/debug/journal에 남기지 않는다. 프로젝트 설정은 정책을 강화할 수만 있고 용량·역할을 높이거나 소비자를 사칭할 수 없다.
 
-CodeSpace의 단일 등록자는 실행 소유자인 Runner다. InProcess는 Gateway PID, UDS는 worker PID다. Gateway와 Runner 비용은 정적 예약 하나에 포함한다. SDK service-exec는 자격·시작을 준비하고 Runner가 등록을 완료한다. 서비스/하위 worker 등록은 실제 다중 Runner 수요 때 재검토한다.
+CodeSpace의 단일 등록자는 실행 소유자인 Runner다. InProcess는 Gateway PID, UDS는 worker PID다. Gateway와 Runner 비용은 정적 예약 하나에 포함한다. 별도 service-exec 경로는 없다. Gateway는 소비자 자격을 `CredentialHandoff`로 UDS worker에 넘기고 InProcess는 직접 읽으며, 한정된 세션마다 같은 instance를 다시 등록한다. 서비스/하위 worker 등록은 실제 다중 Runner 수요 때 재검토한다.
 
 ## 예산과 압력
 
@@ -65,11 +65,23 @@ Python/JS/make/ninja/VM/container/학습 추정은 후속이다. Docker CLI제�
 
 GC는 사용/reclaim배제→내구 mark→동일filesystem trash rename→중단 가능한 sweep→실제 여유 측정이다. identity/symlink이탈을 검사하고 trash는 재시작 후에도 점유다. 비활성7일·목표min(저장공간8%,50GiB)는 적격 cache만의 미검증 초기값이다. APFS du는 물리 회수량이 아니다. CARGO_TARGET_DIR변경/sccache활성화는 자동 수행하지 않는다.
 
+## 실행 소유권(개정 1)
+
+[설계 개정 1](design-revision-1.md)은 정확성 목표를 유지하고 그 구현 방식을 재평가한다. 목표는 프로세스마다 회수 책임자 하나, 관리 실행의 회수 전 관찰 기회 보존, permit·자격·transcript descriptor를 무관한 실행이나 payload에 넘기지 않음, 응답 유실·timeout·EOF·root 회수만으로 미실행이나 scope 전체 종료를 확정하지 않음, 준비의 일회성 소비와 불확실 실행의 자동 재실행 금지, 신규 허가 실패가 조회·종료를 막지 않음, 종료·출력 정리·workspace 해제·lease 반환의 구분, 구현·기능·플랫폼·SLO 증거의 분리 기록이다.
+
+CodeSpace는 실행 identity·승인 연결·상태·timeout·종료 요청·출력·반환을 한 계층에서 조정하고, PTY·pipe·자원 관리 여부의 차이를 OS child 생성·입출력 연결·terminal 설정·종료 관찰·실제 회수라는 좁은 backend 경계에 가둔다. 스스로 회수하는 backend(`BackendReaped`, 초기 legacy `off` 경로)는 회수되지 않은 종료 상태를 제공한다고 표시하지 않는다. `required` 경로는 `OwnerControlledReap`으로, child를 소유한 객체 하나를 통해 회수 전에 관찰한다. 준비 결과는 소유권 있는 일회성 객체이며 복제하거나 argv로 다시 만들지 않는다.
+
+- **D1.** `required` 실행의 기본안은 현재 pin에서 가능한 CodeSpace 소유 Unix transport다. 새 코드를 쓰기 전에 공개 API, 같은 계약의 upstream 후보, 출처를 기록한 제한적 adaptation(A4), 자체 구현 순으로 재사용 가능성과 계약 차이를 기록한다. Codex `ProcessDriver`는 출력 손실·backpressure·Drop 기준을 만족할 때만 채택한다.
+- **D2.** CS-RG 최종 qualification 전에 legacy `off` backend를 통합해 제거하거나, 기록된 근거로 제한적 compatibility backend로 유지한다.
+- **D3.** [책임과 정체성](#책임과-정체성)을 따른다.
+
+개정 1은 Codex pin을 유지하며 변경은 검증에 근거한 별도 결정이다. adaptation 정책과 재검토 트리거는 [ADR-006](planning/decisions.md#adr-006--codespace-실행-소유권과-재사용-정책)에 있다.
+
 ## 소비와 복구
 
-[CodeSpace 결합](planning/codespace-integration.md)이 고정 source경로·오류·흐름을 소유한다. Codex pin을 보존한다. source/client SHA,설치 daemon/helper hash,제품 wire/capability는 독립 축이다. 엄격한 decoding은 구신 fixture를 요구하며 필드 추가가 자동 호환은 아니다. 기본off,required의 자동 완화 금지다.
+[CodeSpace 결합](planning/codespace-integration.md)이 고정 source경로·오류·흐름을 소유한다. 개정 1은 Codex pin을 유지하며 이후 변경은 검증에 근거한 별도 결정이다. source/client SHA,설치 daemon/helper hash,제품 wire/capability는 독립 축이다. 엄격한 decoding은 구신 fixture를 요구하며 필드 추가가 자동 호환은 아니다. 기본off,required의 자동 완화 금지다.
 
-기존 인가/workspace FIFO후 spawn전 슬롯·PrepareExec를 확보하고250ms내 빠르게 거절한다. 장기 제품 대기열은 없다. 준비 성공 후 동일 attempt승인 CAS와 ExecPrepared가 진행한다. 미시작/confirmed/READY/exec실패/unknown을 구분한다. 예산 부족·관제서비스 장애·미지원 정책 오류를 구분하고 terminate_process·기존 workspace오류·patch원장 경계를 보존한다.
+기존 인가/workspace FIFO후 spawn전 슬롯·PrepareExec를 확보하고250ms내 빠르게 거절한다. 장기 제품 대기열은 없다. 준비 예산 250ms, Prepared 수명 5초, DG-1의 frame별 250ms 기한은 서로 다른 제한이다. 준비 성공 후 동일 attempt승인 CAS와 ExecPrepared가 진행한다. 미시작/confirmed/READY/exec실패/unknown을 구분한다. 예산 부족·관제서비스 장애·미지원 정책 오류를 구분하고 terminate_process·기존 workspace오류·patch원장 경계를 보존한다.
 
 control/data는 처리·전송 여유와 전체 queue/bytes/retention을 분리·제한하며 lock/writer/callback도 포함한다. 작업동시8·대기64와 별도 control여유가 초기안이다. inflight replay는 같은 dispatch를 공유하고 eviction은 재실행 허용이 아니다. authority장애에도 기존 handle관제는 유지한다.
 

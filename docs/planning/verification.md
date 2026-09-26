@@ -6,13 +6,13 @@ Preserve the approved [design SLOs](../design.md#verification-and-promotion). De
 
 | Scope | Owner/subject | Acceptance | Baseline availability |
 | --- | --- | --- | --- |
-| V-DOC-DG | DevGuard docs/metadata | Original checksum/license, English/Korean hashes, IDs/DAG/links, 46 units/23 groups, required fields | Documentation checker and review |
+| V-DOC-DG | DevGuard docs/metadata | Original checksum/license, English/Korean hashes, IDs/DAG/links, 48 units/25 groups, required fields | Documentation checker and review |
 | V-DG0 | Contract/core | Rust 1.95.0 fmt/Clippy, 44-test baseline, full dependency graph and source fingerprint | Existing validator |
 | V-DG1-FUNCTION | Real auth/probe/launch/reconcile/CLI/operations | DG1-C01–C11 normal/failure/race cases and functional artifacts | C01 authority, C02 local authentication/transport, C03 native probes and C04 native scopes available; later scopes supplied with each group |
 | V-DG1-SLO | Standalone daemon/CLI, development and self-use | DG1-C12 control and foreground measurements | Qualified on the target host for release `0.1.0-5daee5d-b3fa569e` (protocol-2: cold and warm, three repetitions each, all passed; promoted); no CS-RG prerequisite |
 | V-CS-DOC | CodeSpace bilingual registry/site | Reviewed hashes, existing tests, pinned build, integrity and visual review | Existing commands |
 | V-CS-UPSTREAM | Existing Codex integration | Pin/policy/format/dependencies/adapter/PTY/filesystem/platform gates | Existing; actual platforms required |
-| V-CS-RG | Integrated CodeSpace | CSRG-C07/C08 parity, approvals, replay and saturation SLO | Future |
+| V-CS-RG | Integrated CodeSpace | CSRG-C00 boundary fitness, C07 parity including mixed execution in one process, the C09 backend decision, and C08 approvals, replay and saturation SLO | Future |
 | V-P1 | Independent Runner/Gateway recovery | P1R-C06 identity, fencing, deadlines and output/unknown | Future |
 | V-LINUX | Actual Linux scopes/product | DGL-C05/C06 controllers, ancestors, privileges, descendants and SLO | Future; fake cgroups do not qualify |
 | V-CACHE / V-ADAPTER | Cache/tools/executors | DGC-C06; DGA-C02/C04/C06/C08 supported combinations | Future |
@@ -67,7 +67,7 @@ python3 scripts/validate-upstream.py linux-isolation
 
 ## Document consistency
 
-Verify original design bytes against `docs/design-source.json`; compare LICENSE/NOTICE and preserved Codex gitlink. Check all 46 definitions (DG1 12, CSRG 8, P1R 6, DGL 6, DGC 6, DGA 8), 23 logical groups (6+4+3+3+3+4), exactly one group per task, defined prerequisites and acyclic task/milestone graphs. DG0-R records and DGP/CSP documentation units are excluded from future runtime counts.
+Verify original design bytes against `docs/design-source.json`; compare LICENSE/NOTICE and preserved Codex gitlink. Check all 48 definitions (DG1 12, CSRG 10 numbered C00–C09, P1R 6, DGL 6, DGC 6, DGA 8), 25 logical groups (6+6+3+3+3+4, CSRG numbered P0–P5), exactly one group per task, defined prerequisites and acyclic task/milestone graphs. DG0-R records and DGP/CSP documentation units are excluded from future runtime counts.
 
 Every task needs owner/title/group, problem→behavior, prerequisites/operating conditions, modules/deliverables, invariants, meaningful normal/failure/race tests, available/planned commands, completion evidence, rollback and handoff. Check local links, ledger references and English/Korean reviewed hashes; manually review semantic detail, since hashes do not prove translation quality. Do not invent future SHAs/PR numbers. Preserve historical status until implementation evidence warrants an update.
 
@@ -165,6 +165,7 @@ The framing implementation uses `poll` with descriptor `O_NONBLOCK` and per-call
 | Launch | Before helper, before READY, after READY; cancellation, expiry and late helper | DG1-C05/C06, CSRG-C07 |
 | Lifetime | Root exit with descendants, PID reuse, tracking loss, original boot deadline | DG1-C03/C04/C06, DGL-C04 |
 | Control | Queue/byte saturation, slow stdin/readers, locks/callbacks, concurrent replay | CSRG-C05–C08 |
+| Execution ownership | One reaper, FD/PTY composition, mixed legacy/managed spawns, bridge loss, backend convergence | CSRG-C00/C03/C06/C07/C09 |
 | Self-use/upgrade | Candidate crash/over-budget, parent loss, policy/journal failure, strict old/new decoding | DG1-C09–C12 |
 | Gateway recovery | Concurrent/stale Gateway, exit/reconnect, Runner loss and output gaps | P1R-C01–C06 |
 | Linux | Actual controllers/ancestors/permissions, sandbox/proxy, OOM, descendants | DGL-C01–C06 |
@@ -172,6 +173,41 @@ The framing implementation uses `poll` with descriptor `O_NONBLOCK` and per-call
 | Tools/executors | Option conflicts, nested tokens/FDs, child budgets and actual executor lifetime | DGA-C01–C08 |
 
 Inject faults only in bounded test scopes/roots. Abort correctness or resource-control failures, close new work, reconcile actual scopes and retain failed/uncertain evidence. R1 is not authorization for unbounded host stress.
+
+## CS-RG execution verification
+
+[Design revision 1](../design-revision-1.md) sets these requirements for CS-RG. The base matrix is resource mode (`off`/`required`) × transport (pipe/PTY) × Runner mode (InProcess/UDS). Mixed execution within one process is a separate axis, because success of each path alone does not verify spawn and descriptor protection.
+
+| Area | Required cases | Work |
+| --- | --- | --- |
+| Slots and preparation | Concurrency limit exceeded, preparation expiry, cancellation, late worker execution | CSRG-C03 |
+| Execution identity | Same-attempt re-request, changed-meaning conflict, lost replies | CSRG-C04 |
+| Helper | Lost permit, wrong helper, failures before and after READY | CSRG-C04/C07 |
+| Reaping | Root exits at once, surviving descendants, races of timeout, terminate and shutdown | CSRG-C00/C03 |
+| Ownership | Waiter cancellation, backend Drop, `ECHILD`, no double reap | CSRG-C00/C03 |
+| Descriptors | Unrelated concurrent spawns, payload inspection, jobserver retention, failure cleanup | CSRG-C00/C02/C07 |
+| PTY | Initial size, resize, controlling terminal, session and group, EOF | CSRG-C00/C07 |
+| Output | Large output, slow readers, bridge lag, tail retention, exceeding the bound | CSRG-C06 |
+| Authority failure | Pre-reap `Observe` failure, daemon restart, control of existing work while new grants fail | CSRG-C05/C07 |
+| Rollback | Blocking new starts, draining existing executions, preserving unknown, no stale journal restore | CSRG-C07/C08 |
+
+A fault-injection test need not return every resource at once. While uncertainty remains, staying Suspect or charged can be the correct result, provided the state is observable and never leads to false success, automatic re-execution or wrong reallocation.
+
+**Evidence levels.** Name the level of every claim: a record (PR body, report or ledger entry), code review at a fixed revision, a test run, or re-verification from raw data. Search the records before calling something unverified, and never present a lower level as a higher one.
+
+**Backend fitness and maintenance.** CSRG-C09 decides D2 from measurements, never from "the code got shorter" alone:
+- product spawn entry points and the sites that actually reap;
+- independent lifecycle implementations and duplicated unsafe and descriptor code;
+- bridges, queues and tasks added or removed;
+- runtime and build dependency changes on the actual graph;
+- test duplication and coverage, distinguishing deleted tests from tests merged into the common contract;
+- the files and contracts to review when the pin changes.
+
+Mark unquantified effort as an estimate, and state which items a relative judgement such as "A1 costs little, A4 costs much" counted. A `ProcessDriver` or adapted-code candidate must meet its contract criteria in [CodeSpace integration](codespace-integration.md#errors-control-and-lifetime) and [ADR-006](decisions.md#adr-006--codespace-execution-ownership-and-reuse-policy).
+
+**Dependency measurement.** A dependency figure used as evidence records the SHA, target, features, the runtime/build/dev split and the command that produced it. Without them it remains a review note, not an adoption criterion.
+
+**Platform and SLO recording.** Hosted CI runs the functional, compatibility and fault tests it can and records the rest as `not_run`. A qualification-host success does not stand in for hosted CI, and a hosted skip is not an integration failure. Each result records the CodeSpace and DevGuard client source SHAs, the daemon/helper release and hashes, the Codex SHA, the backend, wire/capability, the operating policy, the OS/architecture/host, the tests run with their `not_run` reasons, and the hashes of raw logs and reports. A documentation-only change does not invalidate DG-1 qualification; a changed runtime artifact never presents earlier verification as its own.
 
 ## SLO protocol
 

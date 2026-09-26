@@ -1,6 +1,6 @@
 # 소비 저장소의 최소 도입 조건
 
-이 문서는 특정 언어나 제품에 독립적인 도입 gate다. 현재 DG-0는 계약 검토·adapter 준비 수준만 충족한다. 실제 코드 경로를 대조한 소비자는 CodeSpace이며 다른 저장소의 구현 적합성까지 검증한 문서가 아니다. 구현 상태의 원본은 [milestones.json](../../../milestones.json), 선택 근거는 [decisions.md](decisions.md)다.
+이 문서는 특정 언어나 제품에 독립적인 도입 gate다. DG-1은 측정한 호스트에서 release `0.1.0-5daee5d-b3fa569e`로 R2와 RS를 허용하며, R3에는 여전히 CS-RG가 필요하다. 실제 코드 경로를 대조한 소비자는 CodeSpace이며 다른 저장소의 구현 적합성까지 검증한 문서가 아니다. 구현 상태의 원본은 [milestones.json](../../../milestones.json), 선택 근거는 [decisions.md](decisions.md)다.
 
 ## 도입 수준
 
@@ -9,7 +9,7 @@
 | R0 계약 검토·adapter 준비 | DG-0 source·계약·44개 시험 결과 | 타입/오류/상태 전이의 소비 설계 | daemon/OS 보호가 있다고 표시하지 않음 |
 | R1 제한된 기능 시험 | DG1-C01~C08 실제 인증·launch·회수 경로, 격리된 시험 호스트·명시 budget | 개발 후보 기능·장애 시험 | 일반 개발 적용·SLO 자격으로 승격 금지 |
 | R2 macOS 개발 적용 | DG1-C12 qualification, 실제 probe·충분한 budget, 명시 CLI/adapter 진입점 | 검증한 generic/Cargo 명령·호스트 조합의 일상 개발 | 미지원 도구/host는 별도 검증 또는 거절 |
-| R3 CodeSpace macOS 런타임 | R2 + CSRG-C08, 지원 client/artifact/wire 조합 | 검증한 모드의 required 소비와 관제 보호 | 기본 off에서 자동 전환하지 않음 |
+| R3 CodeSpace macOS 런타임 | R2 + CSRG-C09 backend 결정 뒤 head의 CSRG-C08: 단일 회수자를 갖춘 공통 실행 수명주기, 한 프로세스 안의 legacy/관리 혼합 실행 검증(또는 그 조합 미지원), 지원 client/artifact/wire 조합 | 검증한 모드의 required 소비와 관제 보호 | 기본 off에서 자동 전환하지 않음 |
 | R4 Linux 강제 보호 | 해당 Linux 환경의 DGL-C06 추가 | 검증된 자원·scope의 kernel 제어 | controller·ancestor·권한 부족이면 required 거절 |
 | RS 자기 적용 | C09 보호 artifact, C10 부모 예산 기능 시험 후 동결한 부모·parent lease·격리·독립 복구; 일상 사용은 C12 | 후보 개발/시험을 기존 budget 안에서 수행 | 기능 기준과 SLO 안정 artifact의 자격을 별도 표시 |
 
@@ -22,9 +22,9 @@ RS는 R0~R4와 별도의 자기 적용 축이다. 최초 bootstrap은 기능 sui
 | G01 실행 호스트/authority | 실제 executor identity, canonical socket/state·UID·lock, 단일 정상 authority | 운영자, DG1-C01/C02; VM은 DGA-C07 | 다른 경로에 전체 예산 authority를 만들지 않고 거절 |
 | G02 실제 소비 진입점 | 실행 argv→adapter→attempt→lease→scope receipt | 소비자, DG1-C07/C08·CSRG-C03/C04 | 설정 파일만 있는 명령은 미관리로 표시 |
 | G03 충분한 예산 | 유효 용량−host 여유−정적 제어 예약에 최소 작업이 들어가는 계산 | authority, DG1-C03; Linux DGL-C01 | 부족하면 거절; 강제로 1 worker 발급 금지 |
-| G04 인증/자격 | OS peer와 실제 등록 owner 대응, generation, payload FD/로그 secret 비노출 | DG1-C02/C05·CSRG-C02 | unauthorized 거절; peer identity를 caller JSON으로 받지 않음 |
+| G04 인증/자격 | OS peer와 실제 등록 owner 대응, generation, payload FD/로그 secret 비노출, 모든 child 생성 경로에 하나의 spawn 보호 | DG1-C02/C05·CSRG-C00/C02 | unauthorized 거절; peer identity를 caller JSON으로 받지 않음 |
 | G05 자원별 능력 | requested/supported/applied와 method/level·fresh evidence | DG1-C04·DGL-C02 | required 미지원/부분 적용 실패 시 실행 허용 차단 |
-| G06 실행 수명 | prepare 만료·응답 유실·cancel·restart·tracking loss fixture | DG1-C05/C06·CSRG-C03/C04 | 불확실 상태 보존·자동 재실행 금지 |
+| G06 실행 수명 | prepare 만료·응답 유실·cancel·restart·tracking loss fixture, child당 회수 책임자 하나와 회수 전 관찰 | DG1-C05/C06·CSRG-C00/C03/C04 | 불확실 상태 보존·자동 재실행 금지 |
 | G07 독립 관제 | authority 신규 admission 실패 중 기존 handle 조회/종료 결과 | 소비 제품, CSRG-C05~C08 | 신규 작업만 거절; 조회/종료에 신규 grant 요구 금지 |
 | G08 호환 조합 | source/client full SHA, 설치 daemon/helper hash, 제품 wire/capability fixture | DG1-C11·CSRG-C01/C08 | 미지원 조합 거절; 버전 문자열만으로 호환 추정 금지 |
 | G09 상태/증거 보호 | journal·Git·qualification·안정/복구 artifact의 cache 제외 | 운영자, DGC-C01/C02 | 보호 분류 미완성 root의 자동 회수 금지 |
