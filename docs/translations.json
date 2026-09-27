@@ -35,8 +35,8 @@
       "id": "planning-consumer-readiness",
       "source": "docs/planning/consumer-readiness.md",
       "translation": "docs/ko/planning/consumer-readiness.md",
-      "reviewed_source_sha256": "4736e1dd5c8d2e9159f0495a8e99451328903a8aa5e51a3c64c1becfb6bd8d8f",
-      "reviewed_translation_sha256": "f936ec582850fe221f4e6a35aed1804fd94ee898acebc3f1ec19413795ce6aaa"
+      "reviewed_source_sha256": "e64eabeb48fb529b6afe773b91c8bdf9c5cbd8ba4d390cb49a122c23dcf17fa1",
+      "reviewed_translation_sha256": "26bf91d311f54eca01e59e2b49d6b18bf12808ee59a71af3c1d24b5ff9029d51"
     },
     {
       "id": "planning-decisions",
@@ -49,8 +49,8 @@
       "id": "planning-milestones-cs-rg",
       "source": "docs/planning/milestones/CS-RG.md",
       "translation": "docs/ko/planning/milestones/CS-RG.md",
-      "reviewed_source_sha256": "37dfe204a982d5870072add6a2cc0b68438f62aeabdd742c5bf7b0cac38bf68e",
-      "reviewed_translation_sha256": "81d3c56d114bb355a71dce380830cbf937d57cd23b67800bb0b39d014d89cbd9"
+      "reviewed_source_sha256": "ca9c3990b7f9c74474bc149744b6d3b610e52777cd463842cc26e93eb67392e0",
+      "reviewed_translation_sha256": "3a1e68fea046d41682194cf6efb4f6ac289345a7a6e024fa3557ad231af35d97"
     },
     {
       "id": "planning-milestones-dg-0",
@@ -98,8 +98,8 @@
       "id": "planning-pr-delivery",
       "source": "docs/planning/pr-delivery.md",
       "translation": "docs/ko/planning/pr-delivery.md",
-      "reviewed_source_sha256": "c394ce3a61de1ac4f65d6f2ea7f62d53b927388abb04531af24dc03710dbfe5b",
-      "reviewed_translation_sha256": "414d43f768e83056f8592933571499451601c726560240e522f619e987763afd"
+      "reviewed_source_sha256": "713f53c653f7bf6b4e01e4593d5843d309fde04e2b55265bd07df1f5962ff89f",
+      "reviewed_translation_sha256": "db20e6ee75feee2fcfcca302c9f5ae7f9f21b3c61fbda4f71b5848c63a16a6bf"
     },
     {
       "id": "planning-verification",

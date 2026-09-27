@@ -1,12 +1,12 @@
 # CS-RG — CodeSpace 소비와 관제 보호
 
-소유 저장소: CodeSpace. 상태: `not-started` / `not-run`. 진입: DG1-C12의 검증된 macOS 조합. DG1-C12는 완료되었고, macOS qualification을 마친 release `0.1.0-5daee5d-b3fa569e`가 pin 후보다. 계약 검토·adapter 초안은 앞서 준비할 수 있지만 일상 `required` 소비 자격을 앞당기지 않는다. 완료: CSRG-C09의 backend 결정 뒤 남은 head에서 고정 client·artifact·wire 조합이 기존 권한/승인/workspace/PTY 계약과 관제 SLO를 함께 통과.
+소유 저장소: CodeSpace. 상태: `not-started` / `not-run`. 진입: DG1-C12의 검증된 macOS 조합과 설계 개정 1의 CodeSpace 대응 문서 CSP-D04의 전달([PR 전달](../pr-delivery.md)). DG1-C12는 완료되었고, macOS qualification을 마친 release `0.1.0-5daee5d-b3fa569e`가 pin 후보다. 계약 검토·adapter 초안은 앞서 준비할 수 있지만 일상 `required` 소비 자격을 앞당기지 않는다. 완료: CSRG-C09의 backend 결정 뒤 남은 head에서 고정 client·artifact·wire 조합이 기존 권한/승인/workspace/PTY 계약과 관제 SLO를 함께 통과.
 
-CodeSpace 확인 기준은 `b6e7ed22e2c730ac987297455e250cbd6e8e8b0c`이며 초기 분석 기준 `e94d21475643608ad2a466256fb57266b86faa47`은 이력으로 보존한다. 아래 ID·commit 제목·PR은 **예정 값**이며 DevGuard 저장소의 runtime 구현으로 집계하지 않는다. `crates/resource-client`와 qualification harness는 예정 경로다. [설계 개정 1](../../design-revision-1.md)(2026-09-27)이 CSRG-C00과 CSRG-C09를 추가하고 나머지 작업의 실행 계층을 개정했다.
+CodeSpace 확인 기준은 `b6e7ed22e2c730ac987297455e250cbd6e8e8b0c`이며 초기 분석 기준 `e94d21475643608ad2a466256fb57266b86faa47`은 이력으로 보존한다. 아래 ID·commit 제목·PR은 **예정 값**이며 DevGuard 저장소의 runtime 구현으로 집계하지 않는다. `crates/resource-client`와 qualification harness는 예정 경로다. [설계 개정 1](../../design-revision-1.md)(2026-09-27)이 CSRG-C00과 CSRG-C09를 추가하고 나머지 작업의 실행 계층을 개정했다. 설계 출처는 개정 1을 들인 DevGuard 병합 `d4981b4`(PR #8)다. 작업이 기반으로 삼는 DevGuard source는 작업을 시작할 때 따로 기록하며, 위 release ID는 source commit이 아니라 qualification된 artifact를 가리킨다. `b6e7ed2`는 조사 기준이며 HEAD가 그 commit이어야 한다는 조건이 아니다. 작업은 그 뒤의 CodeSpace 변경을 검토하고 현재 main에서 진행한다. CSP-D04는 CodeSpace 의존 규칙과 CI 선택의 경계를 검토·문서화할 뿐이며, crate·backend·시험 workspace를 추가하는 PR이 제품 root, CI component와 coverage를 그 시험과 함께 등록한다.
 
 | 예정 PR | 작업 | 선행 PR | 활성화 경계 |
 | --- | --- | --- | --- |
-| CSRG-P0 | CSRG-C00 | DG1-P6 | 실행 경계 적합성만 검증; 제품 동작 변경 없음 |
+| CSRG-P0 | CSRG-C00 | DG1-P6, CSP-D04 전달 | 실행 경계 적합성만 검증; 제품 동작 변경 없음 |
 | CSRG-P1 | CSRG-C01, CSRG-C02 | CSRG-P0 | pin·등록·operator 설정; 기본 off, 실행 경로 미완성 시 required startup 거절 |
 | CSRG-P2 | CSRG-C03, CSRG-C04 | CSRG-P1 | 공통 supervisor·prepare·cancel·승인·불확실성을 함께 구현 |
 | CSRG-P3 | CSRG-C05, CSRG-C06 | CSRG-P2 | transport 분리와 출력·총량/replay 정리 함께 활성화 |
@@ -43,7 +43,7 @@ CodeSpace 확인 기준은 `b6e7ed22e2c730ac987297455e250cbd6e8e8b0c`이며 초�
 
 - 소유/예정 PR: CodeSpace / CSRG-P0. 예정 제목: `test(runner): verify the managed execution boundary`.
 - 문제 → 동작: 공통 실행 계약을 쌓기 전에, 현재 pin에서 최소 구현으로 관리 helper를 PTY에서 실행할 수 있고 descriptor가 안전하며 root 종료 뒤 관찰·회수 순서를 소유자가 제어함을 입증한다. 모든 spawn·회수 경로를 목록화한다.
-- 선행: DG1-C12(완료). CodeSpace 확인 기준 `b6e7ed2`, Codex pin `6b9826e`, pin 후보 source의 DG-1 `HelperCommand`.
+- 선행: DG1-C12(완료)와 전달된 CSP-D04(병합 후 CodeSpace main workflow 확인 완료). Codex pin `6b9826e`, pin 후보 source의 DG-1 `HelperCommand`, CodeSpace 확인 기준 `b6e7ed2`. `b6e7ed2`는 조사 기준이며 HEAD 조건이 아니므로, 그 뒤의 CodeSpace 변경을 검토하고 현재 main에서 진행한다.
 - 대상/산출물: Gateway와 UDS Runner의 모든 child 생성·회수 경로마다 소유자와 보내는 메시지를 적은 소유권 표(pipe·PTY spawn, 종료 감시, timeout, `request_kill`, workspace 단위 종료, shutdown, backend Drop, task 취소, 오류 정리, patch·sandbox helper, 보조 명령, worker 생성, 시험 helper); `HelperCommand`를 쓰는 최소 관리 PTY; legacy Codex PTY와 중복 client 버전을 포함한 spawn guard·descriptor 적합성 보고서; 연결·`Authenticate`·`Register`·`Admit`까지의 end-to-end 기한 전파; 제안 예산 1초에 대한 회수 전 `Observe` 실측.
 - 불변 조건: child당 회수 책임자 하나이며 소유자 밖의 회수 호출 없음; `helper_command`나 `HelperCommand::spawn` 주위에서 `spawn_guard`를 잡지 않음; private descriptor가 관계없는 child나 payload에 닿지 않음; timeout으로 감싼 blocking 호출은 실행 중인 동안 계속 추적; 검증 코드는 후속 공통 시험으로 흡수하거나 삭제하며 제품의 네 번째 backend로 남기지 않음; 제품 동작 변경 없음.
 - 시험: 초기 크기·resize·controlling terminal·session과 group·EOF를 포함한 PTY 위의 관리 helper; 즉시 종료하는 root와 자손이 남는 root; `Observe` 실패·timeout 뒤의 회수; helper 생성 중 관계없는 동시 spawn; setup 실패 시 child·master·slave·private descriptor 정리; helper의 QoS 재실행 뒤 descriptor와 PID 의미 유지; jobserver descriptor 유지.

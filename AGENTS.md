@@ -13,5 +13,5 @@ Read the English editorial reference `docs/design.md`, the design revisions it l
 - Keep the approved design (`docs/design.ko.md`) intact. Record design revisions the user directs in a revision document and the editorial reference, implementation facts in `docs/contracts.md`, and status in the milestone ledger.
 
 - Write PR bodies and authoritative documentation in English; review maintained Korean counterparts and update only their corresponding hashes using `scripts/check_docs.py record --id <id>`.
-- Deliver DG1-P1 through P6 sequentially: review/current-head checks, normal exact-head merge, separate main CI, evidence preservation and cleanup before the next PR. Keep remote branches and protected recovery artifacts.
+- Deliver DG1-P1 through P6 sequentially: review/current-head checks, normal exact-head merge, separate main CI, evidence preservation and cleanup before the next PR. Keep remote branches and protected recovery artifacts. Every delivered PR, documentation and later fixes included, preserves its evidence with hashes and reads its post-merge main CI before any cleanup; removing temporary instrumentation never deletes its evidence.
 - Use foreground daemons through P4 and a current-user LaunchAgent from P5. Ordinary restart must reopen/reconcile state and fail closed on missing or corrupt journals.
