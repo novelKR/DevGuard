@@ -4,7 +4,7 @@
 
 ## 문서 이력과 준비
 
-DGP-D01은 기준/결정,D02는7개 milestone·46작업·23묶음,D03은 소비/결합/검증/전달,D04는 index/README/ledger다. CSP-D01은 이중언어 소비·단일 Runner·복구 범위,D02는 immutable 문서/PR 링크·registry다. CSP-D03은 CodeSpace 결합 로드맵에 DG-1 완료와 CS-RG 미시작 상태를 반영하고([CodeSpace #66](https://github.com/novelKR/CodeSpace/pull/66), merge `a1166870acbba9791d7170da6496a39dde6f4a69`), DGP-D05는 CS-RG 계획·결합 명세·ADR-001·계약을 구현된 DG-1 소비 인터페이스에 맞춘다. 같은 branch의 DGP-D06은 사용자 지시로 채택한 [설계 개정 1](../design-revision-1.md)(실행 소유권·재사용 정책, CSRG-C00/C09, 개정된 계획 문서)을 반영하며 병합 전 사용자 검토를 거친다. CSP-D04는 병합된 DevGuard SHA에 연결하는 CodeSpace 대응 문서(결합 로드맵·architecture·execution substrate·Codex 재사용·upstream 갱신·의존 규칙·CI 선택)이며 작업을 시작할 때 branch를 만들고 CSRG-P0 전에 끝낸다. 이 문서 작업은 runtime48개와 별개다. DevGuard 기준d59cbd43d206a9a9281328a946eddf1dc199f710,CodeSpace runtime e94d21475643608ad2a466256fb57266b86faa47와 로드맵fb822fc24c98f6628dce62d33a5cc67275f8ca34를 보존한다. 원래 CodeSpace checkout·사용자 branch·staged .codex/config.toml은 유지한다.
+DGP-D01은 기준/결정,D02는7개 milestone·46작업·23묶음,D03은 소비/결합/검증/전달,D04는 index/README/ledger다. CSP-D01은 이중언어 소비·단일 Runner·복구 범위,D02는 immutable 문서/PR 링크·registry다. CSP-D03은 CodeSpace 결합 로드맵에 DG-1 완료와 CS-RG 미시작 상태를 반영하고([CodeSpace #66](https://github.com/novelKR/CodeSpace/pull/66), merge `a1166870acbba9791d7170da6496a39dde6f4a69`), DGP-D05는 CS-RG 계획·결합 명세·ADR-001·계약을 구현된 DG-1 소비 인터페이스에 맞춘다. 같은 branch의 DGP-D06은 사용자 지시로 채택한 [설계 개정 1](../design-revision-1.md)(실행 소유권·재사용 정책, CSRG-C00/C09, 개정된 계획 문서)을 반영하며 병합 전 사용자 검토를 거친다. CSP-D04는 설계 개정 1을 그 병합 `d4981b4`에 연결하는 CodeSpace 대응 문서(결합 로드맵·architecture·execution substrate·Codex 재사용·upstream 갱신과 의존 규칙·CI 선택 검토)다. 이후의 DevGuard 병합과 release ID는 따로 기록하며, 제품 root·component·coverage 등록은 해당 crate나 backend를 추가하는 PR에서 한다. 작업을 시작할 때 branch를 만들고 CSRG-P0 전에 전달(병합과 main 확인)을 마친다. DGP-D07은 2026-09-27의 전달 보완이다. CS-RG 계획과 readiness의 CSP-D04 조건, 설계 출처·현재 source·release의 구분, 모든 전달 PR의 증거·정리 순서, 과거 기록과 현재 보존 규칙의 분리를 다루며 상태·원장·runtime을 바꾸지 않는다. 이 문서 작업은 runtime48개와 별개다. DevGuard 기준d59cbd43d206a9a9281328a946eddf1dc199f710,CodeSpace runtime e94d21475643608ad2a466256fb57266b86faa47와 로드맵fb822fc24c98f6628dce62d33a5cc67275f8ca34를 보존한다. 당시 원래 CodeSpace checkout에는 사용자 branch와 staged .codex/config.toml이 있었고, 이 설정은 이후 CodeSpace #67에서 commit되었다. 이는 과거 기록이며, 현재 사용자 소유 상태의 보존 규칙은 [정리와 완료](#정리와-완료)에 있다.
 
 [DevGuard #1](https://github.com/novelKR/DevGuard/pull/1)에 추가 commit으로 영문 정본·관리 한국어 번역·hash 검사와 C10 지침을 반영한다. 승인 docs/design.ko.md와 checksum 및 기존 commit/link를 바꾸지 않는다. [CodeSpace #65](https://github.com/novelKR/CodeSpace/pull/65)는 실제 전체 DevGuard 문서 SHA로 연결하고 해당 번역 pair만 검토/기록한다. 미병합 main의 없는 경로를 링크하지 않는다. 문서 revision과 runtime pin은 별개다.
 
@@ -41,7 +41,13 @@ C10에서 부모 기능을 먼저 시험한 뒤 그 기능이 포함된 부모�
 
 ## 정리와 완료
 
-정확한 task 경로·크기·사용 여부를 조사한다. report/raw/manifest/log를 worktree 밖 보호 경로로 복사하고 hash를 검증한다. 설치 기능/복구 artifact·자격·journal·승인 문서·공유 toolchain·Cargo 다운로드를 보존한다. 완료 PR의 재생성 target/임시 docs출력만 지우고 clean task worktree·병합 입증 local branch만 일반 삭제한다. unknown/unmerged를 force로 우회하지 않는다. 원격 branch와 .local 전체는 보존한다. #65 완료 후 task docs worktree만 정리하고 원래 CodeSpace는 유지한다. du삭제크기와 전후filesystem여유실측은 별도로 보고한다.
+문서·코드·후속 수정을 가리지 않고 이 계획으로 전달하는 모든 PR은 증거 보존과 hash 검증, 병합 확인, 별도 병합 후 main workflow 결과 확인, 정리의 순서로 끝낸다. main 결과를 읽기 전에는 정리하지 않으며, 나중에 결과가 성공이었다는 사실로 이를 정당화하지 않는다.
+
+정확한 task 경로·크기·사용 여부를 조사한다. report/raw/manifest/log를 worktree 밖 보호 경로(보통 지속 checkout의 git 무시 `evidence/`)로 복사하고 hash를 검증한다. 임시 계측 코드를 지우는 것과 그 증거를 지우는 것은 다르다. 코드를 지우기 전에 patch·명령·원시 log·결과를 hash와 함께 보존하고, PR 본문 요약으로 원시 증거를 대체하지 않는다. 잃은 증거는 공백으로 기록하며, 나중의 재실행은 복원이 아니라 새 기록이다. 설치 기능/복구 artifact·자격·journal·승인 문서·공유 toolchain·Cargo 다운로드를 보존한다.
+
+완료 PR의 재생성 target/임시 docs출력만 지우고, clean task worktree와 main ancestry·PR 상태로 병합이 입증된 local branch만 일반 삭제한다. `git branch -d` 성공만으로는 입증이 아니다. unknown/unmerged를 force로 우회하지 않는다. 원격 branch와 .local 전체는 보존한다.
+
+지속 checkout의 사용자 소유 상태(branch, 다른 도구가 쓴 ref·checkpoint, stash, 추적되지 않는 설정과 구성)는 건드리지 않는다. #65 완료 후에는 task docs worktree와 branch만 정리하고 원래 CodeSpace checkout·index·사용자 branch는 그대로 두기로 했다. du삭제크기와 전후filesystem여유실측은 별도로 보고한다.
 
 본문은 body file로 작성하고 scope/base/head·행동/불변조건·호환성·명령/toolchain/결과·증거/CI event·의존·한계·rollback을 포함한다. secret/사용자payload/메모리citation은 공개하지 않는다. 문서rollback은 append revert/새revision과 pair갱신이며 force push로 소비중commit을 지우지 않는다. runtime은 신규 admission닫기→실제scope관측/drain→journal대조→호환artifact복귀다. off설정만으로 lease/자손 정리가 아니며 새기록 후 stale snapshot 복원 금지다. repair는 후보 admission과 독립이다.
 

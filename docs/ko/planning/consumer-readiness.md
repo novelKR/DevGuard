@@ -1,6 +1,6 @@
 # 소비 저장소의 최소 도입 조건
 
-이 문서는 특정 언어나 제품에 독립적인 도입 gate다. DG-1은 측정한 호스트에서 release `0.1.0-5daee5d-b3fa569e`로 R2와 RS를 허용하며, R3에는 여전히 CS-RG가 필요하다. 실제 코드 경로를 대조한 소비자는 CodeSpace이며 다른 저장소의 구현 적합성까지 검증한 문서가 아니다. 구현 상태의 원본은 [milestones.json](../../../milestones.json), 선택 근거는 [decisions.md](decisions.md)다.
+이 문서는 특정 언어나 제품에 독립적인 도입 gate다. DG-1은 측정한 호스트에서 release `0.1.0-5daee5d-b3fa569e`로 R2와 RS를 허용하며, R3에는 여전히 CS-RG가 필요하며, 그 첫 묶음 CSRG-P0은 CSP-D04가 전달된 뒤 시작한다([PR 전달](pr-delivery.md)). 실제 코드 경로를 대조한 소비자는 CodeSpace이며 다른 저장소의 구현 적합성까지 검증한 문서가 아니다. 구현 상태의 원본은 [milestones.json](../../../milestones.json), 선택 근거는 [decisions.md](decisions.md)다.
 
 ## 도입 수준
 

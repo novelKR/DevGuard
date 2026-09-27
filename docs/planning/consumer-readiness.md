@@ -1,6 +1,6 @@
 # Minimum consumer readiness
 
-These gates are language/product independent. Only CodeSpace's actual code paths have been inspected. The [ledger](../../milestones.json) owns implementation status; [decisions](decisions.md) own rationale. DG-1 now permits R2 and RS on the measured host with release `0.1.0-5daee5d-b3fa569e`; R3 still requires CS-RG.
+These gates are language/product independent. Only CodeSpace's actual code paths have been inspected. The [ledger](../../milestones.json) owns implementation status; [decisions](decisions.md) own rationale. DG-1 now permits R2 and RS on the measured host with release `0.1.0-5daee5d-b3fa569e`; R3 still requires CS-RG, whose first group CSRG-P0 starts only after CSP-D04 is delivered ([PR delivery](pr-delivery.md)).
 
 ## Adoption levels
 
