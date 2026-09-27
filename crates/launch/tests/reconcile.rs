@@ -489,13 +489,18 @@ fn observing_before_reap_tracks_survivors_and_release_waits_for_them() {
     wait_exit(&mut child.0, EXIT_LIMIT);
     fixture.authority.pause_reconciler(false);
     let mut charged_while_alive = 0;
-    while !group_members(root).is_empty() {
+    loop {
+        // Read before listing. The survivor is the group's only member, so if
+        // it is still listed afterwards it was alive during both reads, and a
+        // release they saw is a violation. Listing first would let it end, and
+        // the reconciler release its scope, between the listing and the reads.
         let current = owner.lookup("survivor");
+        let charged = fixture.authority.committed().unwrap();
+        if group_members(root).is_empty() {
+            break;
+        }
         assert_ne!(current.phase, AttemptPhase::Released, "{current:?}");
-        assert_eq!(
-            fixture.authority.committed().unwrap(),
-            quantities(&committed)
-        );
+        assert_eq!(charged, quantities(&committed));
         charged_while_alive += 1;
         std::thread::sleep(Duration::from_millis(200));
     }
