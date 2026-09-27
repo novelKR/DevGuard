@@ -1,8 +1,12 @@
 # CodeSpace 결합 명세
 
+> **상태: 구현 지시로서 효력 중지.** CodeSpace 소유 관리형 실행 전송을 전제로 한 이 문서의 통합 명세는 구현하지 않습니다. 관찰된 기준선 항목은 고정 커밋의 CodeSpace를 기술하는 사실로 남고, 계획된 경계는 나머지와 함께 효력이 중지됩니다. CodeSpace 통합 계획에 대해 소유자가 지시한 검토인 CS-RG 통합 경계 재검증(작업 단위가 아닙니다)이 끝날 때까지 적용됩니다. 대체 구조는 승인되지 않았으며, 소유자가 재검증 결과를 검토한 뒤 결정합니다. 이 표기는 지시의 효력만 중지하며 어떤 안전 요구도 완화하지 않습니다. 아래 내용은 이력 추적을 위해 바꾸지 않고 남깁니다.
+
 확인 기준: CodeSpace `b6e7ed22e2c730ac987297455e250cbd6e8e8b0c`([설계 개정 1](../design-revision-1.md), 2026-09-27). 초기 분석 기준인 CodeSpace `e94d21475643608ad2a466256fb57266b86faa47`과 DevGuard `d59cbd43d206a9a9281328a946eddf1dc199f710`은 이력으로 보존하며, 아래 runtime 경로는 patch helper의 시험 재사용을 제외하면 두 CodeSpace 기준 사이에 바뀌지 않았다. 문서 기준일: 2026-09-22, 개정 2026-09-27. 현재 CodeSpace에 DevGuard dependency·daemon 소비·PrepareExec·복구 capability는 구현되지 않았다. DG1-C12는 완료되었고 macOS qualification을 마친 release `0.1.0-5daee5d-b3fa569e`가 pin 후보다. 설계 개정 1은 Codex `6b9826e3aa83b1a5947db50f4332cb9c65f1b340` pin을 유지하며, 이후의 pin 변경은 검증 결과에 근거한 별도 결정이다. 2026-09-26 검토에서 이 명세를 DG-1이 구현한 소비 인터페이스([계약](../contracts.md))에 맞췄고, 설계 개정 1이 실행 계층을 개정했다. 아래는 후속 구현 명세이며 [CS-RG](milestones/CS-RG.md)와 [P1-RECOVERY](milestones/P1-RECOVERY.md)가 상세 작업의 원본이다.
 
 ## 현재 코드와 목표 계약
+
+> **상태:** 이 절의 목표 계약(계획된 경계)은 CS-RG 통합 경계 재검증이 끝날 때까지 구현 지시로서 효력이 중지됩니다. 현재 코드에 대한 기술은 고정 커밋의 사실을 기록합니다.
 
 | 기준 코드 | 관찰된 동작 | 결합 변경/작업 |
 | --- | --- | --- |
@@ -18,6 +22,8 @@
 | [validate-upstream.py](https://github.com/novelKR/CodeSpace/blob/b6e7ed22e2c730ac987297455e250cbd6e8e8b0c/scripts/validate-upstream.py) | 고정 target·보고서, all과 macos-core 별도, platform별 skip | 기존 검사 유지+별도 결합 qualification, CSRG-C08/DGL-C06 |
 
 ## 실행 소유권
+
+> **상태: 구현 지시로서 효력 중지.** CS-RG 통합 경계 재검증이 끝날 때까지 이 절을 근거로 구현하지 않습니다. 대체 구조는 승인되지 않았고, 어떤 안전 요구도 완화되지 않습니다. 내용은 이력 추적을 위해 바꾸지 않고 남깁니다.
 
 이 절은 [설계 개정 1](../design-revision-1.md)을 적용한다. 고정된 Codex 고수준 spawn은 변경 없이 DG-1 관리 실행을 담을 수 없다. pipe·PTY spawn 함수가 자체 task에서 child를 회수하므로 소유자가 회수 전에 scope를 관찰할 수 없고, 이미 상속 가능한 descriptor만 열어 두는 반면 DG-1은 permit과 transcript descriptor를 자체 `pre_exec`까지 close-on-exec로 유지하기 때문이다. 원인은 회수 소유권과 FD 전달 계약의 불일치이다. 이를 wrapper로 숨기지 않으며 “Codex는 쓸 수 없다”로 일반화하지도 않는다. 이 발견은 다섯 부분으로 나뉜다.
 
@@ -46,6 +52,8 @@ Runner는 모든 실행을 한 계층에서 조정한다. 실행 identity, 승�
 
 ## 등록과 시작의 단일 소유자
 
+> **상태: 구현 지시로서 효력 중지.** CS-RG 통합 경계 재검증이 끝날 때까지 이 절을 근거로 구현하지 않습니다. 대체 구조는 승인되지 않았고, 어떤 안전 요구도 완화되지 않습니다. 내용은 이력 추적을 위해 바꾸지 않고 남깁니다.
+
 ```mermaid
 flowchart LR
     O[운영자 설정과 소비자 자격] --> C[CredentialHandoff와 서비스 시작]
@@ -68,6 +76,8 @@ worker는 시작할 때 자격 descriptor를 읽고 닫는다. permit과 transcr
 구체 설정 schema와 wire 변화는 CSRG-C02 구현 PR의 계약이며 이번 문서 revision은 현재 설정을 활성화하지 않는다.
 
 ## 실행과 승인의 순서
+
+> **상태: 구현 지시로서 효력 중지.** CS-RG 통합 경계 재검증이 끝날 때까지 이 절을 근거로 구현하지 않습니다. 대체 구조는 승인되지 않았고, 어떤 안전 요구도 완화되지 않습니다. 내용은 이력 추적을 위해 바꾸지 않고 남깁니다.
 
 준비 결과는 소유권 있는 일회성 객체다. 실행 identity(process_id와 attempt의 대응), 명령 의미, spawn 전에 확보한 실행 슬롯, FIFO·승인 흐름과 연결된 workspace 점유, 자원 상태(`off` 또는 Prepared), 최초 준비의 기한을 가진다. 한 번 실행하거나 취소할 수 있으며, 정리는 미실행 작업과 committed·불확실 작업을 구분한다. 두 번째 spawn을 위해 복제하거나 직렬화된 argv로 다시 만들지 않는다. 취소된 task의 Drop이 lease를 반환했다고 가정하지 않으며, 원격 정리는 명시적인 대조 작업으로 남긴다.
 
@@ -105,6 +115,8 @@ attempt는 server-minted process_id와 일대일로 연결한다. 이는 공개 
 기존 approval row에는 미래 nullable `resume_attempt_id`와 같은 동일 시도 비교가 필요하다. 기존 NULL이나 오래된 resuming을 미시작으로 추정하지 않는다. schema migration과 구·신 버전 fixture를 CSRG-C04에서 함께 제출한다. exec를 patch operations 원장으로 옮기지 않는다.
 
 ## 오류·관제·수명
+
+> **상태: 구현 지시로서 효력 중지.** CS-RG 통합 경계 재검증이 끝날 때까지 이 절을 근거로 구현하지 않습니다. 대체 구조는 승인되지 않았고, 어떤 안전 요구도 완화되지 않습니다. 내용은 이력 추적을 위해 바꾸지 않고 남깁니다.
 
 | 오류/상태 | 목표 의미 | 처리 |
 | --- | --- | --- |
@@ -149,6 +161,8 @@ scope 추적 상실을 root reap으로 덮지 않는다. macOS에서 scope는 ro
 
 ## P1 복구 모드의 경계
 
+> **상태: 구현 지시로서 효력 중지.** CS-RG 통합 경계 재검증이 끝날 때까지 이 절을 근거로 구현하지 않습니다. 대체 구조는 승인되지 않았고, 어떤 안전 요구도 완화되지 않습니다. 내용은 이력 추적을 위해 바꾸지 않고 남깁니다.
+
 | 상황 | 기존 모드 | 새 독립 Runner 모드 |
 | --- | --- | --- |
 | 정상 Gateway 종료 | 현재 mode의 child/disconnect 정리 계약 유지 | 명시 종료 의도와 운영 설정대로 처리; detach와 구분 |
@@ -161,6 +175,8 @@ scope 추적 상실을 root reap으로 덮지 않는다. macOS에서 scope는 ro
 
 ## backend 결정
 
+> **상태: 구현 지시로서 효력 중지.** CS-RG 통합 경계 재검증이 끝날 때까지 이 절을 근거로 구현하지 않습니다. 대체 구조는 승인되지 않았고, 어떤 안전 요구도 완화되지 않습니다. 내용은 이력 추적을 위해 바꾸지 않고 남깁니다.
+
 세 결정은 서로 독립이다([ADR-006](decisions.md#adr-006--codespace-실행-소유권과-재사용-정책)). CodeSpace가 child를 직접 소유한다는 결론에서 DevGuard의 영구 Codex 금지나 모든 `off` backend 교체가 도출되지 않는다.
 
 - **D1, `required` 실행.** 기본안은 현재 pin에서 가능한 CodeSpace 소유 Unix transport(A1)다. 유지 범위에는 master/slave 수명, signal·session 설정, resize, descriptor 실패 정리, 출력 처리, 취소·shutdown 연계가 포함되며, 몇 줄짜리 opener나 유일하게 가능한 설계로 표현하지 않는다. 새 코드를 쓰기 전에 기존 공개 API, 같은 계약의 upstream 후보, ADR-006 정책에 따른 제한적 adaptation, 자체 구현 순서로 재사용 가능성과 계약 차이를 기록한다.
@@ -168,6 +184,8 @@ scope 추적 상실을 root reap으로 덮지 않는다. macOS에서 scope는 ro
 - **D3, DevGuard.** DevGuard는 지금 Codex 의존성을 추가하지 않는다. 기본 배포와 공용 client는 Codex 없이 유지하며, adapter 재사용은 조건부 정책을 따른다.
 
 ## 관찰된 구조 조건과 최소 변경
+
+> **상태: 구현 지시로서 효력 중지.** CS-RG 통합 경계 재검증이 끝날 때까지 이 절을 근거로 구현하지 않습니다. 대체 구조는 승인되지 않았고, 어떤 안전 요구도 완화되지 않습니다. 내용은 이력 추적을 위해 바꾸지 않고 남깁니다.
 
 | 권고 | 근거/원인 | 최소 변경과 대안 | 비용·위험·검증/복귀 |
 | --- | --- | --- | --- |
@@ -183,6 +201,8 @@ scope 추적 상실을 root reap으로 덮지 않는다. macOS에서 scope는 ro
 위 Required는 CS-RG/DG-1 방향의 후속 구현 조건이다. 이 문서 개정의 파일 변경은 문서와 문서 검사에 한정되지만, 후속 구현을 구속하는 설계 결정은 바꾼다. 전체 파일 메모리 개선은 현재 범위 밖이다. 당장의 완전한 검증 범위는 fixture 파일 크기·동시성을 제한해 명시할 수 있다. 이를 임의 파일 크기에 대한 보호 완료로 설명하지 않는다.
 
 ## 적용 순서와 인계
+
+> **상태: 구현 지시로서 효력 중지.** CS-RG 통합 경계 재검증이 끝날 때까지 이 절을 근거로 구현하지 않습니다. 대체 구조는 승인되지 않았고, 어떤 안전 요구도 완화되지 않습니다. 내용은 이력 추적을 위해 바꾸지 않고 남깁니다.
 
 DG1-C12의 독립 개발 qualification → CSRG-C00 실행 경계 적합성 → CSRG-C01/C02의 pin·등록 → C03/C04 감독·준비·승인 → C05/C06 관제·replay → C07 동등성과 C09 backend 결정 → 그 결과 head의 C08 제품 qualification → P1R-C01~C06 Gateway 복구 순서다. 실제 Linux는 DGL-C01~C06을 추가한다. 기존 CodeSpace upstream 검증을 유지하고 DevGuard 검증은 별도 보고서로 추가한다.
 

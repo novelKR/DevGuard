@@ -1,8 +1,12 @@
 # Session handoff: CS-RG delivery follow-up
 
+> **Status: suspended as an implementation directive.** The CSRG-C00 start authorization and the CS-RG next steps recorded in this handoff no longer authorize implementation. This is pending the CS-RG integration-boundary revalidation, an owner-directed review of the CodeSpace integration plan; it is not a work unit. No replacement architecture has been approved; the owner decides after reviewing its results. This notice suspends directives only and relaxes no safety requirement. The text below is retained unchanged for historical traceability.
+
 This document hands off the follow-up work of 2026-09-27 that connects [design revision 1](../design-revision-1.md) to both repositories. It is a dated snapshot: it is not maintained afterwards and it is not an authoritative planning document. Re-query GitHub and git before acting, and treat the [planning documents](../planning/README.md) as the sources of truth. It supplements the [earlier handoff of the same date](2026-09-27-cs-rg-revision-and-codespace-ci.md), which stays unchanged as the record of its own moment. English only; personal information is left out.
 
 ## 1. Decisions fixed by the owner's instruction of 2026-09-27
+
+> **Status:** the CSRG-C00 start authorization in this section is suspended as an implementation directive while the CS-RG integration-boundary revalidation is pending. No replacement architecture has been approved.
 
 These decisions were settled by that instruction. They are not open questions.
 
@@ -55,6 +59,8 @@ All evidence is kept locally in the git-ignored `evidence/` directory of the per
 PR #9's original local instrumentation logs, its 30-run, 5-run and launcher-run logs, and the first zombie experiment were deleted before being preserved. They are recorded as lost; the new reproduction is a new record, not a restoration.
 
 ## 4. Next steps
+
+> **Status: suspended as an implementation directive.** Do not implement from this section while the CS-RG integration-boundary revalidation is pending. No replacement architecture has been approved, and no safety requirement is relaxed. The text is retained unchanged for historical traceability.
 
 1. **Merge each approved PR.** Merge with `gh pr merge <number> --repo <owner/repo> --merge --match-head-commit <verified full SHA>`. Then:
    - check the merged state, the merge commit's parents and tree;

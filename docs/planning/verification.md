@@ -1,5 +1,7 @@
 # Verification, acceptance and evidence
 
+> **Status: suspended as an implementation directive.** The CS-RG execution verification section and the CS-RG rows elsewhere in this document, which verify CSRG-C00, CSRG-C03 and CSRG-C09, must not be used as implementation targets; the rest of this document is unaffected. This is pending the CS-RG integration-boundary revalidation, an owner-directed review of the CodeSpace integration plan; it is not a work unit. No replacement architecture has been approved; the owner decides after reviewing its results. This notice suspends directives only and relaxes no safety requirement. The text below is retained unchanged for historical traceability.
+
 Preserve the approved [design SLOs](../design.md#verification-and-promotion). Design approval, implementation, fake contracts, native application, product integration and foreground responsiveness are distinct evidence. Documentation-head regression results do not qualify new OS functionality.
 
 ## Verification scopes
@@ -175,6 +177,8 @@ The framing implementation uses `poll` with descriptor `O_NONBLOCK` and per-call
 Inject faults only in bounded test scopes/roots. Abort correctness or resource-control failures, close new work, reconcile actual scopes and retain failed/uncertain evidence. R1 is not authorization for unbounded host stress.
 
 ## CS-RG execution verification
+
+> **Status: suspended as an implementation directive.** Do not implement from this section while the CS-RG integration-boundary revalidation is pending. No replacement architecture has been approved, and no safety requirement is relaxed. The text is retained unchanged for historical traceability.
 
 [Design revision 1](../design-revision-1.md) sets these requirements for CS-RG. The base matrix is resource mode (`off`/`required`) × transport (pipe/PTY) × Runner mode (InProcess/UDS). Mixed execution within one process is a separate axis, because success of each path alone does not verify spawn and descriptor protection.
 

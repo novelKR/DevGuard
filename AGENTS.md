@@ -2,6 +2,7 @@
 
 Read the English editorial reference `docs/design.md`, the design revisions it links (currently `docs/design-revision-1.md`), the immutable approval `docs/design.ko.md`, `docs/contracts.md`, and `milestones.json` before changing a contract or milestone boundary. The historical approval preserves the decisions of its time; the editorial reference and its revisions are the current baseline; contracts describe implemented behavior only. The user's current instructions take precedence over this file.
 
+- CS-RG implementation is suspended: pending the CS-RG integration-boundary revalidation, do not implement any CS-RG unit (CSRG-C00, CSRG-C03 and CSRG-C09 in particular) or design revision 1's CodeSpace execution-ownership choices. No replacement architecture has been approved.
 - Keep CodeSpace/Codex types, process ownership, PTY and output management outside this repository's authority core.
 - Keep the default distribution and the shared client free of Codex dependencies. Add one to an execution or platform adapter only under design revision 1's conditional reuse policy, showing what it replaces; `scripts/validate.py` rejects `codex-` and `codespace-` packages until such a decision changes that gate. Adapted upstream code records the provenance that ADR-006 requires.
 - Keep reservation, planned policy, applied evidence, and successful user executable startup distinct.

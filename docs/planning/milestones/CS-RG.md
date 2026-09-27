@@ -1,10 +1,14 @@
 # CS-RG — CodeSpace consumption and control protection
 
+> **Status: suspended as an implementation directive.** This plan's work units, in particular CSRG-C00, CSRG-C03 and CSRG-C09 and the CodeSpace-owned managed execution transport they assume, must not be implemented. Every other unit depends on CSRG-C00, so no CS-RG unit may start. This is pending the CS-RG integration-boundary revalidation, an owner-directed review of the CodeSpace integration plan; it is not a work unit. No replacement architecture has been approved; the owner decides after reviewing its results. This notice suspends directives only and relaxes no safety requirement. The text below is retained unchanged for historical traceability.
+
 Owner: CodeSpace. Baseline implementation: `not-started`; qualification: `not-run`. Entry: DG1-C12, which is complete, and delivery of CSP-D04, the CodeSpace counterpart documentation of design revision 1 ([PR delivery](../pr-delivery.md)); release `0.1.0-5daee5d-b3fa569e` is macOS-qualified and is the pin candidate. Completion: Qualify the pinned client/artifact/wire combination on the head left by the CSRG-C09 backend decision, while preserving authorization, approvals, workspace and PTY contracts. Preparation may precede qualification, but required runtime adoption may not.
 
 All work IDs, commit titles and logical PR labels below are **proposed values**, not future SHAs or GitHub numbers. Module paths describe planned responsibilities until implemented. Each added workspace crate updates the explicit dependency allowlist in the same PR without removing full-graph validation. CSP-D04 only reviews and documents CodeSpace's dependency and CI-selection boundaries; the PR that adds a crate, backend or test workspace registers its product root, CI component and coverage together with its tests. The ledger owns actual status. [Design revision 1](../../design-revision-1.md) (2026-09-27) added CSRG-C00 and CSRG-C09 and revised the execution layer of the other units. Its design provenance is the DevGuard merge `d4981b4` (PR #8). The DevGuard source a unit builds on is recorded separately when the unit starts, and the release ID above identifies a qualified artifact, not a source commit.
 
 ## PR sequence and activation
+
+> **Status: suspended as an implementation directive.** Do not implement from this section while the CS-RG integration-boundary revalidation is pending. No replacement architecture has been approved, and no safety requirement is relaxed. The text is retained unchanged for historical traceability.
 
 | Proposed group | Units | Predecessor |
 | --- | --- | --- |
@@ -19,6 +23,8 @@ Available regression: CodeSpace `python3 scripts/validate-upstream.py all`, with
 
 ## DG-1 consumer interface
 
+> **Status: suspended as an implementation directive.** Do not implement from this section while the CS-RG integration-boundary revalidation is pending. No replacement architecture has been approved, and no safety requirement is relaxed. The text is retained unchanged for historical traceability.
+
 The 2026-09-26 review checked this plan against DG-1's implemented consumer interface ([contracts](../../contracts.md)). Every unit below follows that interface:
 
 - **Sessions.** Every frame, including idle waiting, has an absolute 250 ms deadline. An owner opens a fresh session for each step: connect, `Hello`, `Authenticate`, `Register` with its one instance ID, then one request. There is no separate `service-exec` path; the Gateway passes the consumer credential to a UDS worker through `CredentialHandoff`.
@@ -28,6 +34,8 @@ The 2026-09-26 review checked this plan against DG-1's implemented consumer inte
 - **Provisioning.** A consumer is operator configuration in `host.toml`: role, generation, credential, instance limit and, for a `control_service` consumer only, a static control reservation. The service reads it at start, and a restart leaves committed attempts Suspect.
 
 ## Execution ownership
+
+> **Status: suspended as an implementation directive.** Do not implement from this section while the CS-RG integration-boundary revalidation is pending. No replacement architecture has been approved, and no safety requirement is relaxed. The text is retained unchanged for historical traceability.
 
 The pinned high-level Codex spawn cannot carry a DG-1 managed execution unchanged: its pipe and PTY spawn functions reap their child internally and keep only descriptors that are already inheritable. That is a mismatch in the reap-ownership and descriptor-passing contracts, not proof that Codex code is unusable. Every unit below follows the [execution ownership rules](../codespace-integration.md#execution-ownership) of design revision 1:
 
@@ -41,7 +49,11 @@ Do not describe this work as adding a small PTY opener. Judge it by the races an
 
 ## Work units
 
+> **Status: suspended as an implementation directive.** Do not implement from this section while the CS-RG integration-boundary revalidation is pending. No replacement architecture has been approved, and no safety requirement is relaxed. The text is retained unchanged for historical traceability.
+
 ### CSRG-C00 — verify the managed execution boundary
+
+> **Status: suspended as an implementation directive.** Do not implement from this section while the CS-RG integration-boundary revalidation is pending. No replacement architecture has been approved, and no safety requirement is relaxed. The text is retained unchanged for historical traceability.
 
 - Owner / proposed PR: CodeSpace / CSRG-P0. Proposed commit: `test(runner): verify the managed execution boundary`.
 - Problem → behavior: Before building on the common execution contract, prove at the current pin with a minimal implementation that a managed helper can run on a PTY, that its descriptors stay safe, and that the owner controls observation and reaping after the root exits; inventory every spawn and reap path.
@@ -56,6 +68,8 @@ Do not describe this work as adding a small PTY opener. Judge it by the races an
 
 ### CSRG-C01 — consume a qualified DevGuard client revision
 
+> **Status: suspended as an implementation directive.** Do not implement from this section while the CS-RG integration-boundary revalidation is pending. No replacement architecture has been approved, and no safety requirement is relaxed. The text is retained unchanged for historical traceability.
+
 - Owner / proposed PR: CodeSpace / CSRG-P1. Proposed commit: `feat(resources): consume a qualified DevGuard client revision`.
 - Problem → behavior: Consume a qualified full DevGuard source revision through a small adapter, distinct from a planning-document reference.
 - Prerequisites: CSRG-C00 and DG1-C12 (complete). Selected artifact/license/wire/capability combination, platform matrix and CI executors. The candidate is release `0.1.0-5daee5d-b3fa569e`, built from source `5daee5d`; its consumer crates are identical at `395315d`.
@@ -68,6 +82,8 @@ Do not describe this work as adding a small PTY opener. Judge it by the races an
 - Verification command: available regression above plus **planned, not yet provided** `python3 scripts/qualify-devguard.py client`.
 
 ### CSRG-C02 — register the execution owner and expose required policy
+
+> **Status: suspended as an implementation directive.** Do not implement from this section while the CS-RG integration-boundary revalidation is pending. No replacement architecture has been approved, and no safety requirement is relaxed. The text is retained unchanged for historical traceability.
 
 - Owner / proposed PR: CodeSpace / CSRG-P1. Proposed commit: `feat(resources): register the execution owner and expose required policy`.
 - Problem → behavior: Distinguish configured files from actual runtime consumption through default off and explicit required operation.
@@ -82,6 +98,8 @@ Do not describe this work as adding a small PTY opener. Judge it by the races an
 
 ### CSRG-C03 — supervise executions with pre-spawn slots and one reaper
 
+> **Status: suspended as an implementation directive.** Do not implement from this section while the CS-RG integration-boundary revalidation is pending. No replacement architecture has been approved, and no safety requirement is relaxed. The text is retained unchanged for historical traceability.
+
 - Owner / proposed PR: CodeSpace / CSRG-P2. Proposed commit: `feat(runner): supervise executions with pre-spawn slots and one reaper`.
 - Problem → behavior: Move post-spawn process limits before spawn, and consolidate every reaping path into one supervisor per execution whose preparation guards own slot/resource/workspace cleanup.
 - Prerequisites: CSRG-C02. Existing authorization and workspace FIFO acquired before Runner slot and DevGuard preparation; the CSRG-C00 ownership table.
@@ -94,6 +112,8 @@ Do not describe this work as adding a small PTY opener. Judge it by the races an
 - Verification command: available regression above plus **planned, not yet provided** `python3 scripts/qualify-devguard.py prepare`.
 
 ### CSRG-C04 — dispatch prepared attempts without replaying uncertain work
+
+> **Status: suspended as an implementation directive.** Do not implement from this section while the CS-RG integration-boundary revalidation is pending. No replacement architecture has been approved, and no safety requirement is relaxed. The text is retained unchanged for historical traceability.
 
 - Owner / proposed PR: CodeSpace / CSRG-P2. Proposed commit: `feat(approvals): dispatch prepared attempts without replaying uncertain work`.
 - Problem → behavior: Link durable attempts to approval resume so refusal does not consume a hold, lost replies do not replay execution and each launch plan is consumed once.
@@ -108,6 +128,8 @@ Do not describe this work as adding a small PTY opener. Judge it by the races an
 
 ### CSRG-C05 — reserve transport and dispatch capacity for control
 
+> **Status: suspended as an implementation directive.** Do not implement from this section while the CS-RG integration-boundary revalidation is pending. No replacement architecture has been approved, and no safety requirement is relaxed. The text is retained unchanged for historical traceability.
+
 - Owner / proposed PR: CodeSpace / CSRG-P3. Proposed commit: `feat(runner): reserve transport and dispatch capacity for control`.
 - Problem → behavior: Prevent serial dispatch/shared writers from allowing slow stdin or large responses to block status/termination.
 - Prerequisites: CSRG-C04. One authenticated Runner session, bounded executor and static control capacity.
@@ -120,6 +142,8 @@ Do not describe this work as adding a small PTY opener. Judge it by the races an
 - Verification command: available regression above plus **planned, not yet provided** `python3 scripts/qualify-devguard.py control-lanes`.
 
 ### CSRG-C06 — bound inflight replay buffers and lifecycle delivery
+
+> **Status: suspended as an implementation directive.** Do not implement from this section while the CS-RG integration-boundary revalidation is pending. No replacement architecture has been approved, and no safety requirement is relaxed. The text is retained unchanged for historical traceability.
 
 - Owner / proposed PR: CodeSpace / CSRG-P3. Proposed commit: `feat(runner): bound inflight replay buffers and lifecycle delivery`.
 - Problem → behavior: Extend completed-only replay to inflight single-flight, bound total queued/response bytes and retention, and account output loss, including loss inside a bridge.
@@ -134,6 +158,8 @@ Do not describe this work as adding a small PTY opener. Judge it by the races an
 
 ### CSRG-C07 — exercise pipe PTY and Runner failure parity
 
+> **Status: suspended as an implementation directive.** Do not implement from this section while the CS-RG integration-boundary revalidation is pending. No replacement architecture has been approved, and no safety requirement is relaxed. The text is retained unchanged for historical traceability.
+
 - Owner / proposed PR: CodeSpace / CSRG-P4. Proposed commit: `test(resources): exercise pipe PTY and Runner failure parity`.
 - Problem → behavior: Prove equivalent meaning across `off`/`required`, pipe/PTY and InProcess/UDS, and for mixed legacy and managed execution in one process, instead of generalizing one successful path.
 - Prerequisites: CSRG-C06. The installed qualified authority/helper on the qualification host, isolated fixtures for each mode from DG-1's `test-fixtures` (synthetic probe; not OS evidence) and expected disconnect matrix.
@@ -147,6 +173,8 @@ Do not describe this work as adding a small PTY opener. Judge it by the races an
 
 ### CSRG-C08 — qualify the pinned DevGuard consumer combination
 
+> **Status: suspended as an implementation directive.** Do not implement from this section while the CS-RG integration-boundary revalidation is pending. No replacement architecture has been approved, and no safety requirement is relaxed. The text is retained unchanged for historical traceability.
+
 - Owner / proposed PR: CodeSpace / CSRG-P5. Proposed commit: `test(qualification): qualify the pinned DevGuard consumer combination`.
 - Problem → behavior: Qualify actual CodeSpace approvals/replay/control separately from standalone DG-1.
 - Prerequisites: CSRG-C09 and DG1-C12 (complete). Exact client/artifact/wire/policy/host on the qualification host, local MCP/foreground fixtures.
@@ -159,6 +187,8 @@ Do not describe this work as adding a small PTY opener. Judge it by the races an
 - Verification command: available regression above plus **planned, not yet provided** `python3 scripts/qualify-devguard.py codespace-macos`.
 
 ### CSRG-C09 — decide and converge the legacy execution backends
+
+> **Status: suspended as an implementation directive.** Do not implement from this section while the CS-RG integration-boundary revalidation is pending. No replacement architecture has been approved, and no safety requirement is relaxed. The text is retained unchanged for historical traceability.
 
 - Owner / proposed PR: CodeSpace / CSRG-P4. Proposed commit: `refactor(runner): decide and converge the legacy execution backends`.
 - Problem → behavior: A common interface over lasting duplicate backends leaves two lifecycles and two spawn protections to maintain. Before final qualification, integrate the legacy `off` backends or keep a limited compatibility backend on recorded grounds.

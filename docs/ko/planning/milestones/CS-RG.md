@@ -1,5 +1,7 @@
 # CS-RG — CodeSpace 소비와 관제 보호
 
+> **상태: 구현 지시로서 효력 중지.** 이 계획의 작업 단위, 특히 CSRG-C00·CSRG-C03·CSRG-C09와 이들이 전제한 CodeSpace 소유 관리형 실행 전송은 구현하지 않습니다. 다른 단위는 모두 CSRG-C00에 의존하므로 어떤 CS-RG 단위도 시작할 수 없습니다. CodeSpace 통합 계획에 대해 소유자가 지시한 검토인 CS-RG 통합 경계 재검증(작업 단위가 아닙니다)이 끝날 때까지 적용됩니다. 대체 구조는 승인되지 않았으며, 소유자가 재검증 결과를 검토한 뒤 결정합니다. 이 표기는 지시의 효력만 중지하며 어떤 안전 요구도 완화하지 않습니다. 아래 내용은 이력 추적을 위해 바꾸지 않고 남깁니다.
+
 소유 저장소: CodeSpace. 상태: `not-started` / `not-run`. 진입: DG1-C12의 검증된 macOS 조합과 설계 개정 1의 CodeSpace 대응 문서 CSP-D04의 전달([PR 전달](../pr-delivery.md)). DG1-C12는 완료되었고, macOS qualification을 마친 release `0.1.0-5daee5d-b3fa569e`가 pin 후보다. 계약 검토·adapter 초안은 앞서 준비할 수 있지만 일상 `required` 소비 자격을 앞당기지 않는다. 완료: CSRG-C09의 backend 결정 뒤 남은 head에서 고정 client·artifact·wire 조합이 기존 권한/승인/workspace/PTY 계약과 관제 SLO를 함께 통과.
 
 CodeSpace 확인 기준은 `b6e7ed22e2c730ac987297455e250cbd6e8e8b0c`이며 초기 분석 기준 `e94d21475643608ad2a466256fb57266b86faa47`은 이력으로 보존한다. 아래 ID·commit 제목·PR은 **예정 값**이며 DevGuard 저장소의 runtime 구현으로 집계하지 않는다. `crates/resource-client`와 qualification harness는 예정 경로다. [설계 개정 1](../../design-revision-1.md)(2026-09-27)이 CSRG-C00과 CSRG-C09를 추가하고 나머지 작업의 실행 계층을 개정했다. 설계 출처는 개정 1을 들인 DevGuard 병합 `d4981b4`(PR #8)다. 작업이 기반으로 삼는 DevGuard source는 작업을 시작할 때 따로 기록하며, 위 release ID는 source commit이 아니라 qualification된 artifact를 가리킨다. `b6e7ed2`는 조사 기준이며 HEAD가 그 commit이어야 한다는 조건이 아니다. 작업은 그 뒤의 CodeSpace 변경을 검토하고 현재 main에서 진행한다. CSP-D04는 CodeSpace 의존 규칙과 CI 선택의 경계를 검토·문서화할 뿐이며, crate·backend·시험 workspace를 추가하는 PR이 제품 root, CI component와 coverage를 그 시험과 함께 등록한다.
@@ -17,6 +19,8 @@ CodeSpace 확인 기준은 `b6e7ed22e2c730ac987297455e250cbd6e8e8b0c`이며 초�
 
 ## DG-1 소비 인터페이스
 
+> **상태: 구현 지시로서 효력 중지.** CS-RG 통합 경계 재검증이 끝날 때까지 이 절을 근거로 구현하지 않습니다. 대체 구조는 승인되지 않았고, 어떤 안전 요구도 완화되지 않습니다. 내용은 이력 추적을 위해 바꾸지 않고 남깁니다.
+
 2026-09-26 검토에서 이 계획을 DG-1이 구현한 소비 인터페이스([계약](../../contracts.md))와 대조했다. 아래 모든 작업은 이 인터페이스를 따른다.
 
 - **세션.** 모든 frame에는 idle 대기를 포함해 250ms 절대 기한이 있다. 실행 소유자는 단계마다 새 세션을 연다: 연결, `Hello`, `Authenticate`, 자신의 instance ID 하나로 `Register`, 그리고 요청 하나. 별도의 `service-exec` 경로는 없으며 Gateway는 소비자 자격을 `CredentialHandoff`로 UDS worker에 넘긴다.
@@ -26,6 +30,8 @@ CodeSpace 확인 기준은 `b6e7ed22e2c730ac987297455e250cbd6e8e8b0c`이며 초�
 - **provisioning.** 소비자는 `host.toml`의 운영자 설정이다: role, generation, 자격, instance 상한, 그리고 `control_service` 소비자에 한해 정적 제어 예약. 서비스는 시작할 때만 이 설정을 읽으며, 재시작은 commit된 attempt를 Suspect로 남긴다.
 
 ## 실행 소유권
+
+> **상태: 구현 지시로서 효력 중지.** CS-RG 통합 경계 재검증이 끝날 때까지 이 절을 근거로 구현하지 않습니다. 대체 구조는 승인되지 않았고, 어떤 안전 요구도 완화되지 않습니다. 내용은 이력 추적을 위해 바꾸지 않고 남깁니다.
 
 고정된 Codex 고수준 spawn은 변경 없이 DG-1 관리 실행을 담을 수 없다. pipe·PTY spawn 함수가 child를 내부에서 회수하고 이미 상속 가능한 descriptor만 유지하기 때문이다. 이는 회수 소유권과 FD 전달 계약의 불일치이며 Codex 코드를 쓸 수 없다는 증거가 아니다. 아래 모든 작업은 설계 개정 1의 [실행 소유권 규칙](../codespace-integration.md#실행-소유권)을 따른다.
 
@@ -39,7 +45,11 @@ CodeSpace 확인 기준은 `b6e7ed22e2c730ac987297455e250cbd6e8e8b0c`이며 초�
 
 ## 작업 단위
 
+> **상태: 구현 지시로서 효력 중지.** CS-RG 통합 경계 재검증이 끝날 때까지 이 절을 근거로 구현하지 않습니다. 대체 구조는 승인되지 않았고, 어떤 안전 요구도 완화되지 않습니다. 내용은 이력 추적을 위해 바꾸지 않고 남깁니다.
+
 ### CSRG-C00 — 관리 실행 경계 적합성 검증
+
+> **상태: 구현 지시로서 효력 중지.** CS-RG 통합 경계 재검증이 끝날 때까지 이 절을 근거로 구현하지 않습니다. 대체 구조는 승인되지 않았고, 어떤 안전 요구도 완화되지 않습니다. 내용은 이력 추적을 위해 바꾸지 않고 남깁니다.
 
 - 소유/예정 PR: CodeSpace / CSRG-P0. 예정 제목: `test(runner): verify the managed execution boundary`.
 - 문제 → 동작: 공통 실행 계약을 쌓기 전에, 현재 pin에서 최소 구현으로 관리 helper를 PTY에서 실행할 수 있고 descriptor가 안전하며 root 종료 뒤 관찰·회수 순서를 소유자가 제어함을 입증한다. 모든 spawn·회수 경로를 목록화한다.
@@ -54,6 +64,8 @@ CodeSpace 확인 기준은 `b6e7ed22e2c730ac987297455e250cbd6e8e8b0c`이며 초�
 
 ### CSRG-C01 — 검증된 pin과 작은 client adapter
 
+> **상태: 구현 지시로서 효력 중지.** CS-RG 통합 경계 재검증이 끝날 때까지 이 절을 근거로 구현하지 않습니다. 대체 구조는 승인되지 않았고, 어떤 안전 요구도 완화되지 않습니다. 내용은 이력 추적을 위해 바꾸지 않고 남깁니다.
+
 - 소유/예정 PR: CodeSpace / CSRG-P1. 예정 제목: `feat(resources): consume a qualified DevGuard client revision`.
 - 문제 → 동작: 계획 revision 인용을 실제 runtime dependency로 오해하지 않도록 DG1 qualification에 연결된 전체 source SHA와 작은 client 경계를 도입한다.
 - 선행: CSRG-C00과 DG1-C12(완료). 선택 artifact·license·wire/capability 조합, 플랫폼별 지원표와 CI executor 확보. 후보는 source `5daee5d`로 빌드한 release `0.1.0-5daee5d-b3fa569e`이며 소비 crate는 `395315d`와 같다.
@@ -66,6 +78,8 @@ CodeSpace 확인 기준은 `b6e7ed22e2c730ac987297455e250cbd6e8e8b0c`이며 초�
 - 인계: CSRG-C02에 client API와 버전별 error/capability 표. pin과 설정을 같은 PR에서 검토한다.
 
 ### CSRG-C02 — 운영자 설정과 Runner 단일 등록
+
+> **상태: 구현 지시로서 효력 중지.** CS-RG 통합 경계 재검증이 끝날 때까지 이 절을 근거로 구현하지 않습니다. 대체 구조는 승인되지 않았고, 어떤 안전 요구도 완화되지 않습니다. 내용은 이력 추적을 위해 바꾸지 않고 남깁니다.
 
 - 소유/예정 PR: CodeSpace / CSRG-P1. 예정 제목: `feat(resources): register the execution owner and expose required policy`.
 - 문제 → 동작: 개발 설정 존재와 실제 runtime 소비를 구분하고 운영자가 기본 `off` 또는 명시적 `required`를 선택한다.
@@ -80,6 +94,8 @@ CodeSpace 확인 기준은 `b6e7ed22e2c730ac987297455e250cbd6e8e8b0c`이며 초�
 
 ### CSRG-C03 — spawn 전 슬롯과 단일 회수자의 실행 감독
 
+> **상태: 구현 지시로서 효력 중지.** CS-RG 통합 경계 재검증이 끝날 때까지 이 절을 근거로 구현하지 않습니다. 대체 구조는 승인되지 않았고, 어떤 안전 요구도 완화되지 않습니다. 내용은 이력 추적을 위해 바꾸지 않고 남깁니다.
+
 - 소유/예정 PR: CodeSpace / CSRG-P2. 예정 제목: `feat(runner): supervise executions with pre-spawn slots and one reaper`.
 - 문제 → 동작: spawn 후 max process 검사를 spawn 전 permit으로 옮기고, 모든 회수 경로를 실행마다 하나인 supervisor로 통합하며, 준비 guard가 슬롯·자원·workspace 정리를 소유하게 한다.
 - 선행: CSRG-C02. 인가와 기존 workspace FIFO 획득 후 실행 슬롯과 DevGuard 준비를 수행할 수 있는 Runner API, CSRG-C00 소유권 표.
@@ -92,6 +108,8 @@ CodeSpace 확인 기준은 `b6e7ed22e2c730ac987297455e250cbd6e8e8b0c`이며 초�
 - 인계: CSRG-C04와 같은 PR에서 승인 전이와 실행 commit을 완성하며 준비 전용 반쪽 기능을 활성화하지 않는다.
 
 ### CSRG-C04 — ExecPrepared와 승인·미시작 증거
+
+> **상태: 구현 지시로서 효력 중지.** CS-RG 통합 경계 재검증이 끝날 때까지 이 절을 근거로 구현하지 않습니다. 대체 구조는 승인되지 않았고, 어떤 안전 요구도 완화되지 않습니다. 내용은 이력 추적을 위해 바꾸지 않고 남깁니다.
 
 - 소유/예정 PR: CodeSpace / CSRG-P2. 예정 제목: `feat(approvals): dispatch prepared attempts without replaying uncertain work`.
 - 문제 → 동작: prepare 거절이 승인 hold를 소비하거나 응답 유실이 재실행으로 이어지지 않도록 durable attempt와 approval resume를 연결하고, launch plan을 한 번만 소비한다.
@@ -106,6 +124,8 @@ CodeSpace 확인 기준은 `b6e7ed22e2c730ac987297455e250cbd6e8e8b0c`이며 초�
 
 ### CSRG-C05 — control/data 전송과 처리 여유
 
+> **상태: 구현 지시로서 효력 중지.** CS-RG 통합 경계 재검증이 끝날 때까지 이 절을 근거로 구현하지 않습니다. 대체 구조는 승인되지 않았고, 어떤 안전 요구도 완화되지 않습니다. 내용은 이력 추적을 위해 바꾸지 않고 남깁니다.
+
 - 소유/예정 PR: CodeSpace / CSRG-P3. 예정 제목: `feat(runner): reserve transport and dispatch capacity for control`.
 - 문제 → 동작: 현재 직렬 dispatch와 공유 writer 때문에 느린 stdin/큰 응답이 상태·종료를 막는 경로를 분리한다.
 - 선행: CSRG-C04. 인증된 하나의 Runner session, bounded execution executor와 정적 제어 예약.
@@ -118,6 +138,8 @@ CodeSpace 확인 기준은 `b6e7ed22e2c730ac987297455e250cbd6e8e8b0c`이며 초�
 - 인계: CSRG-C06과 함께 전체 buffer/replay/수명 상한을 만족할 때만 분리 경로를 활성화한다.
 
 ### CSRG-C06 — 진행 중 replay·상한·수명 이벤트
+
+> **상태: 구현 지시로서 효력 중지.** CS-RG 통합 경계 재검증이 끝날 때까지 이 절을 근거로 구현하지 않습니다. 대체 구조는 승인되지 않았고, 어떤 안전 요구도 완화되지 않습니다. 내용은 이력 추적을 위해 바꾸지 않고 남깁니다.
 
 - 소유/예정 PR: CodeSpace / CSRG-P3. 예정 제목: `feat(runner): bound inflight replay buffers and lifecycle delivery`.
 - 문제 → 동작: 완료 응답만 캐시하는 replay를 진행 중 attempt까지 확장하고 대기/응답 누적 byte·보존 시간을 제한하며, bridge 내부 손실을 포함해 출력 손실을 회계한다.
@@ -132,6 +154,8 @@ CodeSpace 확인 기준은 `b6e7ed22e2c730ac987297455e250cbd6e8e8b0c`이며 초�
 
 ### CSRG-C07 — 실행 모드 동등성과 장애
 
+> **상태: 구현 지시로서 효력 중지.** CS-RG 통합 경계 재검증이 끝날 때까지 이 절을 근거로 구현하지 않습니다. 대체 구조는 승인되지 않았고, 어떤 안전 요구도 완화되지 않습니다. 내용은 이력 추적을 위해 바꾸지 않고 남깁니다.
+
 - 소유/예정 PR: CodeSpace / CSRG-P4. 예정 제목: `test(resources): exercise pipe PTY and Runner failure parity`.
 - 문제 → 동작: 한 경로 성공을 전체 지원으로 확대하지 않고 `off`/`required` × pipe/PTY × InProcess/UDS와 한 프로세스 안의 legacy·관리 혼합 실행의 동일 의미를 입증한다.
 - 선행: CSRG-C06. qualification 호스트에 설치된 검증 authority/helper, DG-1 `test-fixtures`로 만든 mode별 격리 fixture(합성 probe이며 OS 증거 아님), 기존 disconnect 동작 expected matrix.
@@ -145,6 +169,8 @@ CodeSpace 확인 기준은 `b6e7ed22e2c730ac987297455e250cbd6e8e8b0c`이며 초�
 
 ### CSRG-C08 — upstream 회귀와 관제 SLO
 
+> **상태: 구현 지시로서 효력 중지.** CS-RG 통합 경계 재검증이 끝날 때까지 이 절을 근거로 구현하지 않습니다. 대체 구조는 승인되지 않았고, 어떤 안전 요구도 완화되지 않습니다. 내용은 이력 추적을 위해 바꾸지 않고 남깁니다.
+
 - 소유/예정 PR: CodeSpace / CSRG-P5. 예정 제목: `test(qualification): qualify the pinned DevGuard consumer combination`.
 - 문제 → 동작: 독립 DG-1 합격과 실제 CodeSpace 승인·replay·관제 경로 합격을 별도의 제품 증거로 남긴다.
 - 선행: CSRG-C09와 DG1-C12(완료). qualification 호스트의 정확한 source/client/artifact/wire/정책·host, foreground 및 local MCP 측정 fixture.
@@ -157,6 +183,8 @@ CodeSpace 확인 기준은 `b6e7ed22e2c730ac987297455e250cbd6e8e8b0c`이며 초�
 - 인계: P1R-C01과 DGL-C01. 이 단계 완료만으로 Gateway 복구 capability를 선언하지 않는다.
 
 ### CSRG-C09 — 기존 실행 backend의 수렴 결정
+
+> **상태: 구현 지시로서 효력 중지.** CS-RG 통합 경계 재검증이 끝날 때까지 이 절을 근거로 구현하지 않습니다. 대체 구조는 승인되지 않았고, 어떤 안전 요구도 완화되지 않습니다. 내용은 이력 추적을 위해 바꾸지 않고 남깁니다.
 
 - 소유/예정 PR: CodeSpace / CSRG-P4. 예정 제목: `refactor(runner): decide and converge the legacy execution backends`.
 - 문제 → 동작: 공통 인터페이스 아래 중복 backend가 계속 남으면 수명주기와 spawn 보호를 두 벌 유지하게 된다. 최종 qualification 전에 legacy `off` backend를 통합하거나, 기록된 근거로 제한적 compatibility backend를 유지한다.
