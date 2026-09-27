@@ -7,50 +7,50 @@
       "id": "design",
       "source": "docs/design.md",
       "translation": "docs/ko/design.md",
-      "reviewed_source_sha256": "f13594a4ff05c37a1bbee6a444f92e6a5893d09d428bbb9310ea390865d239ba",
-      "reviewed_translation_sha256": "d4fa965f5a2bda6ddd0f730d4549b8f9558e1a3f524ea55f790d39b973de5b13"
+      "reviewed_source_sha256": "9abf04e51061e7d95ebbe037025c779c20866e52417ff63287be901b12d4f6f4",
+      "reviewed_translation_sha256": "70f31388aa673231b48b13ad0960960640e2e597ebe0a1d620d6f708a5123954"
     },
     {
       "id": "design-revision-1",
       "source": "docs/design-revision-1.md",
       "translation": "docs/ko/design-revision-1.md",
-      "reviewed_source_sha256": "da447f08e51270189887f79640765d0eef38a92fb1cfd477c12325d06a8d8cc4",
-      "reviewed_translation_sha256": "35be92cdf1314f5ef461152c88a249329e5bb563e664e2617dbbc60b553fffe3"
+      "reviewed_source_sha256": "4b77f39134452a2e4db01a7b19a7163d43e264667272935adb8247778f7ac289",
+      "reviewed_translation_sha256": "60a61550d59496a4c7befd1aaf4ec8137e6547f7a14d667941069a3a494ed24f"
     },
     {
       "id": "planning-readme",
       "source": "docs/planning/README.md",
       "translation": "docs/ko/planning/README.md",
-      "reviewed_source_sha256": "e106592a0d0ecbee25406ad45d285986f17cdf08b4244170efac5e137b7c8133",
-      "reviewed_translation_sha256": "240a2f791c0da4f347d05a014739f0c59dc662166607a0694549255e23ecf76b"
+      "reviewed_source_sha256": "6d1f28675625eace37cf107fcd3ac972628deff36b0f82dcb8611dc1e319ad0c",
+      "reviewed_translation_sha256": "d9343c9173c10eaca681dbfec89e110585881146aaa0af50ae75a88b9d203205"
     },
     {
       "id": "planning-codespace-integration",
       "source": "docs/planning/codespace-integration.md",
       "translation": "docs/ko/planning/codespace-integration.md",
-      "reviewed_source_sha256": "49bf6c8098bc8ea0758c6af98abeea6d762c2e47199e9d9164ef63579eaee6bd",
-      "reviewed_translation_sha256": "c3d3b4a024c63c4f34e8e44ba4c4e89906c0199734c1e12368583b93025d32da"
+      "reviewed_source_sha256": "0df5f6b84ae7a4e7bdcad8c12c64539d9497d8d4675773982b3ea962266da8fc",
+      "reviewed_translation_sha256": "324032281780355447b2ee1c0467b6acf20758cae144c031360d700fe5301000"
     },
     {
       "id": "planning-consumer-readiness",
       "source": "docs/planning/consumer-readiness.md",
       "translation": "docs/ko/planning/consumer-readiness.md",
-      "reviewed_source_sha256": "e64eabeb48fb529b6afe773b91c8bdf9c5cbd8ba4d390cb49a122c23dcf17fa1",
-      "reviewed_translation_sha256": "26bf91d311f54eca01e59e2b49d6b18bf12808ee59a71af3c1d24b5ff9029d51"
+      "reviewed_source_sha256": "2afd896591a1c5004624dbc70e0c71afb9f25e3e52666436d805034e88e57239",
+      "reviewed_translation_sha256": "885624e1b4401805884039be8d6118db29d6724de0fee3fff75d5bf2f6039c91"
     },
     {
       "id": "planning-decisions",
       "source": "docs/planning/decisions.md",
       "translation": "docs/ko/planning/decisions.md",
-      "reviewed_source_sha256": "794ca316283b262497a5ba5872d2f5a802de0e7be8d018bfa4cc73910f895d1f",
-      "reviewed_translation_sha256": "8f7fdedd63a593ce41afd026c122c42d4e6d1fbe8446d117bb522ec41dbe7825"
+      "reviewed_source_sha256": "d558d50dac8273fff3e0c1593a935b4db3d5e73ef4733e0ab7c915e3074a2b3a",
+      "reviewed_translation_sha256": "2ede9e36c27a813a6dba9dc1d7d52aef5cf184a5e41cbb0d3ba671f5a43434d0"
     },
     {
       "id": "planning-milestones-cs-rg",
       "source": "docs/planning/milestones/CS-RG.md",
       "translation": "docs/ko/planning/milestones/CS-RG.md",
-      "reviewed_source_sha256": "ca9c3990b7f9c74474bc149744b6d3b610e52777cd463842cc26e93eb67392e0",
-      "reviewed_translation_sha256": "3a1e68fea046d41682194cf6efb4f6ac289345a7a6e024fa3557ad231af35d97"
+      "reviewed_source_sha256": "332e5ed1d020c5fffa7a11d3486645fa853f634ab69decfeef10ade832bb0af9",
+      "reviewed_translation_sha256": "73bd75fa5d889a5cf91e093d931f917e856a8d0824768075c03674fffe85549c"
     },
     {
       "id": "planning-milestones-dg-0",
@@ -98,15 +98,15 @@
       "id": "planning-pr-delivery",
       "source": "docs/planning/pr-delivery.md",
       "translation": "docs/ko/planning/pr-delivery.md",
-      "reviewed_source_sha256": "713f53c653f7bf6b4e01e4593d5843d309fde04e2b55265bd07df1f5962ff89f",
-      "reviewed_translation_sha256": "db20e6ee75feee2fcfcca302c9f5ae7f9f21b3c61fbda4f71b5848c63a16a6bf"
+      "reviewed_source_sha256": "719030fa4d916a65e359395b7c55c8173c2201404ec82242b797481d35c1c595",
+      "reviewed_translation_sha256": "c6a0f1c34f975a72bb820d105d27e7f3155caef70f390fe890d3475cc3de83f4"
     },
     {
       "id": "planning-verification",
       "source": "docs/planning/verification.md",
       "translation": "docs/ko/planning/verification.md",
-      "reviewed_source_sha256": "882ba8f9d6a7609af179f851c40bd431247635eae81c4ec578a632c050a9a4d0",
-      "reviewed_translation_sha256": "9e5e03d88a3d25e13d1ef3f8e8ac9e7eb4dd48f6553bef0d568e5c52a142ff28"
+      "reviewed_source_sha256": "bfd7970650868b0ee6dcb23718283e8744327137a3ac08cb9d245bdeec0c35bd",
+      "reviewed_translation_sha256": "ebd5c8ac5f0e69aeac8b3f3a3d784b0f5e0a5bf9e362b36a9ad19022b0960427"
     },
     {
       "id": "operations",

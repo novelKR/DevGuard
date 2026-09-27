@@ -1,5 +1,7 @@
 # Session handoff: CS-RG design revision 1 and CodeSpace CI
 
+> **Status: suspended as an implementation directive.** The CS-RG implementation step recorded in this handoff (starting CSRG-C00 on the owner's instruction) must not be followed. This is pending the CS-RG integration-boundary revalidation, an owner-directed review of the CodeSpace integration plan; it is not a work unit. No replacement architecture has been approved; the owner decides after reviewing its results. This notice suspends directives only and relaxes no safety requirement. The text below is retained unchanged for historical traceability.
+
 This document hands off one working session so that a human reviewer, another agent or a later session can continue it. It is a snapshot dated 2026-09-27, the date the repository documents use for this work. It is not maintained afterwards, and it is not an authoritative design or planning document. Re-query GitHub and git before acting, and treat [design revision 1](../design-revision-1.md), the [design reference](../design.md) and the [planning documents](../planning/README.md) as the sources of truth. It is written in English only and has no Korean counterpart. Personal information about the repository owner is deliberately left out.
 
 Claims below carry one of four evidence levels: *record* (a PR body, CI run or document), *code review* at a fixed revision, *test run*, or *raw data*. Figures are records unless marked otherwise.
@@ -111,6 +113,8 @@ Open question for the owner: should CSP-D04 change `scripts/upstream_dependencie
 Run `gh run list --repo novelKR/CodeSpace --workflow ci.yml --event schedule --limit 3`. Expect `CI / Plan` to report a full plan (12 of 12 legs), all 16 jobs to pass, and the `rust` gate to print "Required CI: passed" with 14 reports. GitHub can delay or skip scheduled runs, so if none appears after the due time, check that before changing anything.
 
 ### 5.4 CS-RG implementation
+
+> **Status: suspended as an implementation directive.** Do not implement from this section while the CS-RG integration-boundary revalidation is pending. No replacement architecture has been approved, and no safety requirement is relaxed. The text is retained unchanged for historical traceability.
 
 Only on the owner's instruction, start with CSRG-C00 in [CS-RG](../planning/milestones/CS-RG.md). Read revision 1, the [CodeSpace integration specification](../planning/codespace-integration.md) and the [CS-RG execution verification](../planning/verification.md#cs-rg-execution-verification) first. Real-authority cases run on the qualification host: CodeSpace's 1 CPU control reservation leaves the three-CPU hosted macOS runner no work capacity, so hosted CI runs fixtures or records `not_run`.
 

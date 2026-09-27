@@ -1,10 +1,14 @@
 # Design revision 1: CS-RG execution ownership and reuse policy
 
+> **Status: suspended as an implementation directive.** The sections of this revision that prescribe CodeSpace's target execution architecture, the D1 managed-PTY default, the D2 backend convergence decision and the CS-RG work-unit changes must not be implemented. This is pending the CS-RG integration-boundary revalidation, an owner-directed review of the CodeSpace integration plan; it is not a work unit. No replacement architecture has been approved; the owner decides after reviewing its results. This notice suspends directives only and relaxes no safety requirement. The text below is retained unchanged for historical traceability.
+
 Design reference date: 2026-09-27. Applies to DevGuard PR #8, CodeSpace's CS-RG integration plan, and the execution and dependency policies of both repositories. English is authoritative under the repository's documentation policy; the [Korean text](ko/design-revision-1.md), prepared from the specification as the user supplied it, is its reviewed counterpart.
 
 **Status.** On 2026-09-27, after a mid-course review, the user adopted this revision by explicit instruction as the new design baseline for CS-RG. The [design reference](design.md), [decisions](planning/decisions.md) and [planning documents](planning/README.md) apply it. The historical approval [design.ko.md](design.ko.md) and its [checksum](design-source.json) are unchanged. The revision changes decisions that bind later implementation; it changes no implementation or qualification status, and CS-RG remains `not-started`. In this text, references to individual review responses are replaced with neutral descriptions, and the [appendix](#appendix-evidence-for-factual-statements) lists the evidence for its factual statements.
 
 ## 1. Purpose and scope of the decision
+
+> **Status: suspended as an implementation directive.** Do not implement from this section while the CS-RG integration-boundary revalidation is pending. No replacement architecture has been approved, and no safety requirement is relaxed. The text is retained unchanged for historical traceability.
 
 This revision is **not a documentation correction that aligns the initial design with the implementation. It revises the design, at the user's explicit instruction to re-examine it, to reflect current implementation and maintenance conditions.**
 
@@ -129,6 +133,8 @@ Replace it with this meaning:
 
 ## 5. CodeSpace target architecture
 
+> **Status: suspended as an implementation directive.** Do not implement from this section while the CS-RG integration-boundary revalidation is pending. No replacement architecture has been approved, and no safety requirement is relaxed. The text is retained unchanged for historical traceability.
+
 ### 5.1 The center of commonality is the execution contract, not a PTY function
 
 The target structure is below. **The names are concepts of the new design, not existing APIs.**
@@ -193,6 +199,8 @@ Do not create an unnecessary new daemon or separate repository; use CodeSpace-in
 **DevGuard client types and Codex types must not leak into CodeSpace's public MCP types.** The generic execution-coordination layer must not mix the internal types of the two upstreams directly.
 
 ## 6. The `PreparedExecution` and `LaunchPlan` contract
+
+> **Status: suspended as an implementation directive.** Do not implement from this section while the CS-RG integration-boundary revalidation is pending. No replacement architecture has been approved, and no safety requirement is relaxed. The text is retained unchanged for historical traceability.
 
 ### 6.1 A one-time execution preparation, not a notification hook
 
@@ -273,6 +281,8 @@ The plan's **250 ms preparation budget and 5-second Prepared lifetime** are diff
 In particular, allowing 250 ms per frame does not make the whole preparation finish within 250 ms. C00 must verify end-to-end deadline propagation through connection, authentication, registration and Admit.
 
 ## 7. Process lifecycle and reap contract
+
+> **Status: suspended as an implementation directive.** Do not implement from this section while the CS-RG integration-boundary revalidation is pending. No replacement architecture has been approved, and no safety requirement is relaxed. The text is retained unchanged for historical traceability.
 
 ### 7.1 Do not merge states into one `finished`
 
@@ -364,6 +374,8 @@ A new managed backend must not keep only stale numeric PIDs or PGIDs and signal 
 
 ## 8. Spawn protection and the descriptor contract
 
+> **Status: suspended as an implementation directive.** Do not implement from this section while the CS-RG integration-boundary revalidation is pending. No replacement architecture has been approved, and no safety requirement is relaxed. The text is retained unchanged for historical traceability.
+
 ### 8.1 A single gate is not a single global lock wrapper
 
 The current `HelperCommand::spawn()` already acquires `spawn_guard()` internally. An outer common gate must therefore not call it while holding the same guard.
@@ -432,6 +444,8 @@ In particular, **prohibit cleanup that drops descriptors the helper needs from t
 
 ## 9. Output, backpressure and the `ProcessDriver` criteria
 
+> **Status: suspended as an implementation directive.** Do not implement from this section while the CS-RG integration-boundary revalidation is pending. No replacement architecture has been approved, and no safety requirement is relaxed. The text is retained unchanged for historical traceability.
+
 ### 9.1 CodeSpace owns the default handle
 
 CodeSpace owns its public process handle and output record. Reusing Codex's `ProcessHandle` is not a goal in itself.
@@ -473,6 +487,8 @@ Do not mix output of unrelated executions, distinguish EOF from exit status, and
 Returning `output_lost=false` when the amount of loss is unknown is not allowed. If the existing protocol cannot express this state, CSRG-C06 designs the required compatibility change explicitly.
 
 ## 10. D1, D2 and D3: choices and exit conditions
+
+> **Status: suspended as an implementation directive.** Do not implement from this section while the CS-RG integration-boundary revalidation is pending. No replacement architecture has been approved, and no safety requirement is relaxed. The text is retained unchanged for historical traceability.
 
 ### 10.1 D1 — managed PTY
 
@@ -603,6 +619,8 @@ A user executable may itself return 125, 126 or 127, so an exit code alone never
 
 ## 12. Work units and PR order
 
+> **Status: suspended as an implementation directive.** Do not implement from this section while the CS-RG integration-boundary revalidation is pending. No replacement architecture has been approved, and no safety requirement is relaxed. The text is retained unchanged for historical traceability.
+
 The existing CS-RG plan consists of C01–C08 and P1–P4. This revision **adds minimal fitness verification and the D2 exit decision as separate required work**. It does not hide them inside C03 to keep the existing count.
 
 ### 12.1 Revised work structure
@@ -652,6 +670,8 @@ If C09 changes code, rerun the related C07 parity and **measure that final head 
 **Do not describe the existing C03 as "adding a small opener".** Revising execution ownership is major work, to be judged by the verification scope of its races and failure paths rather than by code size.
 
 ## 13. Verification and completion conditions
+
+> **Status: suspended as an implementation directive.** Do not implement from this section while the CS-RG integration-boundary revalidation is pending. No replacement architecture has been approved, and no safety requirement is relaxed. The text is retained unchanged for historical traceability.
 
 ### 13.1 Required verification matrix
 
@@ -797,6 +817,8 @@ PR #8 counts as a completed documentation revision only when:
 Documentation verification runs the existing checker and regression tests and updates the changed Korean counterparts and hashes. Results at the PR head and on main after merge are recorded separately.
 
 ## Final direction
+
+> **Status: suspended as an implementation directive.** Do not implement from this section while the CS-RG integration-boundary revalidation is pending. No replacement architecture has been approved, and no safety requirement is relaxed. The text is retained unchanged for historical traceability.
 
 This revision is **neither "keeping the earlier review's proposal and only strengthening its explanation" nor "forcing both repositories to change so that Codex becomes a common upstream"**.
 

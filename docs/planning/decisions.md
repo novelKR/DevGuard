@@ -1,5 +1,7 @@
 # Decisions and source baselines
 
+> **Status: suspended as an implementation directive.** ADR-006 (CodeSpace execution ownership and reuse policy) must not be implemented; the other ADRs are unaffected. This is pending the CS-RG integration-boundary revalidation, an owner-directed review of the CodeSpace integration plan; it is not a work unit. No replacement architecture has been approved; the owner decides after reviewing its results. This notice suspends directives only and relaxes no safety requirement. The text below is retained unchanged for historical traceability.
+
 Reference date: 2026-09-22; ADR-006 added on 2026-09-27. English is authoritative; see the [reviewed Korean translation](../ko/planning/decisions.md). Approved decisions and completed implementation/qualification are separate facts.
 
 ## Baselines and document authority
@@ -90,6 +92,8 @@ Use `codex/dg1-p1` through `codex/dg1-p6`, each from freshly verified main. Comp
 The critical path remains DG-0 → DG-1 → CS-RG → P1-RECOVERY. Linux remains required for overall completion; cache/additional adapters do not become P1 prerequisites. Record later decisions and affected IDs without rewriting historical approval or measurement results.
 
 ## ADR-006 — CodeSpace execution ownership and reuse policy
+
+> **Status: suspended as an implementation directive.** Do not implement from this section while the CS-RG integration-boundary revalidation is pending. No replacement architecture has been approved, and no safety requirement is relaxed. The text is retained unchanged for historical traceability.
 
 **Accepted by the user's explicit instruction on 2026-09-27; Required.** [Design revision 1](../design-revision-1.md) holds the full specification, and [CodeSpace integration](codespace-integration.md#execution-ownership) applies it. This decision re-evaluates whether the design still fits, rather than checking conformance with it. Earlier decisions identify what changes and what must be verified again; they are not grounds for rejecting an alternative.
 

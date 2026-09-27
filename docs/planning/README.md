@@ -1,5 +1,7 @@
 # DevGuard execution planning
 
+> **Status: suspended as an implementation directive.** The CS-RG plan and design revision 1's execution-ownership choices referenced here must not be implemented; see the notice in the CS-RG plan. This is pending the CS-RG integration-boundary revalidation, an owner-directed review of the CodeSpace integration plan; it is not a work unit. No replacement architecture has been approved; the owner decides after reviewing its results. This notice suspends directives only and relaxes no safety requirement. The text below is retained unchanged for historical traceability.
+
 Reference date: 2026-09-22; revised 2026-09-27 by design revision 1. Repository: `/Volumes/DevData/Projects/IdeaProjects/DevGuard`.
 English is the authoritative editorial source. [Reviewed Korean translations](../ko/planning/README.md) are maintained through the [translation registry](../translations.json).
 
@@ -19,6 +21,8 @@ The contract baseline is DG-0: accounting, persistence and fake-backend tests. D
 [Contracts](../contracts.md) describe implemented behavior. Planning must not present a future API as an existing feature. The canvas is a secondary view of repository documents and actual PRs.
 
 ## Dependencies
+
+> **Status:** CS-RG, including design revision 1's execution-ownership choices, is suspended as an implementation directive while the CS-RG integration-boundary revalidation is pending; no CS-RG unit may start. See the notice in the CS-RG plan.
 
 ```mermaid
 flowchart LR

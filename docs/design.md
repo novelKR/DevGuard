@@ -1,5 +1,7 @@
 # DevGuard design reference
 
+> **Status: suspended as an implementation directive.** The Execution ownership (revision 1) section must not be implemented; the rest of this reference is unaffected. This is pending the CS-RG integration-boundary revalidation, an owner-directed review of the CodeSpace integration plan; it is not a work unit. No replacement architecture has been approved; the owner decides after reviewing its results. This notice suspends directives only and relaxes no safety requirement. The text below is retained unchanged for historical traceability.
+
 Reference date: 2026-09-22; revised 2026-09-27 by [design revision 1](design-revision-1.md). Local source: `/Volumes/DevData/Projects/IdeaProjects/DevGuard`.
 This is the **English editorial reference** for ongoing development, with a [maintained Korean counterpart](ko/design.md). The complete historical approval remains byte-for-byte in [design.ko.md](design.ko.md), verified by [design-source.json](design-source.json). This reference consolidates that design, the subsequently approved [decisions](planning/decisions.md) and the design revisions the user directs, such as [revision 1](design-revision-1.md); it does not claim to be the original approval artifact. The historical approval preserves the decisions of its time, this reference is the current editorial baseline, and milestone status changes only with actual implementation and verification. Concrete work boundaries and source mapping are in [planning](planning/README.md); [contracts](contracts.md) describe implemented behavior only.
 
@@ -68,6 +70,8 @@ Python, JS, make/ninja, VM/container and learned estimates are later work. Limit
 Future GC: exclusive use/reclaim coordination → durable mark → same-filesystem trash rename → interruptible bounded sweep → measured free space. Validate identity/no symlink escape; trash remains occupied across restart. Initial inactive TTL seven days and cache target min(8% storage, 50 GiB) apply only to eligible classes and remain unqualified defaults. APFS du is not physical space recovery. Do not automatically change CARGO_TARGET_DIR or enable sccache.
 
 ## Execution ownership (revision 1)
+
+> **Status: suspended as an implementation directive.** Do not implement from this section while the CS-RG integration-boundary revalidation is pending. No replacement architecture has been approved, and no safety requirement is relaxed. The text is retained unchanged for historical traceability.
 
 [Design revision 1](design-revision-1.md) keeps the correctness goals and re-evaluates how they are implemented. The goals: one party reaps each process; a managed execution never loses its observation before reaping; permit, credential and transcript descriptors never reach unrelated executions or payloads; a lost reply, timeout, EOF or root reap alone never proves non-execution or whole-scope termination; a preparation is consumed once and uncertain work never re-executes automatically; a failed new grant never blocks status or termination; termination, output cleanup, workspace release and lease return stay distinct; implementation, functional, platform and SLO evidence are recorded separately.
 

@@ -1,5 +1,7 @@
 # PR delivery, evidence and cleanup
 
+> **Status: suspended as an implementation directive.** The CS-RG final-head verification order recorded in this document (CSRG-C07 parity, then the CSRG-C09 decision) must not be followed as an implementation directive; the rest of this document is unaffected. This is pending the CS-RG integration-boundary revalidation, an owner-directed review of the CodeSpace integration plan; it is not a work unit. No replacement architecture has been approved; the owner decides after reviewing its results. This notice suspends directives only and relaxes no safety requirement. The text below is retained unchanged for historical traceability.
+
 The authorized execution completes documentation preparation, then DG1-C01–C12 through six sequential implementation PRs. Each PR completes review, current-head checks, normal merge, separate main workflows and local cleanup before the next begins. English PR bodies and authoritative documents have reviewed Korean translations. Logical labels are not future GitHub numbers.
 
 ## Documentation history and preparation
@@ -27,6 +29,8 @@ Update [CodeSpace #65](https://github.com/novelKR/CodeSpace/pull/65) to the resu
 Validate and merge DevGuard #1 first, verify its push-main workflows, then validate/merge CodeSpace #65 and verify runtime main CI plus the existing documentation publication workflow. Existing checks are not waived because a PR changes documentation. Only after both delivery cycles finish may DG1-P1 begin.
 
 ## Design revisions, documentation PRs and code PRs
+
+> **Status:** the CS-RG final-head verification order in this section (CSRG-C07 parity, then the CSRG-C09 decision) is suspended as an implementation directive while the CS-RG integration-boundary revalidation is pending. No replacement architecture has been approved.
 
 Design revision 1 rests on the user's explicit instruction of 2026-09-27, after DG-1 completed, to re-examine the CS-RG design. Past approval identifies what changes; it is not grounds for rejecting an alternative. A documentation PR such as DGP-D05/D06 limits its file changes to documentation and documentation checks, but it changes design decisions that bind later implementation. It neither implements nor qualifies anything, and it does not invalidate DG-1 qualification. A code PR that changes a runtime artifact never presents earlier verification as verification of the new implementation.
 

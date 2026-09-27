@@ -1,8 +1,12 @@
 # CodeSpace integration specification
 
+> **Status: suspended as an implementation directive.** The integration specification in this document, which assumes a CodeSpace-owned managed execution transport, must not be implemented. Observed-baseline entries describe CodeSpace at a fixed commit and remain facts; planned boundaries are suspended with the rest. This is pending the CS-RG integration-boundary revalidation, an owner-directed review of the CodeSpace integration plan; it is not a work unit. No replacement architecture has been approved; the owner decides after reviewing its results. This notice suspends directives only and relaxes no safety requirement. The text below is retained unchanged for historical traceability.
+
 This is a future consumer specification. [Design revision 1](../design-revision-1.md) (2026-09-27) re-fixed its confirmation baseline at CodeSpace `b6e7ed22e2c730ac987297455e250cbd6e8e8b0c` and keeps the initial inspection baseline `e94d21475643608ad2a466256fb57266b86faa47` as history; the runtime paths below did not change between the two except for the patch helper's test reuse. It does not install a runtime pin. DG-1 remains independent; CS-RG begins adoption after DG1-C12, which is complete: release `0.1.0-5daee5d-b3fa569e` is macOS-qualified and is the pin candidate. Revision 1 keeps Codex `6b9826e3aa83b1a5947db50f4332cb9c65f1b340`, and any later pin change is a separate decision based on verification. Preserve existing authorization, approval, workspace, PTY and shutdown behavior. The 2026-09-26 review aligned this specification with DG-1's implemented consumer interface ([contracts](../contracts.md)); revision 1 revised its execution layer.
 
 ## Source mapping
+
+> **Status:** the planned boundaries in this table are suspended as implementation directives while the CS-RG integration-boundary revalidation is pending; the observed-baseline column records facts at the fixed commit.
 
 All paths in this table refer to the fixed [CodeSpace source tree](https://github.com/novelKR/CodeSpace/tree/b6e7ed22e2c730ac987297455e250cbd6e8e8b0c).
 
@@ -18,6 +22,8 @@ All paths in this table refer to the fixed [CodeSpace source tree](https://githu
 | `scripts/validate-upstream.py` | Fixed target/report paths; all and macos-core separate; platform skips | Preserve existing gates and add consumer qualification, CSRG-C08/DGL-C06 |
 
 ## Execution ownership
+
+> **Status: suspended as an implementation directive.** Do not implement from this section while the CS-RG integration-boundary revalidation is pending. No replacement architecture has been approved, and no safety requirement is relaxed. The text is retained unchanged for historical traceability.
 
 This section applies [design revision 1](../design-revision-1.md). The [pinned Codex PTY](https://github.com/openai/codex/blob/6b9826e3aa83b1a5947db50f4332cb9c65f1b340/codex-rs/utils/pty/src/pty.rs) supports selected inherited FDs, but its high-level spawn cannot carry a DG-1 managed execution unchanged:
 
@@ -51,6 +57,8 @@ Keep four state axes independent: preparation and dispatch (Prepared, Committed,
 
 ## Registration and startup
 
+> **Status: suspended as an implementation directive.** Do not implement from this section while the CS-RG integration-boundary revalidation is pending. No replacement architecture has been approved, and no safety requirement is relaxed. The text is retained unchanged for historical traceability.
+
 Each execution owner has one registered instance: the internal Runner uses the Gateway PID in InProcess, and the worker uses its own PID in UDS. OS UID/PID/boot/start observations establish identity. Gateway cannot declare the worker's identity, and no launcher registers a second instance. One static control reservation includes Gateway and Runner costs.
 
 DG-1 gives every frame, including idle waiting, an absolute 250 ms deadline. The owner therefore opens a fresh session for each step: connect, `Hello`, `Authenticate`, `Register` with the same instance ID, then one request. DG-1 has no separate `service-exec` path. The Gateway passes the consumer credential to a UDS worker through `CredentialHandoff`, and InProcess reads it directly. [ADR-001](decisions.md#adr-001--one-registration-by-the-execution-owner) records this refinement. The 250 ms preparation budget, the five-second Prepared lifetime and this 250 ms frame deadline are three distinct limits: allowing 250 ms per frame does not bound the whole preparation, and CSRG-C00 verifies deadline propagation from connect through `Admit`.
@@ -64,6 +72,8 @@ Missing resource settings retain `off`. Operators explicitly choose `required`; 
 - **Schema and wire.** CSRG-C02 owns the eventual schema and wire change. The initial wire target is 7 relative to baseline 6; use the next free version if another change has already consumed it.
 
 ## Execution and approval sequence
+
+> **Status: suspended as an implementation directive.** Do not implement from this section while the CS-RG integration-boundary revalidation is pending. No replacement architecture has been approved, and no safety requirement is relaxed. The text is retained unchanged for historical traceability.
 
 A preparation is an owned, one-time object. It holds the execution identity (process ID to attempt), the command meaning, an execution slot acquired before spawn, workspace occupancy linked to the FIFO and approval flow, the resource state (`off` or Prepared) and the deadline of the first preparation. It can be executed once or cancelled, and its cleanup separates unexecuted work from committed or uncertain work. It is never cloned for a second spawn or rebuilt from serialized argv. The Drop of a cancelled task is not assumed to return a lease; remote cleanup stays an explicit reconciliation task.
 
@@ -101,6 +111,8 @@ Calling `AbandonLaunch` is not itself evidence; what counts is the state the aut
 CSRG-C04 provides nullable `resume_attempt_id`, migration and old/new fixtures. Existing NULL/uncertain resuming rows are not presumed unstarted. Keep execution outside the patch-operations ledger and do not expose it through `operation_status`.
 
 ## Errors, control and lifetime
+
+> **Status: suspended as an implementation directive.** Do not implement from this section while the CS-RG integration-boundary revalidation is pending. No replacement architecture has been approved, and no safety requirement is relaxed. The text is retained unchanged for historical traceability.
 
 | Error/state | Meaning | Handling |
 | --- | --- | --- |
@@ -147,11 +159,15 @@ Expose such attempts in diagnostics rather than hiding them. Measure control req
 
 ## Recovery mode
 
+> **Status: suspended as an implementation directive.** Do not implement from this section while the CS-RG integration-boundary revalidation is pending. No replacement architecture has been approved, and no safety requirement is relaxed. The text is retained unchanged for historical traceability.
+
 Preserve all current mode termination policies. In the new independent Runner mode, distinguish normal shutdown, explicit service stop, planned detach and unexpected Gateway disconnect. Stop drains/terminates and reconciles; detach/disconnect lets the live Runner maintain original deadlines and I/O. InProcess is excluded. Runner/host loss remains uncertain until observed; records cannot recreate pipes or PTYs.
 
 An authenticated Gateway obtains an epoch/fence and reconciles workspace occupancy, approval and DevGuard leases before mutations reopen. Stale Gateway mutations fail. Reconnecting to an existing execution needs no new workload budget. Restoring I/O after Runner restart is separate future work.
 
 ## Backend decisions
+
+> **Status: suspended as an implementation directive.** Do not implement from this section while the CS-RG integration-boundary revalidation is pending. No replacement architecture has been approved, and no safety requirement is relaxed. The text is retained unchanged for historical traceability.
 
 These are three independent decisions ([ADR-006](decisions.md#adr-006--codespace-execution-ownership-and-reuse-policy)). That CodeSpace owns the child directly implies neither a permanent Codex ban in DevGuard nor the replacement of every `off` backend.
 
@@ -160,6 +176,8 @@ These are three independent decisions ([ADR-006](decisions.md#adr-006--codespace
 - **D3, DevGuard.** DevGuard adds no Codex dependency now; the default distribution and shared client stay Codex-free, and adapter reuse follows the conditional policy.
 
 ## Required changes and rollout
+
+> **Status: suspended as an implementation directive.** Do not implement from this section while the CS-RG integration-boundary revalidation is pending. No replacement architecture has been approved, and no safety requirement is relaxed. The text is retained unchanged for historical traceability.
 
 | Recommendation/confidence | Observed cause | Minimum change and alternatives | Cost, validation and rollback |
 | --- | --- | --- | --- |

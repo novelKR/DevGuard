@@ -1,5 +1,7 @@
 # DevGuard 설계 참조
 
+> **상태: 구현 지시로서 효력 중지.** ‘실행 소유권(개정 1)’ 절은 구현하지 않습니다. 이 참조 문서의 나머지는 영향이 없습니다. CodeSpace 통합 계획에 대해 소유자가 지시한 검토인 CS-RG 통합 경계 재검증(작업 단위가 아닙니다)이 끝날 때까지 적용됩니다. 대체 구조는 승인되지 않았으며, 소유자가 재검증 결과를 검토한 뒤 결정합니다. 이 표기는 지시의 효력만 중지하며 어떤 안전 요구도 완화하지 않습니다. 아래 내용은 이력 추적을 위해 바꾸지 않고 남깁니다.
+
 기준일: 2026-09-22, [설계 개정 1](design-revision-1.md)로 2026-09-27 개정. 로컬 소스: `/Volumes/DevData/Projects/IdeaProjects/DevGuard`.
 이 문서는 [영문 편집 정본](../design.md)의 관리되는 한국어 대응 문서다. 전체 승인 원문 [design.ko.md](../design.ko.md)와 [checksum](../design-source.json)은 byte 그대로 보존한다. 이 참조 문서는 승인 설계, 후속 [결정](planning/decisions.md), [개정 1](design-revision-1.md)처럼 사용자가 지시한 설계 개정을 종합하며 원래 승인 artifact라고 주장하지 않는다. 역사적 승인본은 당시 결정을 보존하고 이 참조는 현재 편집 기준이며, 마일스톤 상태는 실제 구현·검증에 따라서만 바뀐다. 구체 작업은 [계획](planning/README.md), 현재 구현 사실은 [계약](../contracts.md)이 소유한다.
 
@@ -66,6 +68,8 @@ Python/JS/make/ninja/VM/container/학습 추정은 후속이다. Docker CLI제�
 GC는 사용/reclaim배제→내구 mark→동일filesystem trash rename→중단 가능한 sweep→실제 여유 측정이다. identity/symlink이탈을 검사하고 trash는 재시작 후에도 점유다. 비활성7일·목표min(저장공간8%,50GiB)는 적격 cache만의 미검증 초기값이다. APFS du는 물리 회수량이 아니다. CARGO_TARGET_DIR변경/sccache활성화는 자동 수행하지 않는다.
 
 ## 실행 소유권(개정 1)
+
+> **상태: 구현 지시로서 효력 중지.** CS-RG 통합 경계 재검증이 끝날 때까지 이 절을 근거로 구현하지 않습니다. 대체 구조는 승인되지 않았고, 어떤 안전 요구도 완화되지 않습니다. 내용은 이력 추적을 위해 바꾸지 않고 남깁니다.
 
 [설계 개정 1](design-revision-1.md)은 정확성 목표를 유지하고 그 구현 방식을 재평가한다. 목표는 프로세스마다 회수 책임자 하나, 관리 실행의 회수 전 관찰 기회 보존, permit·자격·transcript descriptor를 무관한 실행이나 payload에 넘기지 않음, 응답 유실·timeout·EOF·root 회수만으로 미실행이나 scope 전체 종료를 확정하지 않음, 준비의 일회성 소비와 불확실 실행의 자동 재실행 금지, 신규 허가 실패가 조회·종료를 막지 않음, 종료·출력 정리·workspace 해제·lease 반환의 구분, 구현·기능·플랫폼·SLO 증거의 분리 기록이다.
 
