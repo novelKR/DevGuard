@@ -8,6 +8,10 @@
 > Review status: the review record is submitted; candidate contracts are **not** verified; product support is
 > **not** established. The detailed, reviewable reasoning is in the
 > [hardened candidate analysis](2026-09-27-cs-rg-boundary-revalidation-analysis.md).
+>
+> **Dated snapshot:** repository state and open decisions below describe the 2026-09-27 review point. The living
+> trackers are DevGuard issue #14 and CodeSpace issue #76; later owner directions and merges there supersede this
+> snapshot without turning this document into a normative design.
 
 ## 1. Why this review happened
 The owner's directive CS-DG-REASSESS-2026-09-27 and the owner's clarifications of the same day placed the
@@ -41,10 +45,11 @@ directives; no agent implements from them.
 - The priority inversion is documented, not executed: design revision 1 made CodeSpace's Codex use changeable and
   DevGuard's mechanisms fixed, and that premise shaped C00/C03/C09 and CodeSpace's reuse text. (source)
 - The core mismatch is DevGuard's launch API: `HelperCommand` makes DevGuard's client perform the spawn. (source)
-- Reap-first is safe against false release but not operable: when the backend reaps the root before the
-  authority adopts a surviving descendant, the attempt stays Suspect with sticky tracking loss even after the
-  descendant exits, and on macOS only a reboot releases it. Existing DevGuard native tests demonstrate this and
-  passed on macOS CI. Both CodeSpace backends reap at once. (source + test)
+- Reap-first has a confirmed non-operable path: when the backend reaps the root before a surviving descendant is
+  adopted and neither root identity nor known-member evidence remains to establish that descendant's membership,
+  tracking loss becomes sticky. The attempt stays charged after the descendant exits, and the checked macOS path
+  has no ordinary recovery before reboot. Existing DevGuard native tests demonstrate this path and passed on
+  macOS CI. Both checked CodeSpace backends reap promptly. (source + test)
 - DevGuard's client session socket is inheritable for a short span before it becomes close-on-exec, outside
   `spawn_guard`; CodeSpace's spawns neither take that guard nor close descriptors in the child. This affects every
   candidate and the current design; exposure is not demonstrated. (source; exposure unresolved)
@@ -53,8 +58,13 @@ directives; no agent implements from them.
 - No proposed route (R, X, Y) is contract-complete. Governed execution is unsupported under the current
   constraints. (analysis sections 11-12)
 
-## 4. What is open
-Architecture track (the analysis, section 13, explains each):
+## 4. What was open at this snapshot
+The analysis, section 13, explains these choices as they stood on 2026-09-27. Later owner directions are tracked
+in DevGuard #14 and CodeSpace #76. In particular, the owner later explicitly allowed DevGuard to evaluate Codex
+and other external dependencies behind adapters and a flexible explicit upstream-pin policy; this does not by
+itself approve a concrete dependency, pin, implementation, upstream submission or merge.
+
+Architecture track at this snapshot:
 1. Direction for the session-socket window: a DevGuard-side reduction plus an independent CodeSpace
    descriptor-hygiene proposal, or evidence on exposure first.
 2. Direction for reap-first leaks: a bounded experiment of a DevGuard-side group anchor, a generic upstream
@@ -100,6 +110,7 @@ socket window; a group-anchor or supervising-helper experiment.
 - A delegated run's `not found` status is indeterminate; a hold must reach delayed work before its result is used.
 - Korean counterparts are maintained documents with their own structure; match sections by content.
 - CodeSpace documentation avoids unexplained work-package numbers.
-- On macOS every descriptor created with `pipe()`, `socketpair()` or `socket()` is inheritable until it is
-  duplicated or flagged; any descriptor design must account for concurrent forks in the same process.
+- The reviewed DevGuard client `socket()` path creates an inheritable descriptor and only later duplicates it
+  close-on-exec. This review did not establish a universal claim for Rust/macOS `pipe()` or `socketpair()` creation;
+  descriptor designs must distinguish verified creation semantics from assumptions when analyzing concurrent forks.
 - "Not released" is not "operable": check whether a conservative state can ever be left without a reboot.
