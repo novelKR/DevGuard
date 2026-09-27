@@ -2644,17 +2644,26 @@ mod tests {
         #[derive(Clone, Default)]
         struct Scripted {
             fail: Arc<AtomicBool>,
-            /// Milliseconds the next read blocks, as a probe stuck in the kernel.
-            delay_next_ms: Arc<AtomicU64>,
+            /// Reads begun so far; the startup baseline is the first.
+            reads: Arc<AtomicU64>,
+            /// The read, by that count, that blocks for eight seconds, as a probe
+            /// stuck in the kernel; zero blocks none.
+            block_read: Arc<AtomicU64>,
+            /// When the blocking read began, in boot-relative milliseconds.
+            blocked_at_ms: Arc<AtomicU64>,
             /// When the most recent read finished, in boot-relative milliseconds.
             last_read_ms: Arc<AtomicU64>,
             clock: Option<BootClock>,
         }
         impl HostProbe for Scripted {
             fn read(&mut self) -> Result<HostReading> {
-                let delay = self.delay_next_ms.swap(0, Ordering::Relaxed);
-                if delay > 0 {
-                    std::thread::sleep(Duration::from_millis(delay));
+                let read = self.reads.fetch_add(1, Ordering::Relaxed) + 1;
+                if read == self.block_read.load(Ordering::Relaxed) {
+                    if let Some(clock) = &self.clock {
+                        self.blocked_at_ms
+                            .store(clock.now().monotonic_ms, Ordering::Release);
+                    }
+                    std::thread::sleep(Duration::from_millis(8_000));
                 }
                 if self.fail.load(Ordering::Relaxed) {
                     return Err(Error::new(
@@ -2826,14 +2835,37 @@ mod tests {
             let mut running = Running::start();
             let authority = running.authority.clone();
             let clock = running.clock.clone();
+            // The baseline and the first sample complete; the third read blocks
+            // for eight seconds, like statfs on a hung volume.
+            running.probe.block_read.store(3, Ordering::Relaxed);
             running.sample();
             wait_for(&authority, PressureState::Normal, Duration::from_secs(4));
-            // The next read blocks for eight seconds, like statfs on a hung volume.
-            running.probe.delay_next_ms.store(8_000, Ordering::Relaxed);
-            let blocked_at = clock.now();
             // Wait for the blocked read to begin: no sample completes afterwards.
-            std::thread::sleep(Duration::from_millis(2_300));
+            let deadline = Instant::now() + Duration::from_secs(4);
+            let blocked_at = loop {
+                let at = running.probe.blocked_at_ms.load(Ordering::Acquire);
+                if at != 0 {
+                    break at;
+                }
+                assert!(Instant::now() < deadline, "the third read never began");
+                std::thread::sleep(Duration::from_millis(20));
+            };
             let last_read = running.probe.last_read_ms.load(Ordering::Relaxed);
+            // The controller ages a sample from the time the sampler takes after
+            // the read returns, which the first sample's receipt carries; the
+            // probe's own clock reading is earlier by however long the return took.
+            let sampled_at = running
+                .receipts
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|receipt| receipt["event"] == "pressure")
+                .and_then(|receipt| receipt["sample"]["at"]["monotonic_ms"].as_u64())
+                .expect("the first sample was not reported");
+            assert!(
+                sampled_at >= last_read,
+                "sampled at {sampled_at} ms, read finished at {last_read} ms"
+            );
             // The blocked reading holds no authority lock.
             let began = Instant::now();
             drop(authority.lock().unwrap());
@@ -2841,18 +2873,24 @@ mod tests {
             assert!(lock_wait < Duration::from_millis(100), "{lock_wait:?}");
             // Admission closes six seconds after the last completed sample,
             // while the probe is still blocked.
-            let mut last_open = last_read;
+            let mut last_open = sampled_at;
             let closed_at = loop {
                 let before = clock.now().monotonic_ms;
                 if authority.lock().unwrap().pressure() == PressureState::Critical {
                     break clock.now().monotonic_ms;
                 }
                 last_open = before;
-                assert!(before < blocked_at.monotonic_ms + 12_000, "never closed");
+                assert!(before < blocked_at + 12_000, "never closed");
                 std::thread::sleep(Duration::from_millis(20));
             };
-            assert!(last_open - last_read <= 6_000);
-            assert!(closed_at - last_read > 6_000);
+            assert!(
+                last_open - sampled_at <= 6_000,
+                "open at {last_open} ms, sampled at {sampled_at} ms"
+            );
+            assert!(
+                closed_at - sampled_at > 6_000,
+                "closed at {closed_at} ms, sampled at {sampled_at} ms"
+            );
             // Closed before the stuck read returned (about ten seconds after it).
             assert_eq!(
                 running.probe.last_read_ms.load(Ordering::Relaxed),
