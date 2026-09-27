@@ -126,7 +126,7 @@ conclusions. Location and manifests (SHA-256 of `MANIFEST.json`):
 
 | Record | Location | Manifest |
 | --- | --- | --- |
-| Review records (requirements, findings, ownership map, upstream matrix, DevGuard decomposition, gap resolution, decision packet, handoff, directive copy, upstream source snapshots) | `<DEVGUARD_CHECKOUT>/evidence/cs-rg/boundary-revalidation-2026-09-27/` | `85813d5967148ff75384c900ce79a306d528d587b44b0bc796966720ce2a65a7` |
+| Review records (requirements, findings, ownership map, upstream matrix, DevGuard decomposition, gap resolution, decision packet, handoff, directive copy, upstream source snapshots) | `<DEVGUARD_CHECKOUT>/evidence/cs-rg/boundary-revalidation-2026-09-27/` | `MANIFEST.json` in that directory lists every file with its SHA-256; it is regenerated when records are added, so its own hash is not pinned here |
 | Codex source snapshots (pin, rust-v0.157.1, main `41f9084`) | same, `stage4/` | `b58a308fbbb2243680847c2c350f8d24323513a5128206801cdeb76ad1842cc4` |
 | Hold PR records | same, `stage1/` | `309b210c1cf87b795797236355dde8ad97ee776cfb2bbaa339e3d618ccd1a2aa` |
 | DevGuard #11 local experiments, review and exact-head CI | `<DEVGUARD_CHECKOUT>/evidence/dg1-delivery/stuck-probe-sample-time/` | `138dc8b513096b80802b6fc54d790dac92eec9475429e2a34b2e9096b68e51a0` (experiments) |
