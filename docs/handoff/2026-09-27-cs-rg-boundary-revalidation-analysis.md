@@ -20,7 +20,7 @@ source decides.
 | ID | Review point | Checked | Verdict | Correction |
 | --- | --- | --- | --- | --- |
 | RR-1 | Conclusions ("pipe needs nothing else", "PTY needs only a small precondition") are stronger than the evidence | the earlier handoff text; sections 3-12 below | confirmed | every route is an incomplete candidate; no combination is shown supportable (section 12) |
-| RR-2 | Reap-first safety and operability were conflated | contracts.md Observation, Limits, Reconciliation; crates/launch/tests/reconcile.rs L470-L560; crates/macos/src/scope.rs L628; macOS CI run 36311129096 | confirmed and strengthened: the leak is deterministic and has no recovery before reboot on macOS | section 3; RE reclassified |
+| RR-2 | Reap-first safety and operability were conflated | contracts.md Observation, Limits, Reconciliation; crates/launch/tests/reconcile.rs L470-L560; crates/macos/src/scope.rs L628; macOS CI run 36311129096 | confirmed and strengthened: when root identity and known-member evidence are both lost before a surviving descendant is adopted, tracking loss is sticky and the checked macOS path has no ordinary recovery before reboot | section 3; RE reclassified |
 | RR-3 | RB/RC were called required without a protocol | earlier packet; contracts.md Fenced launch helper | confirmed | RB/RC are incomplete candidates; protocol and gaps in sections 4-5 |
 | RR-4 | Authority-mediated results need defined meaning | contracts.md Transcript, Command-line owner | confirmed | section 6 |
 | RR-5 | The client socket window gates R; a DevGuard-local mutex is not enough | crates/client/src/connect.rs L39-L51; crates/client/src/launch.rs L29-L36, L150-L154 | confirmed; the window also exists in the current DevGuard design, not only in R | section 7; D6 becomes a prerequisite of every CodeSpace route |
@@ -43,11 +43,11 @@ No review point was contradicted by source. One point was strengthened: RR-2 (se
 | F-1 | Design revision 1 listed CodeSpace's Codex PTY use and pin as changeable and kept DevGuard's helper, direct-child check, descriptor layout and observe-before-reap fixed (design-revision-1.md L96-L107; CS-RG.md L22); this became the D1 default and C00/C03/C09 (L479; CS-RG.md L47, L88, L164) and entered CodeSpace's reuse policy (codex-reuse.md L72) | source |
 | F-2 | No unauthorized execution. One self-reported lapse: a delegated read-only run whose status was unresolved was not stopped and wrote a superseded C00 plan after the hold; no repository or product effect | source (records) |
 | F-3 | `HelperCommand` makes DevGuard's client perform the spawn (launch.rs L150-L154), so a governed PTY launch would take PTY and spawn ownership from Codex (N1.2) | source |
-| F-4 | Reap-first cannot release a lease falsely, and it leaves a charged Suspect attempt that no later ordinary observation clears; on macOS only a reboot releases it (section 3) | source + test |
+| F-4 | Reap-first has a confirmed failure path: if the root has been reaped and no root-PID or known-member evidence remains to establish a surviving descendant's membership, tracking loss becomes sticky; that attempt remains charged after the descendant exits, and the checked macOS implementation has no ordinary recovery before reboot (section 3) | source + test |
 | F-5 | No Codex revision checked offers pre-reap observation or owner-controlled reap for PTY children (pin pty.rs L244-L253; main pty.rs L447-L449) | source |
-| F-6 | `ChildFds::Attached` (main and prereleases, #47797) delivers close-on-exec descriptors only to the intended child (main pty.rs L405-L408, L526); no stable release has it; runtime behaviour untested | source; behaviour: experiment |
-| F-7 | macOS cannot create pipes or sockets close-on-exec atomically. DevGuard's grant descriptors are created under `spawn_guard` (launch.rs L175-L190), its session sockets are not (connect.rs L39-L51), and CodeSpace's Tokio pipe, patch-helper and probe spawns neither take the guard nor close descriptors in the child | source |
-| F-8 | Codex exposes no PTY child PID at the pin or on main (`SpawnedProcess`, process.rs L356-L361) | source |
+| F-6 | `ChildFds::Attached` (main and checked prereleases, #47797) is intended to deliver close-on-exec descriptors only to the intended child (main pty.rs L405-L408, L526); it was absent from the checked stable rust-v0.157.1; runtime behaviour remains untested | source; behaviour: experiment |
+| F-7 | DevGuard's current client session socket is created inheritable and only then duplicated close-on-exec, outside `spawn_guard` (connect.rs L39-L51). Grant descriptors are created under `spawn_guard` (launch.rs L175-L190), while the checked CodeSpace Tokio pipe, patch-helper and probe spawns neither take that guard nor close unintended descriptors in the child. General Rust/macOS pipe and socket-pair atomic-close-on-exec behaviour was not established by this review | source; general Rust/macOS behaviour: unverified |
+| F-8 | Codex exposes no PTY child PID at the checked pin or checked main (`SpawnedProcess`, process.rs L356-L361); stable rust-v0.157.1 was not separately established for this point | source |
 | F-9 | Scope establishment accepts a root only while it is alone in its group (contracts.md, Native policy application) | source |
 | F-10 | DevGuard needs Rust 1.95, CodeSpace declares 1.88; a DevGuard client dependency in CodeSpace must stay optional for the `off` build | source |
 | F-11 | CodeSpace-only issues, outside CS-RG and not relied on by DevGuard's release rules: tool text promises subtree termination the code does not perform (mcp.rs L124-L125); a PTY handle dropped at eviction, up to 15 minutes after exit, signals a stored numeric pgid (Codex process.rs L273-L277 with CodeSpace process.rs L33); worker setup failure leaves the worker and its directory (runtime.rs L51-L64) | source; runtime not run |
@@ -81,8 +81,7 @@ Conclusions:
   descendant born after the last observation keeps its reservation charged until the host reboots. There is no
   unconditional release (contracts.md Reclamation evidence) and no native path that resolves prior tracking loss.
   Repeated occurrences shrink admission capacity although the host is idle. (source, test)
-- With both CodeSpace backends reaping at once, the observe-before-reap window is effectively zero, so any
-  survivor not already adopted by an earlier reconciler pass (1-second cadence) triggers this outcome. (inference)
+- With both checked CodeSpace backends reaping promptly, the pre-reap observation window is not under DevGuard's control. A survivor that has not already been adopted can enter the sticky-loss path when, after reap, neither root identity nor a known member can establish its membership. The frequency of that condition in representative workloads is unknown. (source + inference)
 - Frequency in representative agent workloads: unknown (not measured). The existence of the sequence does not
   depend on that measurement.
 
@@ -139,7 +138,7 @@ durable authority state; INF = inference.
 | 18 | helper death before claim | owner observes the exit; `AbandonLaunch`; `NoHelperCreated` | OWN, OS |
 | 19 | helper death after claim | scope-based settlement | OS, DUR |
 | 20 | payload exec failure | the helper reports `exec_failed` on its session and exits 126/127 | HLP, OS |
-| 21 | payload start after a lost reply | cannot happen: exec follows only a received `may_exec = true` | source rule |
+| 21 | payload start after a lost authorization reply to the helper | cannot happen under the current rule: exec follows only a `may_exec = true` response actually received by the helper. This does not resolve owner-facing or result-query response loss, where execution may have occurred while the owner remains uncertain | source rule / candidate distinction |
 | 22 | owner death | helpers fail the parent check; unclaimed grants become Suspect and are never released before reboot | source; operability gap |
 | 23 | authority restart | committed attempts Suspect; bound scopes Suspect until reboot | source; operability gap |
 | 24 | expiry | Prepared expires after 5 s | source |
@@ -160,7 +159,7 @@ operability gaps at rows 22, 23 and 26; UDS mode (credential path, section 10).
 | Meaning of READY | pre-exec boundaries done; authorization only; never evidence that the payload started | source (current rule) |
 | `exec_failed` | helper message plus exit status 126/127 | candidate |
 | Recorded but response lost | the helper still exits by its own rule; the owner reads the record by query | candidate |
-| Helper disconnect | session EOF after `may_exec` looks like a successful exec and like a helper killed in between; the exit status decides, as today | source (current ambiguity kept) |
+| Helper disconnect | session EOF after `may_exec` can look like a successful exec or a helper killed before exec. Exit status is recorded as process outcome but does not, by itself, prove whether payload exec occurred; absent separate durable evidence, execution-start uncertainty remains | source principle / candidate contract needed |
 | After restart | only durable records survive; READY does not | source / candidate |
 | Missing message as evidence | never evidence of non-execution | source (N2.2) |
 | Replay of an old message | bound to attempt and helper identity; refused otherwise | candidate |
@@ -245,7 +244,7 @@ identical. Status: unverified candidate; requires a DevGuard contract change and
 | RE | safe against false release; fails operability for a deterministic pattern | no change needed | reservations unrecoverable before reboot | frequency only | none | none | none | a pre-reap mechanism (RG, RA, or an upstream primitive) or an explicit restriction |
 | RA | blocked by N1 for pipe; incomplete candidate for PTY | observation before the root disappears | N1.1 semantics | exit, signal, EOF fidelity | DevGuard helper | C04, C05, C06 | none | RE or RG |
 | RG | unverified candidate | adoption after reap without changing CodeSpace's processes | establishment order, helper-side observation, anchor lifetime, PTY SIGHUP | anchor experiment | DevGuard helper and contract | C04, C05, C06 | none | RE with restriction |
-| D6 | prerequisite of every CodeSpace route; defect of the current design | — | no N1-compatible complete macOS fix identified | exposure demonstration | DevGuard client (partial); complete fix needs CodeSpace participation | C01/C02 | none | treat as an accepted risk only by an explicit owner decision after evidence |
+| D6 | prerequisite of every CodeSpace route; defect of the current design | — | no complete N1+N2-compatible macOS fix identified in this review | exposure demonstration and protection-boundary analysis | DevGuard client and/or adapter/platform changes | C01/C02 plus affected integration qualification | depends on chosen protection | keep governed combinations unsupported until N2 compliance is established; changing N2 would require a separate owner requirement change, not a route-level risk waiver |
 
 No route is contract-complete. Governed execution is unsupported under the current constraints until at least D6
 and the operability gap have an answer that holds N1 and N2.
@@ -257,11 +256,19 @@ and the operability gap have an answer that holds N1 and N2.
 | macOS | PTY | InProcess | unsupported; candidates X and Y identified; protocol incomplete; not implemented; not qualified | all of the above plus X (upstream) or Y (atomic creation, stable release) |
 | macOS | pipe or PTY | UDS | unsupported; as above | plus the worker credential path and worker-death operability |
 | macOS | any | any, governance `off` | unchanged | none |
-| Linux | any | any | unsupported pending DG-LINUX | platform milestone; Codex main routes Linux PTY launches through a setup helper, which may break the direct-child check (inference) |
+| Linux | any | any, governance `off` | unchanged by this review | existing CodeSpace support scope applies |
+| Linux | any | any, DevGuard-governed / `required` | unsupported pending DG-LINUX and integration validation | platform milestone; checked Codex main routes Linux PTY launches through a setup helper, which may affect the current direct-child mechanism (inference) |
 
-## 13. Decisions that remain
-Architecture track (only genuine choices; the fixed principles are not reopened, and no route choice is asked
-because no route is complete):
+## 13. Decisions that remained at this analysis snapshot
+
+This section records the open choices as of the 2026-09-27 analysis. It is **not** a living decision list. Later
+owner directions are recorded in DevGuard issue #14 and CodeSpace issue #76 and supersede this section where they
+differ. In particular, later owner direction explicitly permits DevGuard to evaluate Codex and other external
+dependencies behind adapters and a flexible, explicit upstream-pin policy; that permission does not itself approve
+a specific dependency revision, product implementation, pin change, upstream submission, or merge.
+
+Architecture track at the time of this snapshot (fixed principles were not reopened, and no route choice was asked
+because no route was complete):
 1. D6 direction: pursue a DevGuard-side reduction plus an independent CodeSpace descriptor-hygiene proposal (N1.5),
    or first gather evidence on exposure under the cooperative trust scope and decide afterwards.
 2. Operability direction for reap-first leaks: authorize a bounded RG experiment (DevGuard fixture, isolated
