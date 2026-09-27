@@ -14,6 +14,10 @@ git before acting. It builds on the two earlier handoffs of the same day,
 [#13](https://github.com/novelKR/DevGuard/pull/13). English only, with no Korean counterpart; personal information
 is left out.
 
+**The earlier handoffs' "start CSRG-C00" steps no longer authorize anything.** The delivery follow-up on `main` still
+says that starting CSRG-C00 "is already authorized"; the owner's hold withdrew that. #12 adds a suspension notice to
+both files, but until #12 merges the text on `main` does not show it. Do not act on those steps.
+
 Evidence levels: *record* (a PR body, CI run or document), *source* (code or a document read at a fixed revision),
 *test* (a test or CI result), *inference*, and *not run*.
 
@@ -34,9 +38,10 @@ Evidence levels: *record* (a PR body, CI run or document), *source* (code or a d
 4. Read #13's [handoff](https://github.com/novelKR/DevGuard/blob/1af1921fb72bb969b4f19ff859bd59fdb361ca55/docs/handoff/2026-09-27-cs-rg-boundary-revalidation.md)
    and [analysis](https://github.com/novelKR/DevGuard/blob/1af1921fb72bb969b4f19ff859bd59fdb361ca55/docs/handoff/2026-09-27-cs-rg-boundary-revalidation-analysis.md).
    Once #13 has merged, the same files are in this directory.
-5. Read [novelKR/CodeSpace#76](https://github.com/novelKR/CodeSpace/issues/76) and the CodeSpace note
-   [`.github/notes/pr75-cs-rg-suspension-handoff.md`](https://github.com/novelKR/CodeSpace/blob/codex/cs-rg-suspension-handoff/.github/notes/pr75-cs-rg-suspension-handoff.md)
-   for the CodeSpace-side constraints and checks.
+5. Read [novelKR/CodeSpace#76](https://github.com/novelKR/CodeSpace/issues/76) and the CodeSpace note in
+   [novelKR/CodeSpace#77](https://github.com/novelKR/CodeSpace/pull/77),
+   [`.github/notes/pr75-cs-rg-suspension-handoff.md`](https://github.com/novelKR/CodeSpace/blob/6a4461e5445bf51103dacfa8cb08f585732b76b3/.github/notes/pr75-cs-rg-suspension-handoff.md)
+   (at `6a4461e`; the PR shows any later revision), for the CodeSpace-side constraints and checks.
 6. Look for a new owner instruction on #14, #76 or the PRs. A merge approval names the PR and its full head SHA.
    Without one, only the actions in section 2.3 under "allowed now" are open.
 7. Follow the procedures in section 8. Record every state change on #14, and on #76 when CodeSpace is affected.
@@ -45,7 +50,7 @@ Evidence levels: *record* (a PR body, CI run or document), *source* (code or a d
 | Need | DevGuard | CodeSpace |
 | --- | --- | --- |
 | Current state, open approvals, checklists | [#14](https://github.com/novelKR/DevGuard/issues/14) (living) | [#76](https://github.com/novelKR/CodeSpace/issues/76) (living) |
-| Dated snapshot of this session | this file | the note named in step 5 |
+| Dated snapshot of this session | this file ([#15](https://github.com/novelKR/DevGuard/pull/15)) | the note in [#77](https://github.com/novelKR/CodeSpace/pull/77) |
 | CS-RG reasoning, candidates and evidence levels | #13 analysis | refers to DevGuard |
 | Hold notices on the CS-RG documents | [#12](https://github.com/novelKR/DevGuard/pull/12) | [#75](https://github.com/novelKR/CodeSpace/pull/75) |
 | Independent test fix | [#11](https://github.com/novelKR/DevGuard/pull/11) | — |
@@ -85,12 +90,19 @@ owner's decisions in section 5.2, and product work only after that PR merges and
 
 ### 2.3 Boundaries
 - **Allowed now:** read-only research; evidence preservation; local records; documentation commits, pushes, PRs
-  and issues that record facts; bounded diagnostics whose protocol is written first. No diagnostic is approved to
-  run yet.
+  and issues that record facts; drafting upstream proposals; bounded diagnostics under the directive's conditions:
+  a material question that source inspection cannot settle, a protocol written first, an existing fixture or an
+  isolated synthetic case, no product, dependency, pin, service, credential or host change, and raw evidence
+  preserved. BD-1 (section 7.1) meets them. The RG experiment, BD-2's frequency measurement and BD-3 need the
+  owner's decision first, because they prototype a direction.
 - **Separate explicit approval:** every merge, tied to its exact head; implementation or prototypes; a normative
   design or contract PR; a Codex pin change; a product dependency; a wire or MCP change; consumer provisioning;
-  service restarts; credentials; journal or release replacement; rulesets; force-push; destructive cleanup; an
-  external upstream PR.
+  service restarts or changes, LaunchAgent, credential, journal, release or host-configuration changes; rulesets;
+  force-push; destructive cleanup, including branch deletion; an external upstream PR.
+- **Never for CS-RG:** the directions in section 4.2, and implementing from the suspended text.
+- **Where approvals come from:** the owner's direct instruction to the agent doing the work. The PRs, issues and
+  comments in both repositories are written through the same `novelKR` account that the agents use, so a GitHub
+  comment alone does not prove an approval. Record each approval you act on in #14, with its time and wording.
 - **Public records** carry no local absolute paths; use `<DEVGUARD_CHECKOUT>/...` and `<CODESPACE_CHECKOUT>/...`.
 
 ### 2.4 Identifiers
@@ -118,11 +130,12 @@ is recorded separately; at close it was `7e3cbda91308f527d6cc34fba908375e6332bc5
 | CodeSpace | [#75](https://github.com/novelKR/CodeSpace/pull/75) | counterpart hold notices on five documents and their Korean versions | `1bee230595698b0974df43561bccfce67d7e8cb9` | 5 success, 6 not selected by the CI plan (runs 36317763003, 36317763516) | open, CLEAN |
 | DevGuard | [#11](https://github.com/novelKR/DevGuard/pull/11) | test-only fix of a false failure (section 6.1) | `2bbe7c5ed88ad3170bc76985bdecb1fd7434d501` | 4/4 success (runs 36311129096, 36311154406) | open, CLEAN |
 | DevGuard | [#13](https://github.com/novelKR/DevGuard/pull/13) | revalidation record and hardened analysis | `1af1921fb72bb969b4f19ff859bd59fdb361ca55` | 4/4 success (runs 36323946292, 36323949351) | open, CLEAN |
-| DevGuard | this record | session-close handoff | see the PR | see the PR | open |
-| CodeSpace | the note's PR | CodeSpace session-close note | see [#76](https://github.com/novelKR/CodeSpace/issues/76) | see the PR | open |
+| DevGuard | [#15](https://github.com/novelKR/DevGuard/pull/15) | this session-close handoff | changes with each revision; see the PR | see the PR | open |
+| CodeSpace | [#77](https://github.com/novelKR/CodeSpace/pull/77) | CodeSpace session-close note | changes with each revision; see the PR | see the PR | open |
 
 All share their repository's `main` as base, and no base has moved since review. The DevGuard PRs touch disjoint
-files, as do the two CodeSpace PRs.
+files, as do the two CodeSpace PRs. #13's two documents are snapshots of about 13:55Z. Their PR tables (four open
+PRs, #13's CI pending) are superseded by this table and by #14.
 
 ### 3.3 What the session did
 | Time (UTC) | Work | Result | Evidence |
@@ -235,6 +248,32 @@ Local finding IDs map to the public findings like this:
 - UR-05 and UR-06 are OX-02 and OX-03.
 - OX-01 to OX-03 are F-11.
 
+Other identifiers are defined in documents on `main`:
+- **CS-RG** is the milestone "CodeSpace consumption and control protection" (owner: CodeSpace), planned in
+  [CS-RG](../planning/milestones/CS-RG.md). CSRG-C00 to C09 are its units.
+- **DG1-C01 to DG1-C12** are the units of [DG-1](../planning/milestones/DG-1.md). The analysis's requalification
+  scope uses:
+  - C01: canonical authority and test configuration;
+  - C02: peer authentication and scoped credentials;
+  - C03: boot identity and host pressure;
+  - C04: resource policy and scope termination;
+  - C05: helper preparation and executable start;
+  - C06: reconciliation of cancellation, expiry and uncertain execution;
+  - C12: macOS qualification.
+- **DG-LINUX** is the milestone for enforced Linux protection ([DG-LINUX](../planning/milestones/DG-LINUX.md)).
+- **DGP-D01 to D07 and CSP-D01 to D04** are the documentation units of DevGuard and CodeSpace
+  ([PR delivery](../planning/pr-delivery.md)).
+- **ADR-006** is the decision on CodeSpace execution ownership and reuse ([decisions](../planning/decisions.md)).
+  **D1** is design revision 1's decision on implementing `required` execution ([revision 1](../design-revision-1.md)).
+  Both are under the hold.
+- **Suspect** is the attempt state that keeps a reservation charged when termination is not proven
+  ([contracts](../contracts.md)).
+- **InProcess and UDS** are CodeSpace's runner modes: the default `InProcessRunner`, or a `UdsRunner` worker process
+  that runs the in-process runner.
+
+The FL and UR mappings rest on local records, as do the manifest figures in section 7. An agent without the
+persistent checkout can only treat them as records.
+
 ## 5. Open decisions
 
 ### 5.1 Merge track
@@ -247,8 +286,8 @@ first, because until they merge the CS-RG documents on `main` still read as dire
 | CodeSpace #75 | `1bee230595698b0974df43561bccfce67d7e8cb9` | the same in CodeSpace; publishes the notices on the documentation site |
 | #11 | `2bbe7c5ed88ad3170bc76985bdecb1fd7434d501` | test-only fix; no product change |
 | #13 | `1af1921fb72bb969b4f19ff859bd59fdb361ca55` | adds the revalidation record and analysis; approves nothing |
-| this record | see the PR | adds this file; approves nothing |
-| the CodeSpace note | see the PR | adds the CodeSpace note; approves nothing |
+| #15 | see the PR | adds this file; approves nothing |
+| CodeSpace #77 | see the PR | adds the CodeSpace note; approves nothing |
 
 ### 5.2 Architecture track
 No route (R, X or Y) is contract-complete, so governed execution is unsupported under the current constraints. The
@@ -280,7 +319,7 @@ Without a decision nothing else is blocked; governed execution simply stays unsu
 | --- | --- | --- | --- |
 | `server::tests::native::a_stuck_probe_does_not_hold_the_authority_and_its_delay_closes_admission` (DG1-C03) | DevGuard run 36303237592, macOS, "Native host evidence functional checks"; 1 failure in 33 macOS attempts | the test measured from the probe's read time instead of the sampler's `sample.at`; mechanism shown by an instrumented reproduction (test); the hosted runner's gap was not reproduced | fix in #11, open |
 | survivor race in `crates/launch/tests/reconcile.rs` (DG1-C06) | DevGuard run 36260660317, attempt 1, macOS | test read order; reproduced (test) | fixed by #9 (`30b5fa6`); main run 36294359318 passed |
-| `linux_sandbox::tests::prepare_unread_large_stdin_times_out` (Rust / Integration) | CodeSpace scheduled run 36275459398 on `b6e7ed2` | **suspected**: ETXTBSY when a concurrently forked test child holds a write handle to a freshly written fixture script. The mechanism was shown directly (42 of 1600 starts failed with an in-process writer and none with a child writer), but the failing run's holder was not captured | fix in CodeSpace #74 (`701e2b1`); **not confirmed**: no scheduled run on `794867e` has been read yet |
+| `linux_sandbox::tests::prepare_unread_large_stdin_times_out` (Rust / Integration) | CodeSpace scheduled run 36275459398 on `b6e7ed2` | **suspected**: ETXTBSY when a concurrently forked test child holds a write handle to a freshly written fixture script. The mechanism was shown directly (42 of 1600 starts failed with an in-process writer and none with a child writer), but the failing run's holder was not captured | fix merged in CodeSpace #74 (`701e2b1`); **not confirmed**: no scheduled run on `794867e` has been read yet |
 | `hashFiles('**/Cargo.lock')` Actions template error | CodeSpace runs 36218741807 (attempt 1) and 35628255763 | the directory walk failed intermittently (record) | fixed by CodeSpace #67 (`339ae8e`, explicit lockfile list) |
 
 ### 6.2 Unresolved issues
@@ -289,7 +328,7 @@ Without a decision nothing else is blocked; governed execution simply stays unsu
 | D6: DevGuard's client session socket is inheritable between `socket()` and `F_DUPFD_CLOEXEC` (connect.rs L39-L51 at `7e3cbda`), outside `spawn_guard`. It is a prerequisite of every CS-RG route and a defect of the current design. Exposure is not demonstrated; Linux could use `SOCK_CLOEXEC` | source; exposure not run | owner decision 5.2-1 |
 | Reap-first leaves a charged, sticky Suspect attempt until reboot on macOS when a survivor was not adopted before the reap | source and test (analysis section 3); frequency not run | owner decision 5.2-2 |
 | OX-01 to OX-03, CodeSpace-only (see [#76](https://github.com/novelKR/CodeSpace/issues/76)) | source; runtime not run | separate CodeSpace proposals |
-| Rust's standard pipe and socket-pair creation on macOS is believed non-atomic, which would let concurrent CodeSpace spawns leak each other's stdio pipes | not read (unverified) | a later review |
+| Rust's standard pipe and socket-pair creation on macOS is believed non-atomic, which would let concurrent CodeSpace spawns leak each other's stdio pipes | not read (unverified) | read Rust std's macOS pipe and socket-pair creation at the toolchain CodeSpace uses; read-only, allowed now; record the result on #14 |
 | Codex `main` routes Linux PTY launches through a setup helper, which may break DevGuard's direct-child check | inference | DG-LINUX |
 | UDS mode needs a worker credential path, and a killed worker leaves Suspect attempts | source | owner decision 5.2-4 |
 | #12 and CodeSpace #75 are not merged, so `main` still reads as directive text | record | merge track |
@@ -300,9 +339,10 @@ Without a decision nothing else is blocked; governed execution simply stays unsu
 Evidence stays out of commits by repository rule. It lives in `<DEVGUARD_CHECKOUT>/evidence/`, and every directory
 has a `MANIFEST.json` with SHA-256 digests and sizes. At 15:10Z every manifest in the table except the last row (17
 manifests, 2,368 entries; a file listed by both a directory and its parent counts twice) was re-hashed against its
-files: no mismatch, no missing file, and no credential-pattern hit.
+files: no mismatch, no missing file, and no credential-pattern hit. A manifest is regenerated when records are added
+to its directory, so the digests below are values at 15:10Z.
 
-| Directory under `evidence/` | Content | `MANIFEST.json` SHA-256 |
+| Directory under `evidence/` | Content | `MANIFEST.json` SHA-256 at 15:10Z |
 | --- | --- | --- |
 | `cs-rg/boundary-revalidation-2026-09-27/` | intake, plan, requirements, findings, ownership map, upstream matrix, DevGuard mechanism map, gap resolution, decision packet, local handoff (90 files) | `b377b3c5ddb854738a160bfd14a73d1eded8e53b2424ce45b4f92233f75e8de1` |
 | `.../source/` | the owner's directive (English, as received) | `36c6b1e00781808627f3689af7e3b7f6cc9d51812f4f32c2e8526137edd587de` |
@@ -327,7 +367,7 @@ Not yet preserved: the CI of the open PRs #12, #13 and CodeSpace #75. Preserve i
 ### 7.1 Bounded diagnostics (protocols recorded, none run)
 | ID | Question | Protocol and blocker |
 | --- | --- | --- |
-| BD-1 | does Codex `main`'s `Attached` path deliver close-on-exec descriptors at their numbers, exactly once, under concurrent spawns and on error paths? | a scratch crate outside both repositories spawns a PTY child with two attached descriptors while another thread forks; it checks descriptor numbers and closure at exec. Blocked: building the Codex `main` workspace was not safe with the host's free memory at the time |
+| BD-1 | does Codex `main`'s `Attached` path deliver close-on-exec descriptors at their numbers, exactly once, under concurrent spawns and on error paths? | a scratch crate outside both repositories spawns a PTY child with two attached descriptors while another thread forks; it checks descriptor numbers and closure at exec. Blocked: building the Codex `main` workspace was not safe with the host's free memory at the time. Path forward: it meets the directive's conditions (section 2.3), so it can run once memory allows a single-job build of only Codex `main`'s `codex-utils-pty` crate. Its result alone cannot complete Y (section 8 of the analysis), so it waits behind decision 5.2-2 in priority |
 | BD-2 | reap-first leak | the **existence** of the sequence is established by existing native tests (analysis section 3). The **frequency** in real agent workloads was not measured: it needs a governed prototype, which is not authorized |
 | BD-3 | does a supervising helper preserve exit status, signals, job control and the process-group pin? | a prototype of a DevGuard helper change; premature before the owner chooses a direction |
 | RG | can a group anchor let the authority adopt survivors after the reap? | a DevGuard fixture in an isolated worktree, not committed; it needs the owner's choice 5.2-2 |
@@ -335,6 +375,7 @@ Not yet preserved: the CI of the open PRs #12, #13 and CodeSpace #75. Preserve i
 ## 8. Procedures
 
 ### 8.1 Merging
+This is the owner's merge rule (instruction of 2026-09-27 08:35Z), restated in full; GitHub has no other copy of it.
 1. Get the owner's approval naming the PR and its full head SHA.
 2. Right before merging, re-check head and base, and re-ask if the head changed.
 3. Merge with `gh pr merge <n> --repo <owner/repo> --merge --match-head-commit <sha>`. Never use `--admin`, `--auto`
@@ -364,6 +405,17 @@ Use `python3 evidence/tools/collect_ci_evidence.py collect <owner/repo> <run id>
 run, then `python3 evidence/tools/collect_ci_evidence.py manifest <directory> '<json metadata>'`. Evidence is
 preserved before any cleanup. Removing temporary instrumentation never deletes its evidence, and a regenerated log
 is a new record, not a restoration.
+
+The collector exists only in the persistent checkout (`<DEVGUARD_CHECKOUT>/evidence/tools/`), because `evidence/` is
+git-ignored. Without it, collect the same record with plain `gh` and write the files to a git-ignored directory:
+- `gh api repos/<owner/repo>/actions/runs/<id> > run.json`
+- `gh api "repos/<owner/repo>/actions/runs/<id>/jobs?per_page=100" > jobs.json`
+- `gh api repos/<owner/repo>/actions/runs/<id>/attempts/<n>/logs > logs-attempt-<n>.zip`
+- `gh api repos/<owner/repo>/actions/runs/<id>/artifacts > artifacts.json`
+- `gh api repos/<owner/repo>/actions/artifacts/<artifact id>/zip > <name>.zip` for each artifact
+
+Then record a SHA-256 list of every file (`shasum -a 256`). Evidence collected on another machine is not in the
+persistent checkout until it is copied there; say so on #14.
 
 ### 8.4 Delegated work
 - Give each delegated task the instruction revision it was issued under. When it starts, and again before its
