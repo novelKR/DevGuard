@@ -40,6 +40,10 @@ def check_repository(plan, directory):
     problems = []
     if read(directory / "binding.json") != ci_run.binding(plan, "repository"):
         problems.append("repository: its evidence is not bound to this run and attempt")
+    leg = read(directory / "leg.json")
+    if (not isinstance(leg, dict) or leg.get("schema") != ci_run.LEG_SCHEMA or leg.get("job") != "repository"
+            or leg.get("status") != "passed" or leg.get("exit_code") != 0):
+        problems.append("repository: its leg record does not show the repository runner passing")
     report = read(directory / "validate" / "report.json")
     if not isinstance(report, dict):
         return problems + ["repository: no validator report"], {}
@@ -75,13 +79,22 @@ def check_contracts(policy, plan, platform, directory):
         problems.append(f"{label}: the complete validator did not pass at the planned source")
     planned = ci_run.planned_suites(policy, plan, platform)
     leg = read(directory / "leg.json")
-    if not isinstance(leg, dict) or [entry.get("suite") for entry in leg.get("suites") or []] != planned:
-        problems.append(f"{label}: the runner did not run exactly the planned suites")
+    entries = leg.get("suites") if isinstance(leg, dict) else None
     results = {}
     for suite in planned:
         results[suite], found = ci_run.evaluate_suite(policy, platform, suite, read(directory / suite / "report.json"),
                                                       plan["source_sha"])
         problems += [f"{label}: {suite}: {problem}" for problem in found]
+    if (not isinstance(leg, dict) or leg.get("schema") != ci_run.LEG_SCHEMA or leg.get("job") != "contracts"
+            or leg.get("platform") != platform or leg.get("status") != "passed"
+            or not isinstance(entries, list) or [entry.get("suite") for entry in entries] != planned):
+        problems.append(f"{label}: the runner did not record exactly the planned suites passing")
+    else:
+        for entry in entries:
+            suite = entry["suite"]
+            if (entry.get("status") != results[suite] or entry.get("exit_code") != 0
+                    or entry.get("problems") != []):
+                problems.append(f"{label}: the leg record does not show {suite} passing as {results[suite]}")
     extra = sorted(path.parent.name for path in directory.glob("dg1-*/report.json") if path.parent.name not in planned)
     problems += [f"{label}: {suite} ran although the plan did not select it" for suite in extra]
     return problems, report.get("status") or "no report", results
@@ -102,7 +115,7 @@ def problems(results, plan_text, env, event, artifacts, root=ROOT):
     if not isinstance(plan, dict) or plan.get("run_attempt") != attempt:
         return [f"the plan is not from this attempt {attempt}; re-run all jobs"], []
     try:
-        derived, _ = ci_plan.prepare(root, env, event)
+        derived, changed_paths = ci_plan.prepare(root, env, event)
     except (ci_plan.PlanError, OSError, ValueError, KeyError, subprocess.CalledProcessError) as error:
         return [f"the plan cannot be derived again: {error}"], []
     if plan != derived:
@@ -116,14 +129,28 @@ def problems(results, plan_text, env, event, artifacts, root=ROOT):
         if outcome[name] != expected:
             found.append(f"{name}: {outcome[name]}, expected {expected}")
     names = artifact_names(artifacts)
-    current = {name for name in names if re.fullmatch(r".+-[1-9][0-9]*", name) and name.rsplit("-", 1)[1] == attempt}
+    prefixes = {"ci-plan", "ci-repository", *{"dg0-" + platform for platform in policy["contracts"]["platforms"]}}
+    current, earlier, unexpected = set(), set(), set()
+    for name in names:
+        matches = [prefix for prefix in prefixes if re.fullmatch(re.escape(prefix) + r"-[1-9][0-9]*", name)]
+        if len(matches) != 1:
+            unexpected.add(name)
+        elif name.rsplit("-", 1)[1] == attempt:
+            current.add(name)
+        else:
+            earlier.add(name)
     wanted = {f"ci-plan-{attempt}", f"ci-repository-{attempt}"}
     if plan["rust"]:
         wanted |= {f"dg0-{platform}-{attempt}" for platform in policy["contracts"]["platforms"]}
     found += [f"{name}: no artifact from this attempt" for name in sorted(wanted - current)]
     found += [f"{name}: an artifact the plan does not produce" for name in sorted(current - wanted)]
-    if f"ci-plan-{attempt}" in current and read(artifacts / f"ci-plan-{attempt}" / "plan.json") != plan:
-        found.append("ci-plan: the uploaded plan is not the planned one")
+    found += [f"{name}: an artifact name not bound to an attempt" for name in sorted(unexpected)]
+    plan_artifact = artifacts / f"ci-plan-{attempt}"
+    if f"ci-plan-{attempt}" in current:
+        if read(plan_artifact / "plan.json") != plan:
+            found.append("ci-plan: the uploaded plan is not the planned one")
+        if read(plan_artifact / "changed-paths.json") != changed_paths:
+            found.append("ci-plan: the uploaded changed paths are not the derived diff")
     if f"ci-repository-{attempt}" in current:
         repository, statuses = check_repository(plan, artifacts / f"ci-repository-{attempt}")
         found += repository
@@ -138,9 +165,8 @@ def problems(results, plan_text, env, event, artifacts, root=ROOT):
             table.append((f"contracts {platform} validator", validator))
             table += [(f"contracts {platform} {suite}", suites.get(suite, "not_selected_by_plan"))
                       for suite, spec in policy["suites"].items() if platform in spec["platforms"]]
-    ignored = sorted(set(names) - current)
-    if ignored:
-        table.append(("ignored: other attempts", ", ".join(ignored)))
+    if earlier:
+        table.append(("ignored: earlier attempts", ", ".join(sorted(earlier))))
     return found, table
 
 

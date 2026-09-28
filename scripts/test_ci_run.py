@@ -246,6 +246,32 @@ class Reports(Job):
         value["stages"][-1]["not_run_cases"][0]["path"] = ""
         self.assertEqual(self.check(value, "dg1-scopes")[0], "failed")
 
+    def test_an_allowed_case_must_be_in_its_own_incomplete_stage(self):
+        case = cargo_case("direct-build")
+        value = report("dg1-cargo", self.source, "incomplete", [case])
+        native = next(stage for stage in value["stages"] if stage["name"] == "native-cargo")
+        other = next(stage for stage in value["stages"] if stage["name"] == "cargo-plan")
+        native["not_run_cases"] = []
+        native["status"] = "passed"
+        other["not_run_cases"] = [case]
+        other["status"] = "incomplete"
+        status, problems = self.check(value, "dg1-cargo")
+        self.assertEqual(status, "failed")
+        self.assertTrue(any("not allowed to be not run in cargo-plan" in problem for problem in problems))
+
+    def test_each_incomplete_stage_needs_a_case_and_cases_cannot_repeat(self):
+        unexplained = report("dg1-cargo", self.source, "incomplete", [])
+        unexplained["stages"][0]["status"] = "incomplete"
+        status, problems = self.check(unexplained, "dg1-cargo")
+        self.assertEqual(status, "failed")
+        self.assertTrue(any("expected passed" in problem for problem in problems))
+        duplicated = report("dg1-cargo", self.source, "incomplete", [cargo_case("direct-build")])
+        native = next(stage for stage in duplicated["stages"] if stage["name"] == "native-cargo")
+        native["not_run_cases"].append(dict(native["not_run_cases"][0]))
+        status, problems = self.check(duplicated, "dg1-cargo")
+        self.assertEqual(status, "failed")
+        self.assertTrue(any("repeats a not-run case" in problem for problem in problems))
+
 
 class Summary(Job):
     def test_the_summary_says_what_ran_and_what_the_plan_left_out(self):

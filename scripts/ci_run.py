@@ -114,19 +114,29 @@ def evaluate_suite(policy, platform, suite, report, source):
     stages = report.get("stages") or []
     if [stage.get("name") for stage in stages] != [name for name, *_ in qualify.SUITES[suite]]:
         problems.append("the report does not show every stage of the suite")
-    cases = [case for stage in stages for case in stage.get("not_run_cases") or []]
     status = report.get("status")
+    seen, case_count = set(), 0
+    for stage in stages:
+        name = stage.get("name")
+        cases = stage.get("not_run_cases") or []
+        case_count += len(cases)
+        for case in cases:
+            encoded = canonical(case)
+            if encoded in seen:
+                problems.append(f"the report repeats a not-run case: {encoded}")
+            seen.add(encoded)
+            allowance = allowed(policy, platform, suite, case)
+            if allowance is None or allowance["stage"] != name:
+                problems.append(f"not allowed to be not run in {name} on {platform}: {encoded}")
+        expected = "incomplete" if cases else "passed"
+        if stage.get("status") != expected:
+            problems.append(f"stage {name} is {stage.get('status')}, expected {expected}")
     if status == "passed":
-        if cases or any(stage.get("status") != "passed" for stage in stages):
+        if case_count:
             problems.append("a passed report records a case as not run")
     elif status == "incomplete":
-        if not cases:
+        if not case_count:
             problems.append("an incomplete report names no case")
-        for case in cases:
-            if allowed(policy, platform, suite, case) is None:
-                problems.append(f"not allowed to be not run on {platform}: {canonical(case)}")
-        if any(stage.get("status") not in ("passed", "incomplete") for stage in stages):
-            problems.append("a stage did not pass")
     else:
         problems.append(f"status {status}")
     if problems:

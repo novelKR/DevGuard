@@ -91,7 +91,7 @@ class Run(unittest.TestCase):
         self.event = event
         self.env = {"GITHUB_EVENT_NAME": event_name, "GITHUB_SHA": self.source, "GITHUB_RUN_ID": "77",
                     "GITHUB_RUN_ATTEMPT": attempt, "GITHUB_REF": "refs/heads/main"}
-        self.plan, _ = ci_plan.prepare(self.root, self.env, event)
+        self.plan, self.changed_paths = ci_plan.prepare(self.root, self.env, event)
         self.results = {"plan": {"result": "success"}, "repository": {"result": "success"},
                         "contracts": {"result": "success" if self.plan["rust"] else "skipped"}}
         self.upload(attempt)
@@ -99,8 +99,11 @@ class Run(unittest.TestCase):
     def upload(self, attempt, plan=None):
         plan = plan or self.plan
         write(self.artifacts / f"ci-plan-{attempt}" / "plan.json", plan)
+        write(self.artifacts / f"ci-plan-{attempt}" / "changed-paths.json", self.changed_paths)
         repository = self.artifacts / f"ci-repository-{attempt}"
         write(repository / "binding.json", ci_run.binding(plan, "repository"))
+        write(repository / "leg.json", {"schema": ci_run.LEG_SCHEMA, "job": "repository",
+                                         "status": "passed", "exit_code": 0})
         write(repository / "validate" / "report.json",
               validator(self.source, plan["repository_stages"], plan["whitespace"]))
         if not plan["rust"]:
@@ -110,14 +113,18 @@ class Run(unittest.TestCase):
             write(directory / "binding.json", ci_run.binding(plan, "contracts", platform))
             write(directory / "ci" / "report.json", validator(self.source, validate.DEFAULT_STAGES))
             suites = ci_run.planned_suites(POLICY, plan, platform)
-            write(directory / "leg.json", {"suites": [{"suite": suite} for suite in suites]})
+            entries = []
             for suite in suites:
                 cases = []
                 if suite == "dg1-cargo":
                     cases = [{"file": f"raw/native-cargo/{name}.json", "path": "", "reason": ALLOWED_CARGO["reason"]}
                              for name in ALLOWED_CARGO["cases"]]
+                status = "incomplete-allowed" if cases else "passed"
+                entries.append({"suite": suite, "status": status, "exit_code": 0, "problems": []})
                 write(directory / suite / "report.json",
                       suite_report(suite, self.source, "incomplete" if cases else "passed", cases))
+            write(directory / "leg.json", {"schema": ci_run.LEG_SCHEMA, "job": "contracts",
+                                             "platform": platform, "status": "passed", "suites": entries})
 
     def problems(self, plan=None, results=None, env=None, event=None):
         plan_text = json.dumps(plan if plan is not None else self.plan)
@@ -202,7 +209,7 @@ class Evidence(Run):
         self.upload("2")
         found, table = gate.problems(self.results, json.dumps(self.plan), self.env, self.event, self.artifacts, self.root)
         self.assertEqual(found, [])
-        self.assertEqual(table[-1][0], "ignored: other attempts")
+        self.assertEqual(table[-1][0], "ignored: earlier attempts")
 
     def test_a_current_name_with_an_earlier_binding_fails(self):
         self.pull_request("crates/cargo/src/lib.rs")
@@ -222,6 +229,34 @@ class Evidence(Run):
         self.pull_request("docs/handoff/new.md")
         write(self.artifacts / "ci-plan-2" / "plan.json", dict(self.plan, profile="full"))
         self.assertEqual(self.problems(), ["ci-plan: the uploaded plan is not the planned one"])
+
+    def test_the_uploaded_changed_paths_must_be_the_derived_diff(self):
+        self.pull_request("docs/handoff/new.md")
+        path = self.artifacts / "ci-plan-2" / "changed-paths.json"
+        path.unlink()
+        self.assertEqual(self.problems(), ["ci-plan: the uploaded changed paths are not the derived diff"])
+        write(path, ["another/path"])
+        self.assertEqual(self.problems(), ["ci-plan: the uploaded changed paths are not the derived diff"])
+
+    def test_an_artifact_without_a_recognized_attempt_binding_fails(self):
+        self.pull_request("docs/handoff/new.md")
+        write(self.artifacts / "diagnostic" / "record.json", {})
+        self.assertEqual(self.problems(), ["diagnostic: an artifact name not bound to an attempt"])
+        shutil.rmtree(self.artifacts / "diagnostic")
+        write(self.artifacts / "ci-plan-latest" / "record.json", {})
+        self.assertEqual(self.problems(), ["ci-plan-latest: an artifact name not bound to an attempt"])
+
+    def test_each_leg_record_must_show_its_runner_passing(self):
+        self.pull_request("crates/cargo/src/lib.rs")
+        repository = self.artifacts / "ci-repository-2" / "leg.json"
+        repository.unlink()
+        self.assertIn("repository: its leg record does not show the repository runner passing", self.problems())
+        self.upload("2")
+        contracts = self.artifacts / f"dg0-{MACOS}-2" / "leg.json"
+        leg = json.loads(contracts.read_text())
+        leg["suites"][0]["exit_code"] = 1
+        write(contracts, leg)
+        self.assertTrue(any("leg record does not show" in problem for problem in self.problems()))
 
     def test_repository_stages_must_be_exactly_the_planned_ones(self):
         self.pull_request("docs/handoff/new.md")
