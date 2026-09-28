@@ -19,7 +19,7 @@
 | V-LINUX | 실제 Linux scope와 제품 조합 | DGL-C05/C06 controller·ancestor·권한·자손·SLO | 미구현; fake cgroup과 분리 |
 | V-CACHE / V-ADAPTER | cache/tool/executor | DGC-C06, DGA-C02/C04/C06/C08의 해당 조합 | 미구현 |
 
-상태는 `passed`, `failed`, `not_run`, `inconclusive`를 구분한다. 기존 도구가 `incomplete`를 출력하면 그 값을 보존하고 어떤 필수 범위가 미완료인지 덧붙인다. 실행하지 않은 시험과 환경 부적합을 통과로 바꾸지 않는다. 새 suite는 발견/실행 case 수가 0일 때 실패해야 한다.
+상태는 `passed`, `failed`, `not_run`, `inconclusive`를 구분한다. CI 계획이 제외한 단계나 suite는 `passed`가 아니라 `not_selected_by_plan`으로 기록한다. 기존 도구가 `incomplete`를 출력하면 그 값을 보존하고 어떤 필수 범위가 미완료인지 덧붙인다. 실행하지 않은 시험과 환경 부적합을 통과로 바꾸지 않는다. 새 suite는 발견/실행 case 수가 0일 때 실패해야 한다.
 
 ## 현재 재현 가능한 명령
 
@@ -41,9 +41,12 @@ python3 scripts/qualify.py dg1-self-use --offline
 python3 scripts/qualify.py dg1-upgrade --offline
 python3 scripts/qualify.py dg1-macos --offline
 git diff --check
+python3 scripts/validate.py --stages whitespace,source-contract,documentation --diff-base origin/main
+python3 scripts/ci_plan.py --base origin/main --head HEAD
+python3 -B -m unittest discover -s scripts -p 'test_ci_*.py'
 ```
 
-locked dependency가 없으면 offline을 제거한다. `--output`은 존재하지 않는 ignored repo 내부 경로만 사용한다. 정상 PATH가 다른 Rust면 설치된 1.95.0 toolchain을 먼저 둔다. mismatch 허용 결과는 supplemental이며 지정 toolchain qualification이 아니다. 이 검사는 OS/foreground/self-use를 `not_run`으로 남긴다.
+locked dependency가 없으면 offline을 제거한다. `--output`은 존재하지 않는 ignored repo 내부 경로만 사용한다. 정상 PATH가 다른 Rust면 설치된 1.95.0 toolchain을 먼저 둔다. mismatch 허용 결과는 supplemental이며 지정 toolchain qualification이 아니다. 이 검사는 OS/foreground/self-use를 `not_run`으로 남긴다. `--stages`는 지정한 validator 단계만 고정된 순서로 실행하며, Cargo 단계를 지정했을 때만 Rust toolchain을 확인한다. 일부 단계만 실행한 결과는 DG-0을 주장하지 않는다. `--diff-base`는 `whitespace` 단계(`git diff --check`)를 commit된 변경으로 한정한다. `ci_plan.py --base`는 그 diff에 대해 CI가 만들 계획을 출력한다.
 
 CodeSpace root, Node **24.21.0**, npm **11.19.0**, Python 3.11 이상(CI 3.14):
 
@@ -57,7 +60,7 @@ python3 -B docs-site/scripts/site.py check
 
 `DOCS_PYTHON`으로 Python을 명시할 수 있다. 번역 pair를 실제 대조한 뒤에만 `python3 -B scripts/check_docs.py record --id devguard-integration`으로 해당 pair의 hash를 갱신한다. 전체 registry를 일괄 재기록하지 않는다. 사이트 source Markdown·언어 이동·긴 표·desktop/narrow·light/dark를 확인한다. 문서 PR 병합 후 별도 main CI와 CodeSpace 문서 배포까지 확인해야 준비 단계가 완료된다.
 
-현재 upstream runtime gate는 다음과 같다. **이번 문서 변경에서는 기존 CI가 이를 실행하며, 아래 명령 존재를 새 DevGuard 기능 구현으로 해석하지 않는다.**
+현재 upstream runtime gate는 다음과 같다. **아래 명령 존재를 새 DevGuard 기능 구현으로 해석하지 않는다.**
 
 ```sh
 python3 scripts/validate-upstream.py all
@@ -65,7 +68,26 @@ python3 scripts/validate-upstream.py macos-core dependencies
 python3 scripts/validate-upstream.py linux-isolation
 ```
 
-첫 명령은 macos-core를 포함하지 않는다. macOS에서 Linux isolation skip/incomplete는 실제 Linux 검증을 대체하지 않는다. Linux controller와 sandbox 권한이 있는 환경의 결과를 별도 확인한다. target은 기존 `target/upstream-validation`, 보호 보고서는 `target/upstream-reports/local` 규칙을 유지한다.
+첫 명령은 macos-core를 포함하지 않는다. macOS에서 Linux isolation skip/incomplete는 실제 Linux 검증을 대체하지 않는다. Linux controller와 sandbox 권한이 있는 환경의 결과를 별도 확인한다. target은 기존 `target/upstream-validation`, 보호 보고서는 `target/upstream-reports/local` 규칙을 유지한다. CodeSpace CI는 변경 경로로 Rust leg를 계획한다. 문서만 바꾼 변경은 Rust leg를 선택하지 않으며, policy scan·format과 pin 검사·결과 gate와 별도 문서 사이트 workflow는 그대로 실행한다. 예약·수동 실행은 전체를 실행한다.
+
+## CI 선택
+
+DevGuard CI는 `scripts/ci-policy.json`이 변경 경로를 분류한 결과에 따라, 변경이 영향을 줄 수 있는 검사만 실행한다. `scripts/ci_plan.py`가 계획을 만들고 `scripts/ci_run.py`가 각 job의 몫을 실행하며, `scripts/check_ci_results.py`가 **Required checks** job에서 계획의 이행을 강제한다.
+
+| 변경 | Rust 없는 저장소 검사 | Rust 검증과 기능 suite |
+| --- | --- | --- |
+| 이력 기록(`docs/handoff/**`) | whitespace, documentation | 선택하지 않음 |
+| 규범 입력: 설계 문서와 그 기록, 계약, 운영, 계획, 번역, milestone ledger, `AGENTS.md`, `README.md`, `LICENSE`, `NOTICE` | whitespace와 documentation. 승인 설계·`docs/design-source.json`·`milestones.json`이 바뀌면 source-contract도 실행 | 선택하지 않음 |
+| workspace crate | whitespace | macOS와 Ubuntu의 전체 validator, 그리고 package나 먼저 빌드하는 binary가 그 crate에 의존하는 기능 suite |
+| CI·계획·검증·qualification script, Cargo·toolchain·Git 입력, `.devguard.toml`, 어느 분류에도 속하지 않는 경로 | 모든 비 Rust 단계 | 전체 validator와 모든 suite |
+
+- whitespace 검사는 변경에 대한 `git diff --check`이며, 신뢰할 base가 없으면 tree 전체를 검사한다. tree 전체 검사는 policy가 SHA-256으로 고정한 파일만 예외로 둔다.
+- pull request와 `main` push는 계획대로 실행한다. base가 없거나 신뢰할 수 없을 때, diff가 비었을 때, 계획 입력이 바뀌었을 때도 전체를 실행하므로 pull request가 자기 검사를 줄일 수 없다. 예약·수동 실행은 항상 전체다. `merge_group`을 포함한 그 밖의 event에는 계획이 없으며 gate가 실패한다.
+- 매일 예약된 전체 실행은 이 모델을 위한 보완 통제다. pull request와 `main` push가 영향받는 검사만 실행하는 동안, 두 플랫폼에서 모든 native suite를 포함해 저장소 전체를 계속 qualification한다. 문서만 바꾼 병합은 `main`에서도 문서 검사만 실행한다.
+- Rust 변경은 여전히 전체 validator를 실행하며, workspace clippy와 시험의 범위는 그대로다. 선택하는 것은 기능 suite뿐이다.
+- 계획이 제외한 단계나 suite는 `not_selected_by_plan`으로 기록한다. hosted runner 예외, 즉 `--allow-incomplete`로 실행하는 suite는 정확한 case와 이유와 함께 policy에 나열한다. 그 밖의 case가 `not_run`으로 기록되면 실행은 실패한다.
+- gate는 계획을 다시 도출하며, 이 commit·event·policy digest에 묶인 현재 run과 현재 attempt의 증거만 받는다. 실패한 job만 다시 실행하지 말고 모든 job을 다시 실행한다.
+- 추적되는 경로가 어느 분류에도 속하지 않거나, 문서 pattern이 아무 파일과도 맞지 않거나, 고정한 예외 파일의 byte가 바뀌면 policy 시험이 실패하므로, 그런 변경은 policy와 함께 검토한다.
 
 ## 이번 문서의 정합성 검사
 
@@ -81,7 +103,7 @@ V-DOC-DG는 scripts/check_docs.py와 수동 의미 검토로 영어/한국어 ha
 
 ## 향후 suite와 장애 주입 계약
 
-scripts/qualify.py dg1-authority --offline은 C01 설정·저장소, scripts/qualify.py dg1-auth --offline은 C02 인증·transport, scripts/qualify.py dg1-probes --offline은 C03 native 증거, scripts/qualify.py dg1-scopes --offline은 C04 정책·scope 증거, scripts/qualify.py dg1-launch --offline은 C05 launch helper, scripts/qualify.py dg1-reconcile --offline은 C06 대조, scripts/qualify.py dg1-cli --offline은 C07 명령행 owner, scripts/qualify.py dg1-cargo --offline은 C08 Cargo adapter, scripts/qualify.py dg1-bootstrap --offline은 C09 설치, scripts/qualify.py dg1-self-use --offline은 C10 부모 lease와 후보 authority, scripts/qualify.py dg1-upgrade --offline은 C11 upgrade와 repair, scripts/qualify.py dg1-macos --offline은 C12 SLO harness 검증을 제공하며, 그 protocol은 scripts/measure.py macos이다. 그 밖의 DevGuard suite와 CodeSpace scripts/qualify-devguard.py는 해당 작업에서 제공할 예정 인터페이스다. 각 구현 PR이 실제 CLI·case inventory·nonzero case assertion·timeout·log 수집·격리 cleanup을 구현하고 제공 명령을 갱신해야 한다. macOS/Ubuntu CI는 전체 validator와 이식 가능한 두 기능 suite를 실행하고 각각의 report·log를 보존한다. Native suite는 macOS CI에서만 실행하고 그 밖의 환경에서는 `not_run`으로 기록한다. 증거를 제공할 수 없는 플랫폼에서 통과로 처리하지 않는다. 각 native 단계는 만들어야 할 raw receipt를 선언한다. 어떤 경우를 `not_run`으로 기록한 receipt가 있으면 suite는 `passed`가 아니라 `incomplete`가 된다.
+scripts/qualify.py dg1-authority --offline은 C01 설정·저장소, scripts/qualify.py dg1-auth --offline은 C02 인증·transport, scripts/qualify.py dg1-probes --offline은 C03 native 증거, scripts/qualify.py dg1-scopes --offline은 C04 정책·scope 증거, scripts/qualify.py dg1-launch --offline은 C05 launch helper, scripts/qualify.py dg1-reconcile --offline은 C06 대조, scripts/qualify.py dg1-cli --offline은 C07 명령행 owner, scripts/qualify.py dg1-cargo --offline은 C08 Cargo adapter, scripts/qualify.py dg1-bootstrap --offline은 C09 설치, scripts/qualify.py dg1-self-use --offline은 C10 부모 lease와 후보 authority, scripts/qualify.py dg1-upgrade --offline은 C11 upgrade와 repair, scripts/qualify.py dg1-macos --offline은 C12 SLO harness 검증을 제공하며, 그 protocol은 scripts/measure.py macos이다. 그 밖의 DevGuard suite와 CodeSpace scripts/qualify-devguard.py는 해당 작업에서 제공할 예정 인터페이스다. 각 구현 PR이 실제 CLI·case inventory·nonzero case assertion·timeout·log 수집·격리 cleanup을 구현하고 제공 명령을 갱신해야 한다. CI는 계획이 선택한 validator와 기능 suite를 실행하고([CI 선택](#ci-선택) 참조) 각각의 report·log를 보존한다. Native suite는 macOS CI에서만 실행하고 그 밖의 환경에서는 `not_run`으로 기록한다. 증거를 제공할 수 없는 플랫폼에서 통과로 처리하지 않는다. 각 native 단계는 만들어야 할 raw receipt를 선언한다. 어떤 경우를 `not_run`으로 기록한 receipt가 있으면 suite는 `passed`가 아니라 `incomplete`가 된다.
 
 C03 증거는 다음 파일에 기록한다.
 - **Raw receipt** (보고서의 `raw/` 디렉터리): 단위를 포함한 boot ID·시계 읽기, 호스트 용량, zombie·reap·거부 관측을 포함한 반복 프로세스 정체성, 계산된 비율을 포함한 native 압력 읽기, 마지막 sample 이후 admission이 닫히기까지 측정한 시간, 주입한 실패부터 Critical까지 걸린 서비스 loop 시간과 멈춘 probe에 대한 서비스 loop의 동작.
@@ -244,6 +266,6 @@ DG-1에서는 standalone CLI/daemon의 대응되는 조회·종료와 개발/for
 
 raw pressure/latency/jobs 전환, peak memory, 완료 시간·처리량, 거절 이유, 큐/버퍼 peak, attempt/slot/lease lifecycle, 장애 지점, 실제 종료/readback을 저장한다. report·로그·원시 파일 manifest/hash를 함께 보존하고 token/credential/사용자 payload를 정제한다. source와 evidence를 같은 의미로 취급하지 않는다.
 
-qualification은 정확한 artifact·정책·환경 조합에 귀속한다. documentation-only head에서 계약 회귀가 통과했다고 기존 binary의 SLO를 새로 측정한 것처럼 표시하지 않는다. CI run URL·job·event·head·artifact 이름을 PR에 연결하고 PR head 검사와 merge/push-main 검사를 구분한다. 이번 승인 범위는 PR 검사·정상 병합·별도 main 검사와 증거 보존/정리까지다.
+qualification은 정확한 artifact·정책·환경 조합에 귀속한다. documentation-only head에서 계약 회귀가 통과했다고 기존 binary의 SLO를 새로 측정한 것처럼 표시하지 않는다. CI run URL·job·event·head·artifact 이름과 CI 계획을 PR에 연결하고 PR head 검사와 merge/push-main 검사를 구분한다. 이번 승인 범위는 PR 검사·정상 병합·별도 main 검사와 증거 보존/정리까지다.
 
 C10 기능 부모와 실제 자기 적용 receipt를 보존하고 C12 측정 artifact/정책/환경만 승격한다. 현재 대상은 8논리CPU/16GiB macOS다. foreground visibility/focus는 전체 측정 구간에서 검증하며 무효이면 inconclusive다. 정리 전 raw/report/manifest/log를 worktree 밖 보호 경로로 복사하고 hash를 확인한다.
