@@ -19,7 +19,7 @@ Preserve the approved [design SLOs](../design.md#verification-and-promotion). De
 | V-LINUX | Actual Linux scopes/product | DGL-C05/C06 controllers, ancestors, privileges, descendants and SLO | Future; fake cgroups do not qualify |
 | V-CACHE / V-ADAPTER | Cache/tools/executors | DGC-C06; DGA-C02/C04/C06/C08 supported combinations | Future |
 
-Keep `passed`, `failed`, `not_run`, `inconclusive` distinct. Preserve an existing tool's `incomplete` status and identify missing requirements. Zero discovered/executed cases cannot pass a suite.
+Keep `passed`, `failed`, `not_run`, `inconclusive` distinct. A stage or suite that a CI plan leaves out is `not_selected_by_plan`, never `passed`. Preserve an existing tool's `incomplete` status and identify missing requirements. Zero discovered/executed cases cannot pass a suite.
 
 ## Available commands
 
@@ -41,9 +41,12 @@ python3 scripts/qualify.py dg1-self-use --offline
 python3 scripts/qualify.py dg1-upgrade --offline
 python3 scripts/qualify.py dg1-macos --offline
 git diff --check
+python3 scripts/validate.py --stages whitespace,source-contract,documentation --diff-base origin/main
+python3 scripts/ci_plan.py --base origin/main --head HEAD
+python3 -B -m unittest discover -s scripts -p 'test_ci_*.py'
 ```
 
-Remove offline only when locked dependencies must be downloaded. Report output must be a new ignored path inside the checkout. Put the installed pinned toolchain first in PATH. Toolchain mismatch results are supplemental/incomplete, not qualification. Bootstrap uses one Cargo job and one test thread. The existing validator leaves unmeasured runtime scopes `not_run`.
+Remove offline only when locked dependencies must be downloaded. Report output must be a new ignored path inside the checkout. Put the installed pinned toolchain first in PATH. Toolchain mismatch results are supplemental/incomplete, not qualification. Bootstrap uses one Cargo job and one test thread. The existing validator leaves unmeasured runtime scopes `not_run`. `--stages` runs only the named validator stages, in their fixed order, and probes the Rust toolchain only when a Cargo stage is named; a run of only some stages does not claim DG-0. `--diff-base` limits the `whitespace` stage (`git diff --check`) to the committed change. `ci_plan.py --base` prints the plan CI would make for that diff.
 
 CodeSpace requires Node **24.21.0**, npm **11.19.0**, Python 3.11+ (CI 3.14):
 
@@ -65,7 +68,26 @@ python3 scripts/validate-upstream.py macos-core dependencies
 python3 scripts/validate-upstream.py linux-isolation
 ```
 
-`all` does not include macos-core. Linux skips on macOS do not substitute for actual Linux evidence. Preserve `target/upstream-validation` and protected `target/upstream-reports/local` behavior. Existing CI checks still run for documentation PRs.
+`all` does not include macos-core. Linux skips on macOS do not substitute for actual Linux evidence. Preserve `target/upstream-validation` and protected `target/upstream-reports/local` behavior. CodeSpace CI plans its Rust legs from the changed paths: a documentation-only change selects none, while its policy scan, format and pin checks, its result gate and the separate documentation-site workflow still run. Its scheduled and manual runs are full.
+
+## CI selection
+
+DevGuard CI runs the checks a change can affect, as `scripts/ci-policy.json` classifies its changed paths. `scripts/ci_plan.py` makes the plan, `scripts/ci_run.py` runs each job's share, and `scripts/check_ci_results.py` enforces it in the job **Required checks**.
+
+| Change | Repository checks, without Rust | Rust validation and functional suites |
+| --- | --- | --- |
+| Historical records (`docs/handoff/**`) | whitespace, documentation | not selected |
+| Normative inputs: the design documents and their record, contracts, operations, planning, translations, the milestone ledger, `AGENTS.md`, `README.md`, `LICENSE`, `NOTICE` | whitespace and documentation; source-contract as well when the approved design, `docs/design-source.json` or `milestones.json` changes | not selected |
+| A workspace crate | whitespace | the complete validator on macOS and Ubuntu, and each functional suite whose packages, or the binaries it builds first, depend on the crate |
+| CI, planning, validation and qualification scripts, Cargo, toolchain and Git inputs, `.devguard.toml`, or a path in no class | every non-Rust stage | the complete validator and every suite |
+
+- The whitespace check is `git diff --check` over the change, or over the whole tree when there is no trusted base. The whole tree exempts only the files the policy pins by SHA-256.
+- Pull requests and pushes to `main` are planned. A plan is also full when its base is missing or untrusted, its diff is empty, or it changes a planning input, so a pull request cannot narrow its own checks. Scheduled and manual runs are always full. Any other event, `merge_group` included, has no plan and fails the gate.
+- The daily scheduled full run is a compensating control for this model: it keeps qualifying the whole repository on both platforms, every native suite included, while pull requests and `main` pushes run only affected checks. A documentation-only merge runs only the documentation checks on `main`.
+- A Rust change still runs the complete validator, whose workspace clippy and tests keep their full scope; only the functional suites are selected.
+- A stage or suite the plan leaves out is recorded `not_selected_by_plan`. The hosted-runner exceptions, suites run with `--allow-incomplete`, are listed in the policy with their exact cases and reasons; any other case recorded as `not_run` fails the run.
+- The gate derives the plan again and accepts only evidence of the current run and attempt, bound to its commit, event and policy digest. Re-run every job, not only the failed ones.
+- The policy's tests fail when a tracked path is in no class, a document pattern matches nothing or a pinned exemption's bytes change, so such a change is reviewed together with the policy.
 
 ## Document consistency
 
@@ -77,7 +99,7 @@ For the preparation PRs, preserve runtime/Cargo/journal state. Documentation che
 
 ## Planned suites and fault injection
 
-`scripts/qualify.py dg1-authority --offline` is available for C01 configuration/storage, `scripts/qualify.py dg1-auth --offline` for C02 authentication/transport, `scripts/qualify.py dg1-probes --offline` for C03 native evidence, `scripts/qualify.py dg1-scopes --offline` for C04 policy and scope evidence, `scripts/qualify.py dg1-launch --offline` for the C05 launch helper, `scripts/qualify.py dg1-reconcile --offline` for C06 reconciliation, `scripts/qualify.py dg1-cli --offline` for the C07 command-line owner, `scripts/qualify.py dg1-cargo --offline` for the C08 Cargo adapters, `scripts/qualify.py dg1-bootstrap --offline` for C09 installation, `scripts/qualify.py dg1-self-use --offline` for C10 parent leases and candidate authorities, `scripts/qualify.py dg1-upgrade --offline` for C11 upgrade and repair, and `scripts/qualify.py dg1-macos --offline` for the C12 SLO harness, whose protocol is `scripts/measure.py macos`. Other DevGuard suites and CodeSpace `scripts/qualify-devguard.py <suite>` remain planned interfaces until supplied by their work units. Each implementation PR supplies the actual interface, nonzero case inventory, timeouts, logs, isolation and cleanup, then updates its task command documentation. macOS/Ubuntu CI retains the full validator and both portable functional suites, preserving their separate reports and logs. Native suites run on macOS CI only and record `not_run` elsewhere; they never pass on a platform that cannot supply the evidence. Each native stage declares the raw receipts it must produce. A receipt that records a case as `not_run` makes the suite `incomplete`, not `passed`.
+`scripts/qualify.py dg1-authority --offline` is available for C01 configuration/storage, `scripts/qualify.py dg1-auth --offline` for C02 authentication/transport, `scripts/qualify.py dg1-probes --offline` for C03 native evidence, `scripts/qualify.py dg1-scopes --offline` for C04 policy and scope evidence, `scripts/qualify.py dg1-launch --offline` for the C05 launch helper, `scripts/qualify.py dg1-reconcile --offline` for C06 reconciliation, `scripts/qualify.py dg1-cli --offline` for the C07 command-line owner, `scripts/qualify.py dg1-cargo --offline` for the C08 Cargo adapters, `scripts/qualify.py dg1-bootstrap --offline` for C09 installation, `scripts/qualify.py dg1-self-use --offline` for C10 parent leases and candidate authorities, `scripts/qualify.py dg1-upgrade --offline` for C11 upgrade and repair, and `scripts/qualify.py dg1-macos --offline` for the C12 SLO harness, whose protocol is `scripts/measure.py macos`. Other DevGuard suites and CodeSpace `scripts/qualify-devguard.py <suite>` remain planned interfaces until supplied by their work units. Each implementation PR supplies the actual interface, nonzero case inventory, timeouts, logs, isolation and cleanup, then updates its task command documentation. CI runs the validator and the functional suites its plan selects (see [CI selection](#ci-selection)), preserving their separate reports and logs. Native suites run on macOS CI only and record `not_run` elsewhere; they never pass on a platform that cannot supply the evidence. Each native stage declares the raw receipts it must produce. A receipt that records a case as `not_run` makes the suite `incomplete`, not `passed`.
 
 C03 evidence is recorded in these files:
 - **Raw receipts** (in the report's `raw/` directory): boot ID and clock readings with units, host capacity, repeated process identities, including zombie, reaped and refused observations, native pressure readings with their derived rates, the measured time from the last sample to closed admission, and the service loop's time from an injected failure to Critical and its behavior with a stuck probe.
@@ -240,4 +262,4 @@ Manifest: source heads and dirty fingerprints, actual daemon/helper hashes, clie
 
 Retain raw latency/pressure/jobs, peak memory, completion time/throughput, refusal reasons, queue/buffer peaks, attempt/slot/lease transitions, fault points and termination/readback evidence. Hash reports and raw files, redact credentials and payloads, and preserve them outside disposable worktrees before cleanup. A documentation-only commit does not remeasure an old binary.
 
-Record CI URL/job/event/head/artifact and distinguish PR checks from merge/push-main checks. At C10 preserve a functionally tested parent and real self-use receipts. At C12 promote only the artifact/policy/environment actually measured. Implementation status and platform qualification remain separate; Linux and CodeSpace runtime stay unqualified by DG-1.
+Record CI URL/job/event/head/artifact and the CI plan, and distinguish PR checks from merge/push-main checks. At C10 preserve a functionally tested parent and real self-use receipts. At C12 promote only the artifact/policy/environment actually measured. Implementation status and platform qualification remain separate; Linux and CodeSpace runtime stay unqualified by DG-1.

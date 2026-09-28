@@ -1,0 +1,165 @@
+{
+  "schema": "devguard-ci-policy/v1",
+  "classes": {
+    "full": [
+      ".github/**",
+      "scripts/**",
+      "**/Cargo.toml",
+      "**/Cargo.lock",
+      "**/rust-toolchain",
+      "**/rust-toolchain.toml",
+      "**/.cargo/**",
+      "**/.gitignore",
+      "**/.gitattributes",
+      ".gitmodules",
+      ".devguard.toml"
+    ],
+    "historical": [
+      "docs/handoff/**"
+    ],
+    "normative": [
+      "AGENTS.md",
+      "README.md",
+      "LICENSE",
+      "NOTICE",
+      "milestones.json",
+      "docs/design.ko.md",
+      "docs/design-source.json",
+      "docs/design.md",
+      "docs/design-revision-1.md",
+      "docs/contracts.md",
+      "docs/operations.md",
+      "docs/milestones.md",
+      "docs/translations.json",
+      "docs/planning/**",
+      "docs/ko/**"
+    ]
+  },
+  "components": {
+    "contract": ["crates/contract/**"],
+    "core": ["crates/core/**"],
+    "macos": ["crates/macos/**"],
+    "daemon": ["crates/daemon/**"],
+    "client": ["crates/client/**"],
+    "launch": ["crates/launch/**"],
+    "cli": ["crates/cli/**"],
+    "cargo": ["crates/cargo/**"],
+    "qualify": ["crates/qualify/**"]
+  },
+  "repository": {
+    "always": ["whitespace"],
+    "documents": ["documentation"],
+    "source_contract_inputs": ["docs/design-source.json", "docs/design.ko.md", "milestones.json"],
+    "full": ["whitespace", "source-contract", "documentation", "protocol-analysis"]
+  },
+  "contracts": {
+    "platforms": ["macos-14", "ubuntu-24.04"]
+  },
+  "suites": {
+    "dg1-authority": {
+      "platforms": ["macos-14", "ubuntu-24.04"],
+      "components": ["client", "contract", "core", "daemon", "macos"]
+    },
+    "dg1-auth": {
+      "platforms": ["macos-14", "ubuntu-24.04"],
+      "components": ["client", "contract", "core", "daemon", "macos"]
+    },
+    "dg1-probes": {
+      "platforms": ["macos-14"],
+      "components": ["client", "contract", "core", "daemon", "macos"]
+    },
+    "dg1-scopes": {
+      "platforms": ["macos-14"],
+      "components": ["contract", "core", "macos"]
+    },
+    "dg1-launch": {
+      "platforms": ["macos-14"],
+      "components": ["client", "contract", "core", "daemon", "launch", "macos"]
+    },
+    "dg1-reconcile": {
+      "platforms": ["macos-14"],
+      "components": ["client", "contract", "core", "daemon", "launch", "macos"]
+    },
+    "dg1-cli": {
+      "platforms": ["macos-14"],
+      "components": ["cargo", "cli", "client", "contract", "core", "daemon", "launch", "macos"]
+    },
+    "dg1-cargo": {
+      "platforms": ["macos-14"],
+      "components": ["cargo", "cli", "client", "contract", "core", "daemon", "launch", "macos"]
+    },
+    "dg1-bootstrap": {
+      "platforms": ["macos-14"],
+      "components": ["client", "contract", "core", "daemon", "macos"]
+    },
+    "dg1-self-use": {
+      "platforms": ["macos-14"],
+      "components": ["cargo", "cli", "client", "contract", "core", "daemon", "launch", "macos"]
+    },
+    "dg1-upgrade": {
+      "platforms": ["macos-14"],
+      "components": ["cargo", "cli", "client", "contract", "core", "daemon", "macos"]
+    },
+    "dg1-macos": {
+      "platforms": ["macos-14"],
+      "components": ["cargo", "cli", "client", "contract", "core", "daemon", "launch", "macos", "qualify"]
+    }
+  },
+  "allowances": {
+    "macos-14": {
+      "dg1-scopes": [
+        {
+          "stage": "native-scopes",
+          "cases": ["scope-refusals"],
+          "path": "unclamped_root",
+          "reason": "the environment clamps every child of this harness, so an unclamped root cannot be produced",
+          "source": "crates/macos/tests/scopes.rs"
+        }
+      ],
+      "dg1-launch": [
+        {
+          "stage": "native-launch",
+          "cases": ["claimed-then-refused"],
+          "path": "",
+          "reason": "the environment clamps every child of this harness, so an unclamped helper cannot be produced",
+          "source": "crates/launch/tests/launch.rs"
+        }
+      ],
+      "dg1-cargo": [
+        {
+          "stage": "native-cargo",
+          "cases": ["cargo-test", "concurrent-consumers", "direct-build", "explicit-jobs", "inherited-jobserver",
+                    "inherited-pipe-jobserver", "nested-cargo", "pipeline-cancelled", "pipeline-shared",
+                    "stale-jobserver"],
+          "path": "",
+          "reason": "this host's work capacity cannot fit the Cargo jobs the case needs",
+          "source": "crates/cli/tests/cargo.rs"
+        }
+      ],
+      "dg1-bootstrap": [
+        {
+          "stage": "native-install",
+          "cases": ["launchd-lifecycle"],
+          "path": "",
+          "reason": "this session has no launchd gui domain",
+          "source": "crates/daemon/tests/install.rs"
+        }
+      ],
+      "dg1-macos": [
+        {
+          "stage": "native-fixture",
+          "cases": ["fixture-check"],
+          "path": "",
+          "reason": "the fixture needs Google Chrome on macOS",
+          "source": "scripts/test_fixture.py"
+        }
+      ]
+    }
+  },
+  "whitespace": {
+    "tree_exemptions": {
+      "LICENSE": "5842a12e4cc14135dffb108b7e7d57de5aa4834c070c7e0928a290238fb76a71",
+      "docs/design.ko.md": "97b67a1f9518c1781156a4b3b26829b285f84f5c9a44da60f3c5dcf1bc768df8"
+    }
+  }
+}
