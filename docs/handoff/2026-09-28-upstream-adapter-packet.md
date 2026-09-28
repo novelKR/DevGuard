@@ -153,7 +153,7 @@ existing APIs.
 
 | Boundary | Domain owner | Mechanism today → candidate | Maintenance owner | Source identity | Must not acquire |
 | --- | --- | --- | --- | --- | --- |
-| Authority and contract core (`devguard-contract`, `-core`, `-daemon`, `-macos`) | DevGuard | DevGuard native backend (libproc, QoS, journal) | DevGuard | DevGuard SHA; registry crates in `Cargo.lock` (80 packages at `1bb085a`, none `codex-*` or `codespace-*`) | Codex or CodeSpace product types, sessions, login or agent semantics. The contract crate's dependencies stay `serde`, `serde_json`, `sha2` (`scripts/validate.py:113`) |
+| Authority and contract core (`devguard-contract`, `-core`, `-daemon`, `-macos`) | DevGuard | DevGuard native backend (libproc, QoS, journal) | DevGuard | DevGuard SHA; `Cargo.lock` has 80 packages at `1bb085a` (71 registry crates, 9 workspace members), none `codex-*` or `codespace-*` | Codex or CodeSpace product types, sessions, login or agent semantics. The contract crate's dependencies stay `serde`, `serde_json`, `sha2` (`scripts/validate.py:111-113`) |
 | Client and transport adapter (`devguard-client`: `connect.rs`, framing, `credential.rs`) | DevGuard | std `UnixStream` and libc → an authenticated-transport library is a candidate, not selected (section 9.3) | DevGuard | as above | an implicit unmanaged fallback or a second authority. No Codex types, because CodeSpace would link this crate |
 | Launch-preparation adapter (`devguard-client::launch`, `devguard-launch`) | DevGuard | std `Command` spawned by `HelperCommand::spawn` under `spawn_guard` (`launch.rs:150-154`); descriptors created in `helper_command` (`:162-206`) → a preparation separable from spawn (section 9.1) | DevGuard | DevGuard SHA | PTY allocation, or taking over the caller's spawn |
 | Upstream-execution binding (new; e.g. an isolated crate, name `TBD - not selected`) | DevGuard (the mapping) | Codex `codex-utils-pty` generic contracts: `ChildFds::Attached` (prerelease/main), `Command` + `DescriptorPolicy::Explicit`, and a future generic pre-reap observation (section 9.2) | DevGuard (binding); Codex upstream (mechanism) | an explicit Codex commit under section 4; `TBD - not selected` | Codex types outside the binding; being reachable from the core or the generic client contract |
@@ -164,8 +164,8 @@ existing APIs.
 
 - **The CodeSpace Gateway or Runner process** would link CodeSpace's crates, Codex at the gitlink, the DevGuard
   client and possibly the binding.
-  - One executable must have one Codex source identity (spec §5.5). So a binding linked there consumes Codex through
-    CodeSpace's gitlink, not its own pin.
+  - Spec §5.5 prefers one reviewed Codex source identity where components in one executable interoperate. So a
+    binding linked there consumes Codex through CodeSpace's gitlink, not its own pin.
   - Two sources of the same crate name compile as distinct crates, each with its own process-wide statics. An
     example is the reaper worker (`static REAPER`, prerelease `child_reaper.rs:22`). Neither copy's guarantees then
     cover the other, as with the duplicate-lock caveat in spec §9.4. *(inference)*
@@ -277,8 +277,8 @@ The owner's approval supersedes the premise that DevGuard stays Codex-free. The 
 present engineering choice with a conditional reuse policy, and `scripts/validate.py` enforces it. None of the
 following is changed by this record. The column "vehicle" names the normative change that would carry each
 replacement:
-- **R2**: a new design revision document with its Korean counterpart and translation hash, plus the editorial
-  reference and ADR-006/D3 updates (as `AGENTS.md` directs for user-directed revisions);
+- **R2**: a new design revision document and the editorial reference (`AGENTS.md:14`), the Korean counterpart's hash
+  record (`AGENTS.md:16`), and the ADR-006/D3 updates in `docs/planning/decisions.md`;
 - **G**: the gate change of section 6;
 - **CS**: a CodeSpace documentation PR with its Korean pages and registry hashes.
 
@@ -286,15 +286,15 @@ replacement:
 | --- | --- | --- | --- | --- |
 | 1 | DevGuard `AGENTS.md:7` | "Keep the default distribution and the shared client free of Codex dependencies… `scripts/validate.py` rejects `codex-` and `codespace-` packages until such a decision changes that gate." | "Keep CodeSpace/Codex product types out of the authority core and the generic client contract. External implementations, Codex included, enter only through a declared adapter with a reviewed pin; the PR that adds one shows what it replaces and changes `scripts/validate.py` to allow exactly that adapter's reachable set." | R2, G |
 | 2 | `docs/design.md:18` (and `ko/design.md:16`) | "…default distribution and shared client currently build, test and release without CodeSpace or Codex… present engineering choice, not a permanent prohibition…" | Keep the first clause while it is true. Replace the rationale with a reference to the adapter and pin policy. | R2 |
-| 3 | `docs/design-revision-1.md:27`, `:107`, §10.3 `:565-585`, `:836` (and `ko` `:27`, `:567`, `:838`) | D3 = C0: "Add no Codex dependency to the current implementation"; "Keep DevGuard's current Codex-free implementation as the present engineering choice." | Not edited: revision 1 is a dated revision. A new revision supersedes D3 with: external dependencies permitted behind declared adapters with reviewed pins; core and generic-client boundary unchanged; each dependency justified by what it replaces. | R2 |
+| 3 | `docs/design-revision-1.md:27`, `:107`, §10.3 `:565-599`, `:836` (and `ko` `:27`, `:567`, `:838`) | D3 = C0: "Add no Codex dependency to the current implementation"; "Keep DevGuard's current Codex-free implementation as the present engineering choice." | Not edited: revision 1 is a dated revision. A new revision supersedes D3 with: external dependencies permitted behind declared adapters with reviewed pins; core and generic-client boundary unchanged; each dependency justified by what it replaces. | R2 |
 | 4 | `docs/planning/decisions.md:106`, `:112` (and `ko` `:116`, `:122`) | D3 row "C0: none; conditional reuse…"; "The validator's dependency-boundary stage … rejects any `codex-` or `codespace-` package … enforces C0" | D3 → "C1: adapter-bounded external dependencies with reviewed pins". Boundary sentence kept. Gate sentence → "the validator allows only declared adapter roots to reach approved upstream crates". | R2, G |
 | 5 | `docs/planning/codespace-integration.md:176` (and `ko` `:184`) | "DevGuard adds no Codex dependency now; the default distribution and shared client stay Codex-free…" | "DevGuard may consume Codex behind a declared binding; the client CodeSpace links carries no Codex types, and a binding linked into CodeSpace uses CodeSpace's gitlink." | R2 |
-| 6 | `docs/planning/README.md:40`, `docs/milestones.md:5` (and `ko`) | "keeps DevGuard free of Codex dependencies as a present engineering choice…" | Point to the new revision; drop "free of Codex dependencies". | R2 |
+| 6 | `docs/planning/README.md:40` (and `ko/planning/README.md:41`), `docs/milestones.md:5` (no Korean counterpart) | "keeps DevGuard free of Codex dependencies as a present engineering choice…" | Point to the new revision; drop "free of Codex dependencies". | R2 |
 | 7 | `docs/planning/milestones/CS-RG.md:77` (and `ko`; CS-RG suspended) | "No CodeSpace/Codex dependency in DevGuard core; the client brings no transitive Codex dependency; … design revision 1 keeps the Codex pin." | Keep the first two clauses. Replace "keeps the Codex pin" with "a pin change follows the reviewed pin policy". Only once CS-RG is re-planned. | R2, after re-planning |
 | 8 | DevGuard `NOTICE` | "DevGuard does not include CodeSpace, OpenAI Codex or rmcp as implementation dependencies." | True today; unchanged. The PR that adds a Codex dependency adds its attribution and NOTICE handling (Apache-2.0). | with the dependency |
 | 9 | `scripts/validate.py:63-65` | rejects every package whose name starts with `codex-` or `codespace-` | See section 6: per-root allowed reachability, changed only in the PR that defines and tests the boundary. | G |
 | 10 | CodeSpace `docs/codex-reuse.md:78` (and `ko` `:96`; section under a hold notice) | "D3, DevGuard. No Codex dependency is added to DevGuard now. Its core and shared client stay Codex-free…" | "D3, DevGuard (superseded 2026-09-28): DevGuard may consume Codex and other external implementations behind declared adapters with reviewed pins. CodeSpace's generic resource client imports no Codex types, and CodeSpace's own pin process is unchanged." | CS |
-| 11 | CodeSpace `docs/upstream-update.md:90-131` (and `ko` `:91-128`) | "The planned resource client must bring no transitive Codex dependency… documentation policy, not an executable gate." | Keep, and add: "A DevGuard binding linked into a CodeSpace executable consumes Codex through this repository's gitlink; the same PR adds an executable single-identity check (section 6)." | CS |
+| 11 | CodeSpace `docs/upstream-update.md:90-131` (and `ko` `:91-129`) | "The planned resource client must bring no transitive Codex dependency… documentation policy, not an executable gate." | Keep, and add: "A DevGuard binding linked into a CodeSpace executable consumes Codex through this repository's gitlink; the same PR adds an executable single-identity check (section 6)." | CS |
 
 Keep intact: `docs/design.ko.md` (byte-for-byte approval), the dated handoffs (`docs/handoff/2026-09-27-*`), the
 session-close record, CodeSpace's `.github/notes/` records, #13's documents and the hold notices.
@@ -310,7 +310,7 @@ adopted**. It is made only in the reviewed PR that adds a component, with tests;
 | --- | --- | --- | --- |
 | `validate.py` toolchain | expects Rust `1.95.0` (`PINNED_RUST`, `:17`) | `codex-utils-pty` needs at least 1.88 (section 12) | none |
 | `validate.py` source contract | approved-design hash, milestone critical path, DG-LINUX required | none | none |
-| `validate.py` documentation | `check_docs.py` plus its unit tests | revision documents need Korean pairs and hashes | none |
+| `validate.py` documentation | `check_docs.py`, then the `test_check_docs.py` and `test_measure.py` unit tests (`:152-155`) | revision documents need Korean pairs and hashes | none |
 | `validate.py` dependency boundary (`:57-115`) | `cargo metadata --locked`. Rejects any package named `codex-*` or `codespace-*` anywhere (`:63-65`). Workspace roots must equal the explicit map (`:86`). Intra-workspace edges exact. Contract dependencies exactly `serde`, `serde_json`, `sha2` | any Codex crate fails. A new binding crate fails until it is mapped | Replace the name-prefix rule with: (i) a forbidden set for every root (`codex-core`, `codex-exec`, `codex-app-server`, `codex-login`, `codespace-*`); (ii) per-root allowed upstream crates, so only the binding root may reach `codex-utils-pty`; (iii) a check that no other root reaches any `codex-*` package, on target-filtered, non-dev graphs as CodeSpace's `upstream_dependencies.py` does. Keep (iv) the contract rule and the workspace map |
 | `validate.py` format / clippy / tests (`--workspace`) | whole workspace on macOS and Ubuntu, one job | an in-workspace binding is built and tested on both. An isolated workspace needs its own stage (CodeSpace precedent: one stage per adapter) | a binding stage if isolated |
 | CI `contracts` (macOS 14, Ubuntu 24.04) | `validate.py`, then the qualify suites (native suites macOS only) | build time and memory grow with Tokio and portable-pty | none |
@@ -321,8 +321,8 @@ adopted**. It is made only in the reviewed PR that adds a component, with tests;
 | Gate | Current behaviour | Effect | Change later |
 | --- | --- | --- | --- |
 | `scripts/upstream_dependencies.py` | target-filtered, non-dev graphs for the root and five adapter workspaces. Members must equal `PRODUCTS`. `FORBIDDEN` (`codex-core`, `codex-exec`, `codex-app-server`, `codex-login`) rejected from every root; `RUNNER_FORBIDDEN` from the Runner | a DevGuard client in the root graph adds packages. A binding reaching `codex-utils-pty` from a second source would add a second package key, which is not rejected today | when a DevGuard crate first enters a CodeSpace graph: a single-identity check (each `codex-*` name only from the gitlink path within a product root), and an executable form of "the resource client brings no transitive Codex dependency" |
-| `scripts/check-no-model-deps.sh` | core manifests: **direct** `codex-* =` keys rejected (`scan_manifest`, `:222-227`). Adapters: direct keys against per-adapter allowlists (`pty`: `codex-utils-pty` only) | a transitive Codex crate reaching a core crate through a DevGuard client is caught by neither this script nor `FORBIDDEN`. The rule in `upstream-update.md:130` is documentation-only (`:94`) | the transitive check above |
-| `scripts/check-upstream-pin.sh` | gitlink equals the `docs/upstream-lock.md` commit | untouched by DevGuard pins | none |
+| `scripts/check-no-model-deps.sh` | core manifests: **direct** `codex-* =` keys rejected (`scan_manifest`, `:222-234`). Adapters: direct keys against per-adapter allowlists (`pty`: `codex-utils-pty` only) | `upstream_dependencies.py` flags the `FORBIDDEN` names at any depth (`:40-59`). A transitive `codex-*` crate outside `FORBIDDEN`, such as `codex-utils-pty`, reaching a core crate through a DevGuard client is caught by neither script. The rule in `upstream-update.md:130` is documentation-only (`:94`) | the transitive check above |
+| `scripts/check-upstream-pin.sh` | the checked-out submodule HEAD equals the `docs/upstream-lock.md` commit; unless `PIN_ONLY=1`, it also runs the `crates/patch` tests | untouched by DevGuard pins | none |
 | `scripts/validate-upstream.py`, `ci_plan.py`, `ci-policy.json` | per-adapter stages. Manifests, locks, `third_party/**`, `.github/**` and `scripts/**` run every leg | a manifest change that adds a DevGuard client runs every leg | component entries for a new crate |
 | `scripts/check_docs.py`, `docs.yml` | registry pairs; exact-commit publication provenance | none | none |
 
@@ -346,10 +346,10 @@ for `main` at `1cc7e23`, for this crate only.
 | --- | --- | --- | --- | --- | --- |
 | K2 | deliver close-on-exec descriptors only to the intended PTY child | absent: `inherited_fds: &[i32]` (`pty.rs:135`) must already be inheritable | absent (same `pty.rs`) | present: `ChildFds::Attached` (`pty.rs:46-51`); close-on-exec cleared only in the child (`:524-526`); an upstream test asserts parent flags unchanged (`tests.rs:1280-1312`) | delivery only. BD-1 observed it as documented (section 11). Creation atomicity, D6, reaping and authorization are untouched |
 | K3 | exit observation before reap, or owner-controlled reap, for a PTY child | absent: `spawn_blocking(child.wait())` (`pty.rs:244-245`) | absent | absent: portable path `pty.rs:275-276`; attached path `:447` (Linux), `:449` (macOS) | investigation B remains a proposal (section 9.2) |
-| K3b | caller-owned generic (non-PTY) child | absent | present: `Child::id/wait/kill` (`child.rs:33-84`) | present (`child.rs:42-105`). Dropped `ReapOnly` children pass to one `codex-child-reaper` thread that polls `waitpid(pid, WNOHANG)` per PID (`child_reaper.rs:26-68`) | no non-reaping exit observation |
+| K3b | caller-owned generic (non-PTY) child | absent | present: `Child::id/wait/kill` (`child.rs:33-91`) | present (`child.rs:42-120`). Dropped `ReapOnly` children pass to one `codex-child-reaper` thread that polls `waitpid(pid, WNOHANG)` per PID (`child_reaper.rs:26-68`) | no non-reaping exit observation |
 | X | PTY child PID accessor | absent: `SpawnedProcess {session, stdout_rx, stderr_rx, exit_rx}` (`process.rs:356-360`) | absent (same `process.rs` blob) | absent (same blob `5593450`) | — |
-| K4, OX-02 | identity-safe termination | handle `Drop` → `terminate()` → numeric `killpg` (`process.rs:221-275`) | same | same (`pty.rs:114-129`). The local `Child` gives up its PID on reap (`posix_child.rs:314-323`), direct child only | unchanged |
-| K6 | exclude unrelated descriptors from the child | PTY: best-effort pre-exec sweep (`pty.rs:465`) | PTY: same. Local `Command`: `DescriptorPolicy::StdioOnly` → `POSIX_SPAWN_CLOEXEC_DEFAULT` (`macos_child.rs:137`) | PTY: sweep (`pty.rs:541`). Local `Command`: `DescriptorPolicy::Explicit` → `POSIX_SPAWN_CLOEXEC_DEFAULT` plus `posix_spawn_file_actions_addinherit_np` (`posix_child.rs:189`, `:218`); Codex's own pipe backend uses it (`pipe.rs:156-167`) | a kernel-applied exclusion exists for Codex local children. CodeSpace's Tokio pipe path does not use it |
+| K4, OX-02 | identity-safe termination | handle `Drop` → `terminate()` (`process.rs:221-277`) → numeric group kill (`pty.rs:109-111`, `process_group.rs:265-266`) | same | same (`pty.rs:114-129`). The local `Child` gives up its PID on reap or `ECHILD` (`posix_child.rs:312-338`), direct child only | unchanged |
+| K6 | exclude unrelated descriptors from the child | PTY: best-effort pre-exec sweep (`pty.rs:465`) | PTY: same. Local `Command`: `DescriptorPolicy::StdioOnly` → `POSIX_SPAWN_CLOEXEC_DEFAULT` (`macos_child.rs:137`) | PTY: sweep (`pty.rs:541`). Local `Command`: `DescriptorPolicy::Explicit` → `POSIX_SPAWN_CLOEXEC_DEFAULT` plus `posix_spawn_file_actions_addinherit_np` on macOS (`posix_child.rs:188-189`, `:215-219`); Linux uses a best-effort post-fork `close_range` (`linux_fds.rs:1-4`, `:28`). Codex's own pipe backend uses it (`pipe.rs:156-167`) | a kernel-applied exclusion exists for Codex local children on macOS. CodeSpace's Tokio pipe path does not use it |
 | K8 | PTY exit detail | code only | code only | code only. With `Attached`, a SIGTERM death reports 1 (`pty.rs:434-435`; `tests.rs:1280ff`) | a signal death cannot be told from `exit(1)` (AC-08) |
 | K9 | Linux fork-safe spawn helper | absent | absent | Linux only (`spawn_helper.rs:42`; used at `pty.rs:164`, `:368`) | may break DevGuard's direct-child check on Linux *(inference)* |
 
@@ -363,8 +363,8 @@ Conclusions:
    waiting for a stable release that contains it.
 2. No checked revision offers pre-reap observation or owner-controlled reap for PTY children (K3), or a PTY child
    PID (X).
-3. A generic, kernel-applied descriptor exclusion now exists for Codex local non-PTY children. Adopting it in
-   CodeSpace's pipe path would be a CodeSpace change that CS-RG alone cannot justify (N1.3). It could be part of an
+3. On macOS, a generic, kernel-applied descriptor exclusion now exists for Codex local non-PTY children. Adopting it
+   in CodeSpace's pipe path would be a CodeSpace change that CS-RG alone cannot justify (N1.3). It could be part of an
    independent descriptor-hygiene proposal (N1.5; decision 9).
 4. With `Attached`, the exit status cannot serve as signal evidence (K8).
 
@@ -393,11 +393,11 @@ branches hold at 1.88.0 and 1.95.0; per-tag citations are in the evidence findin
 | S8–S10 | mio socket, socket pair and pipe (tokio `net`) | create, then `fcntl(FD_CLOEXEC)` | no | `src/sys/unix/net.rs:15-80`, `uds/mod.rs:84-135`, `pipe.rs:9-60` |
 | S11 | tokio `process::Command::spawn` | delegates to std (S7); stdio pipes are S1 | as S1, S7 | `src/process/mod.rs:863-865` |
 | S12 | Codex `open_unix_pty` (attached path) | `openpty()`, then close-on-exec on master and slave | no | `pty.rs:481-506` |
-| S13 | Codex native spawn stdio | `io::pipe()` (S1), then an `F_DUPFD_CLOEXEC` copy | no | `posix_child.rs:142` |
+| S13 | Codex native spawn stdio | `io::pipe()` (S1), then an `F_DUPFD_CLOEXEC` copy | no | `posix_child.rs:142`, `:154-156`, `:420` |
 | S14 | DevGuard `connect_timeout` (D6) | raw `socket()`, then `F_DUPFD_CLOEXEC`, then `drop(initial)`; the copy is connected | no | `crates/client/src/connect.rs:39`, `:46`, `:51`, `:59` |
 
 Child-side protection differs by spawner:
-- `POSIX_SPAWN_CLOEXEC_DEFAULT` (Codex local `Command`, native path): the kernel closes every descriptor not
+- `POSIX_SPAWN_CLOEXEC_DEFAULT` (Codex local `Command`, macOS native path): the kernel closes every descriptor not
   explicitly inherited, including one still inside another thread's creation window.
 - The Codex PTY paths use a best-effort pre-exec sweep of inheritable descriptors.
 - std and tokio `Command` defaults have none. This covers CodeSpace's Tokio pipe path, patch helper and sandbox
@@ -461,8 +461,8 @@ stay as in `docs/contracts.md`, so wire version 1 is unchanged. A preparation ca
   - Whether that counts as a generic backend capability or a pipe-path rewrite is an owner interpretation against
     N1.2, N1.3 and the generic-only rule. It is recorded here, not decided.
 - **UDS:** the authority requires the helper's parent to be the registered owner. So the process that spawns, the
-  worker, must register and prepare in its own session. A preparation cannot be made in the Gateway and moved to
-  the worker (#13 section 10).
+  worker, must register and prepare in its own session (`contracts.md:81`; #13 section 7 names the worker as the
+  owner in UDS mode). A preparation cannot be made in the Gateway and moved to the worker.
 
 ```mermaid
 sequenceDiagram
@@ -599,7 +599,8 @@ completed runs, each leaving a short-lived survivor, each returning its reservat
 
 **Pipe, evaluated separately** (spec §8.4). CodeSpace's pipe path reaps in `try_wait` (`process.rs:366`, `:684`,
 `:714`, polled every 20 ms, e.g. `:696`) and sets `kill_on_drop(true)` (`:291`). Tokio 1.53.1's `Child` offers `id`,
-`start_kill`, `kill`, `wait`, `try_wait` and `wait_with_output` (`src/process/mod.rs:1222-1446`). None observes an
+`start_kill`, `kill`, `wait`, `try_wait` and `wait_with_output` (`src/process/mod.rs:1222`, `:1247`, `:1326`, `:1379`,
+`:1413`, `:1446`). None observes an
 exit without reaping, and `src/process/` contains no `waitid` or `WNOWAIT`. *(source)* The options:
 
 | Option | Assessment |
@@ -777,7 +778,8 @@ None of these runs without its own owner approval (decisions 4–6 in section 14
 - **Place.** A scratch directory outside both repositories (`<SCRATCH>`), or a local DevGuard worktree branch that is
   never pushed. One Cargo job; memory and disk are checked before each build.
 - **Authority.** DevGuard's test fixture, `devguard_daemon::fixture::TestAuthority` (feature `test-fixtures`,
-  `crates/daemon/src/fixture.rs:52-86`), in a private temporary directory.
+  `crates/daemon/src/fixture.rs:52`, constructors `start`, `start_with` and `restart` at `:64`, `:72`, `:86`), in a
+  private temporary directory.
   - Never the installed LaunchAgent, its journal or its endpoint.
   - Dummy permits and synthetic sessions only; no operational credential.
 - **No change** to any product, dependency, pin, gate, service, credential, journal or host setting. Nothing is
@@ -920,7 +922,7 @@ C.
 Suggested order, not binding: C and A first, since they decide the carrier and session design; B in parallel.
 
 Settled, and not asked again (spec §20): whether DevGuard may use Codex or other external dependencies, and whether
-CodeSpace's pin process changes.
+CodeSpace's pin is immutable.
 
 ## 15. Handoff and evidence
 
