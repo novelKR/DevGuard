@@ -1,15 +1,79 @@
 name: Contracts and service boundary
 
+# Pull requests and pushes to main run the checks their changed paths can affect, as
+# scripts/ci-policy.json classifies them. Unknown paths, CI, planning, qualification, Cargo and
+# toolchain inputs, and a missing or untrusted base run everything. The daily scheduled run and
+# every manual run are always full: they are the compensating control that keeps qualifying the
+# whole repository on both platforms, every native suite included, now that pull requests and
+# main pushes run only affected checks. "Required checks" passes only when this run and attempt
+# did exactly what its plan requires.
 on:
-  push:
   pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '17 18 * * *'
   workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  # A newer push to a pull request replaces its running checks, and the replaced run's gate
+  # fails; main, scheduled and manual runs always complete.
+  group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
+  plan:
+    name: Plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      plan: ${{ steps.plan.outputs.plan }}
+      rust: ${{ steps.plan.outputs.rust }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify the CI policy
+        run: python3 -B -m unittest discover -s scripts -p 'test_ci_*.py'
+      - id: plan
+        name: Plan affected checks
+        run: python3 -B scripts/ci_plan.py
+      - name: Preserve the plan
+        uses: actions/upload-artifact@v6
+        with:
+          name: ci-plan-${{ github.run_attempt }}
+          path: target/ci/plan/
+          if-no-files-found: error
+
+  repository:
+    name: Repository checks
+    needs: plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      CI_PLAN: ${{ needs.plan.outputs.plan }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Whitespace and planned non-Rust validation
+        run: python3 -B scripts/ci_run.py repository
+      - name: Preserve repository evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: ci-repository-${{ github.run_attempt }}
+          path: target/ci/repository/
+          if-no-files-found: error
+
   contracts:
+    needs: plan
+    if: ${{ needs.plan.outputs.rust == 'true' }}
     strategy:
       fail-fast: false
       matrix:
@@ -18,57 +82,22 @@ jobs:
     env:
       CARGO_BUILD_JOBS: "1"
       RUST_TEST_THREADS: "1"
+      CI_PLAN: ${{ needs.plan.outputs.plan }}
+      CI_OS: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
         with:
           persist-credentials: false
+      - name: Bind this job to the plan
+        run: python3 -B scripts/ci_run.py bind contracts --os "$CI_OS"
       - name: Select the qualification toolchain
         run: rustup toolchain install 1.95.0 --profile minimal --component clippy --component rustfmt
       - name: Contract regression and workspace validation
         run: python3 scripts/validate.py --output target/qualification/ci
-      - name: Canonical authority functional checks
-        run: python3 scripts/qualify.py dg1-authority --output target/qualification/dg1-authority
-      - name: Native local authentication functional checks
-        run: python3 scripts/qualify.py dg1-auth --output target/qualification/dg1-auth
-      - name: Native host evidence functional checks
-        if: runner.os == 'macOS'
-        run: python3 scripts/qualify.py dg1-probes --output target/qualification/dg1-probes
-      - name: Native scope and policy readback functional checks
-        if: runner.os == 'macOS'
-        # Hosted runners clamp every process, so the unclamped-root case can only
-        # be recorded as not run there; the summary still shows incomplete.
-        run: python3 scripts/qualify.py dg1-scopes --allow-incomplete --output target/qualification/dg1-scopes
-      - name: Native launch helper functional checks
-        if: runner.os == 'macOS'
-        # The same clamp leaves the unclamped-helper refusal case not run there.
-        run: python3 scripts/qualify.py dg1-launch --allow-incomplete --output target/qualification/dg1-launch
-      - name: Native reconciliation functional checks
-        if: runner.os == 'macOS'
-        run: python3 scripts/qualify.py dg1-reconcile --output target/qualification/dg1-reconcile
-      - name: Native command-line owner functional checks
-        if: runner.os == 'macOS'
-        run: python3 scripts/qualify.py dg1-cli --output target/qualification/dg1-cli
-      - name: Native Cargo adapter functional checks
-        if: runner.os == 'macOS'
-        # Hosted runners' work capacity cannot fit one Cargo job (1 CPU and
-        # 2 GiB), so real-build cases are recorded not run there; refusals still run.
-        run: python3 scripts/qualify.py dg1-cargo --allow-incomplete --output target/qualification/dg1-cargo
-      - name: Native installation functional checks
-        if: runner.os == 'macOS'
-        # Transient launchd jobs need the user's gui domain; a runner without
-        # one records the launchd case not run, and the summary shows incomplete.
-        run: python3 scripts/qualify.py dg1-bootstrap --allow-incomplete --output target/qualification/dg1-bootstrap
-      - name: Native parent lease and candidate functional checks
-        if: runner.os == 'macOS'
-        run: python3 scripts/qualify.py dg1-self-use --output target/qualification/dg1-self-use
-      - name: Native upgrade and repair functional checks
-        if: runner.os == 'macOS'
-        run: python3 scripts/qualify.py dg1-upgrade --output target/qualification/dg1-upgrade
-      - name: Native SLO harness functional checks
-        if: runner.os == 'macOS'
-        # The fixture case needs Google Chrome; a runner without it records the
-        # case not run, and the summary shows incomplete. No SLO is measured here.
-        run: python3 scripts/qualify.py dg1-macos --allow-incomplete --output target/qualification/dg1-macos
+      - name: Planned functional checks
+        # The suites, their order and the hosted-runner exceptions for incomplete suites come
+        # from scripts/ci-policy.json ("suites" and "allowances").
+        run: python3 -B scripts/ci_run.py contracts --os "$CI_OS"
       - name: Preserve qualification evidence
         if: always()
         uses: actions/upload-artifact@v6
@@ -78,14 +107,31 @@ jobs:
           if-no-files-found: error
       - name: Summarize qualification
         if: always()
-        run: |
-          python3 - <<'PY'
-          import json, os
-          from pathlib import Path
-          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as out:
-              for name in ['ci', 'dg1-authority', 'dg1-auth', 'dg1-probes', 'dg1-scopes', 'dg1-launch', 'dg1-reconcile', 'dg1-cli', 'dg1-cargo', 'dg1-bootstrap', 'dg1-self-use', 'dg1-upgrade', 'dg1-macos']:
-                  path = Path('target/qualification') / name / 'report.json'
-                  status = json.loads(path.read_text())['status'] if path.exists() else 'not_run'
-                  out.write(name + ': ' + status + '\n\n')
-              out.write('Contract regression, service/UDS, native host evidence, native scope, launch helper, reconciliation, command-line owner, Cargo adapter, installation, parent lease, upgrade and repair, and SLO harness functional checks only; native suites run on macOS. Real self-use under an installed parent and the SLO protocol itself are not run.\n')
-          PY
+        run: python3 -B scripts/ci_run.py summary --os "$CI_OS"
+
+  required:
+    name: Required checks
+    # Never skipped: it proves that the planned jobs passed with evidence from this attempt and
+    # that the others were skipped.
+    if: ${{ always() }}
+    needs: [plan, repository, contracts]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Download this run's evidence
+        # Every artifact of this run, each in a directory named after it (a lone artifact is
+        # unpacked in place and so matches no expected name). A missing artifact fails the
+        # check below, not this download.
+        continue-on-error: true
+        uses: actions/download-artifact@v7
+        with:
+          path: target/ci-artifacts
+      - name: Require the planned checks
+        env:
+          CI_RESULTS: ${{ toJSON(needs) }}
+          CI_PLAN: ${{ needs.plan.outputs.plan }}
+        run: python3 -B scripts/check_ci_results.py --artifacts target/ci-artifacts
