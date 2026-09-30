@@ -1,8 +1,8 @@
 # 후속 설계 결정과 기준 상태
 
-> **상태: 구현 지시로서 효력 중지.** ADR-006(CodeSpace 실행 소유권과 재사용 정책)은 구현하지 않습니다. 다른 ADR은 영향이 없습니다. CodeSpace 통합 계획에 대해 소유자가 지시한 검토인 CS-RG 통합 경계 재검증(작업 단위가 아닙니다)이 끝날 때까지 적용됩니다. 대체 구조는 승인되지 않았으며, 소유자가 재검증 결과를 검토한 뒤 결정합니다. 이 표기는 지시의 효력만 중지하며 어떤 안전 요구도 완화하지 않습니다. 아래 내용은 이력 추적을 위해 바꾸지 않고 남깁니다.
+> **상태: 구현 지시로서 효력 중지.** ADR-006(CodeSpace 실행 소유권과 재사용 정책)은 구현하지 않습니다. 다른 ADR은 영향이 없습니다. CodeSpace 통합 계획에 대해 소유자가 지시한 검토인 CS-RG 통합 경계 재검증(작업 단위가 아닙니다)이 끝날 때까지 적용됩니다. 대체 구조는 승인되지 않았으며, 소유자가 재검증 결과를 검토한 뒤 결정합니다. 이 표기는 지시의 효력만 중지하며 어떤 안전 요구도 완화하지 않습니다. 아래 내용은 이력 추적을 위해 바꾸지 않고 남깁니다. 다만 [설계 개정 2](../design-revision-2.md)(2026-09-30)에 대한 참조를 기준일, 기준 행, 적용한 개정 목록에 추가했고, 날짜가 붙은 주석을 달았습니다. 그 개정은 ADR-006 D3의 의존 제한을 앞으로를 향해 대체하며, 그 제한은 더 이상 현행이 아닙니다.
 
-문서 기준일: 2026-09-22, ADR-006 추가 2026-09-27. 이 문서는 승인된 독립 설계의 후속 선택을 기록한다. 선택의 승인과 기능의 구현·qualification은 별개다. 아래 선택은 확정되었지만 DG-1 이후 구현은 모두 미착수다.
+문서 기준일: 2026-09-22, ADR-006 추가 2026-09-27, 설계 개정 2 기록 2026-09-30. 이 문서는 승인된 독립 설계의 후속 선택을 기록한다. 선택의 승인과 기능의 구현·qualification은 별개다. 아래 선택은 확정되었지만 DG-1 이후 구현은 모두 미착수다.
 
 ## 기준과 문서 권한
 
@@ -17,11 +17,12 @@
 | Codex pin | `6b9826e3aa83b1a5947db50f4332cb9c65f1b340` | 설계 개정 1이 유지; 이후 변경은 검증에 근거한 별도 결정 |
 | Codex 비교 snapshot | `b334d5b3f2d9441b95286a8c2af8c2152737d977` | 2026-09-27 검토에서 본 upstream `main`; 배포 pin이나 자동 채택 대상이 아님 |
 | 설계 개정 1 | [design-revision-1.md](../design-revision-1.md) | 2026-09-27에 채택한 CS-RG 실행 소유권·재사용의 현재 기준 |
+| 설계 개정 2 | [design-revision-2.md](../design-revision-2.md) | 2026-09-30에 채택한 외부 의존·upstream pin 정책의 현재 기준; ADR-006의 D3를 앞으로를 향해 대체 |
 | 승인 설계 | [design.ko.md](../../design.ko.md), [출처](../../design-source.json) | 원문과 checksum 보존 |
 | 설계 SHA-256 | `97b67a1f9518c1781156a4b3b26829b285f84f5c9a44da60f3c5dcf1bc768df8` | 문구 정정도 원문 수정 대신 이 문서에 기록 |
 | 라이선스 | [Apache-2.0](../../../LICENSE) | CodeSpace와 동일한 라이선스; 기존 LICENSE·NOTICE 보존 |
 
-로컬 개발 위치는 `/Volumes/DevData/Projects/IdeaProjects/DevGuard`다. 문서 층위를 구분한다: 역사적 승인본은 당시 결정을 보존하고, 설계 참조는 [설계 개정 1](../design-revision-1.md)처럼 사용자가 지시한 개정을 적용한 현재 편집 기준이며, `docs/contracts.md`는 실제 구현된 동작만 기술하고, `milestones.json`은 마일스톤 ID·의존·상태의 원본으로서 실제 구현·검증 진행에 따라서만 바뀐다. 상세 작업·시험·PR 경계는 각 마일스톤 문서가 소유한다. 문서 revision은 계획을 인용하는 값이며, 미래 소비 제품의 client dependency pin이나 설치 artifact 승격을 의미하지 않는다. 설계를 개정해도 CS-RG가 구현이나 qualification 상태가 되지는 않는다.
+로컬 개발 위치는 `/Volumes/DevData/Projects/IdeaProjects/DevGuard`다. 문서 층위를 구분한다: 역사적 승인본은 당시 결정을 보존하고, 설계 참조는 [설계 개정 1](../design-revision-1.md)·[설계 개정 2](../design-revision-2.md)처럼 사용자가 지시한 개정을 적용한 현재 편집 기준이며, `docs/contracts.md`는 실제 구현된 동작만 기술하고, `milestones.json`은 마일스톤 ID·의존·상태의 원본으로서 실제 구현·검증 진행에 따라서만 바뀐다. 상세 작업·시험·PR 경계는 각 마일스톤 문서가 소유한다. 문서 revision은 계획을 인용하는 값이며, 미래 소비 제품의 client dependency pin이나 설치 artifact 승격을 의미하지 않는다. 설계를 개정해도 CS-RG가 구현이나 qualification 상태가 되지는 않는다.
 
 ## ADR-001 — 실행 소유자인 Runner의 단일 등록
 
@@ -103,7 +104,7 @@ C08 기능 bundle을 target 밖에 보존하고 C09 설치/복구 경계를 만�
 
 ## ADR-006 — CodeSpace 실행 소유권과 재사용 정책
 
-> **상태: 구현 지시로서 효력 중지.** CS-RG 통합 경계 재검증이 끝날 때까지 이 절을 근거로 구현하지 않습니다. 대체 구조는 승인되지 않았고, 어떤 안전 요구도 완화되지 않습니다. 내용은 이력 추적을 위해 바꾸지 않고 남깁니다.
+> **상태: 구현 지시로서 효력 중지.** CS-RG 통합 경계 재검증이 끝날 때까지 이 절을 근거로 구현하지 않습니다. 대체 구조는 승인되지 않았고, 어떤 안전 요구도 완화되지 않습니다. 내용은 이력 추적을 위해 바꾸지 않고 남깁니다. 아래의 날짜가 붙은 주석은 D3의 의존 제한이 [설계 개정 2](../design-revision-2.md)(2026-09-30)로 대체되었음을 표시하며, 그 제한은 더 이상 현행이 아닙니다.
 
 **결정: 2026-09-27 사용자의 명시적 지시로 채택. 분류: Required.** 전체 명세는 [설계 개정 1](../design-revision-1.md)에 있고 [CodeSpace 결합 명세](codespace-integration.md#실행-소유권)가 이를 적용한다. 이 결정은 설계 준수 여부가 아니라 설계가 지금도 적절한지를 재평가한 결과다. 기존 결정은 무엇을 바꾸고 무엇을 다시 검증해야 하는지 알려 주는 정보이며 대안을 기각하는 근거가 아니다.
 
@@ -115,10 +116,14 @@ C08 기능 bundle을 target 밖에 보존하고 C09 설치/복구 경계를 만�
 | D2: legacy `off` backend | 통합 후 제거; 제한적 compatibility backend 유지; 무기한 보류 | 보류하면 수명주기와 spawn 보호를 두 벌 유지; 어느 결과든 유지보수 비용을 입증 | CSRG-C08 전에 CSRG-C09에서 결정 |
 | D3: DevGuard의 Codex 의존 | C0: 의존 없음; adapter에서 저수준 유틸리티의 조건부 재사용 | `HelperCommand`·launcher·native 관측 중 대체되는 부분이 입증되지 않음 | 지금은 C0; 아래 트리거에서 재검토 |
 
+> **날짜가 붙은 주석(2026-09-30).** [설계 개정 2](../design-revision-2.md)가 D3의 선택 C0을 앞으로를 향해 대체한다. DevGuard는 Codex를 포함한 외부 구현을 검토된 불변 pin을 가진 선언된 adapter 또는 binding 경계를 통해서만 소비할 수 있으며, 각각 무엇을 대체하는지와 비용을 어떻게 통제하는지로 정당화한다. 위 D3 행과 아래 의존 경계 문단은 그 결정의 기록으로서 2026-09-27 문구를 유지하며, 그 경계 서술은 계속 유효하다. dependency-boundary 단계는 gate 변경 G 전까지 모든 `codex-`·`codespace-` package를 계속 거절한다.
+
 **현행 규칙.** child당 회수 책임자는 하나다. `required` 경로에서는 소유 객체 밖의 어떤 코드도 `wait`, `try_wait`, `waitpid`를 호출하지 않으며 종료·timeout·shutdown은 supervisor에 의도를 보낸다. `helper_command`와 `HelperCommand::spawn`은 `spawn_guard`를 직접 잡으므로 호출자는 그 주위에서 guard를 잡지 않는다. 같은 프로세스의 다른 모든 child 생성 경로는 descriptor 생성·상속 설정·spawn 구간만 공통 guard나 검증된 동등 보호로 감싼다. 회수 전 `Observe`에는 전체 예산(1초 제안, CSRG-C00에서 검증)을 두며 실패해도 lease를 점유한 채 둔다. 준비 결과는 한 번만 소비한다. 출력은 CodeSpace 수집기 하나로 모으고 알 수 없는 손실을 `output_lost=false`로 보고하지 않는다.
 
 **adaptation 정책(A4).** PTY 할당, terminal 설정, resize, 제한된 I/O 보조 코드처럼 명확히 분리된 실행 메커니즘에만 허용한다. `codex-core` 제품 의미, 세션 권한, Agent Loop, 광범위한 crate 복사, 의존성 검사를 회피하기 위한 복제는 허용하지 않는다. adaptation마다 원본 저장소·전체 SHA·파일 경로, 가져온 범위, 변경 이유, 의도적으로 달라진 동작, 대응 시험, upstream 갱신 시 재검토 조건, 제거·upstream 재수렴 조건을 기록한다. 호환되지 않는 의존성을 숨기기 위해 upstream crate를 복사하지 않는다는 CodeSpace의 기존 금지는 유지한다.
 
 **의존 경계(D3).** `devguard-contract`, `devguard-core`, 범용 client 계약에는 Codex 제품 타입, 모델 세션, CodeSpace workspace 권한, PTY 소유권을 넣지 않는다. DevGuard의 기본 배포와 공용 client는 현재 Codex에 의존하지 않는다. 실행·플랫폼 adapter의 저수준 유틸리티 재사용은 실제로 대체하는 코드, 계약 적합성, 의존성 전파, 복구 경로, 재검증 비용을 평가해 결정한다. DG-LINUX 착수, 공개된 범용 FD attachment·외부 회수 소유 API의 등장, DevGuard의 child 감독 범위 확대, 같은 OS 결함의 반복 수정 때 재검토한다. 트리거는 비교를 다시 여는 조건이며 기능 이름만으로 의존성을 채택하지 않는다. 근거로 쓰는 의존성 수에는 SHA, target, feature, runtime/build/dev 구분, 실행 명령이 함께 있어야 한다. 검증기의 dependency-boundary 단계(`scripts/validate.py`)는 DevGuard graph의 모든 `codex-`·`codespace-` package를 거절하여 C0을 강제한다. adapter에서 그런 crate를 재사용하기로 결정하면 같은 PR에서 이 검사를 바꾼다.
+
+> **날짜가 붙은 주석(2026-09-30).** 이 문단에서 DevGuard가 Codex에 의존하지 않는다는 서술, 재검토 트리거, 그리고 gate가 C0을 강제한다는 해석은 [설계 개정 2](../design-revision-2.md)가 앞으로를 향해 대체한다. 첫 문장의 경계 서술은 계속 유효하다. 이 단계는 여전히 모든 `codex-`·`codespace-` package를 거절하며, 첫 실제 adapter 구성 요소를 추가하는 검토된 PR만 이를 바꾼다(gate 변경 G).
 
 적용 결과 CSRG-P1 앞에 CSRG-C00이, C07과 C08 사이에 CSRG-C09가 추가되어 CS-RG는 10개 작업·6개 묶음이 된다. 이 결정은 후속 구현을 구속하는 문서를 바꾸며 구현·qualification 상태는 바꾸지 않는다. rollback은 새 문서 revision이며 아직 이 결정에 의존하는 runtime 상태는 없다.

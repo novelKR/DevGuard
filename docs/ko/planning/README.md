@@ -1,8 +1,8 @@
 # DevGuard 상세 실행 계획
 
-> **상태: 구현 지시로서 효력 중지.** 여기서 참조하는 CS-RG 계획과 설계 개정 1의 실행 소유권 선택은 구현하지 않습니다. CS-RG 계획의 표기를 참고하십시오. CodeSpace 통합 계획에 대해 소유자가 지시한 검토인 CS-RG 통합 경계 재검증(작업 단위가 아닙니다)이 끝날 때까지 적용됩니다. 대체 구조는 승인되지 않았으며, 소유자가 재검증 결과를 검토한 뒤 결정합니다. 이 표기는 지시의 효력만 중지하며 어떤 안전 요구도 완화하지 않습니다. 아래 내용은 이력 추적을 위해 바꾸지 않고 남깁니다.
+> **상태: 구현 지시로서 효력 중지.** 여기서 참조하는 CS-RG 계획과 설계 개정 1의 실행 소유권 선택은 구현하지 않습니다. CS-RG 계획의 표기를 참고하십시오. CodeSpace 통합 계획에 대해 소유자가 지시한 검토인 CS-RG 통합 경계 재검증(작업 단위가 아닙니다)이 끝날 때까지 적용됩니다. 대체 구조는 승인되지 않았으며, 소유자가 재검증 결과를 검토한 뒤 결정합니다. 이 표기는 지시의 효력만 중지하며 어떤 안전 요구도 완화하지 않습니다. 아래 내용은 이력 추적을 위해 바꾸지 않고 남깁니다. 다만 [설계 개정 2](../design-revision-2.md)(2026-09-30)가 DevGuard의 Codex 무의존을 유지한다는 문장을 대체했으며 그 문장은 더 이상 현행이 아닙니다. 개정 2는 기준일과 읽는 순서에도 추가되었습니다.
 
-문서 기준일: 2026-09-22, 설계 개정 1로 2026-09-27 개정. 기준 저장소: `/Volumes/DevData/Projects/IdeaProjects/DevGuard`. 이 문서 집합은 승인 설계를 구현 가능한 작업·도입 gate·시험·PR 경계로 구체화한다. 영문 문서가 편집 정본이며 이 문서는 검토된 한국어 번역이다. CodeSpace 소비 안내도 영어·한국어를 함께 유지한다.
+문서 기준일: 2026-09-22, 설계 개정 1로 2026-09-27 개정, 설계 개정 2로 2026-09-30 개정. 기준 저장소: `/Volumes/DevData/Projects/IdeaProjects/DevGuard`. 이 문서 집합은 승인 설계를 구현 가능한 작업·도입 gate·시험·PR 경계로 구체화한다. 영문 문서가 편집 정본이며 이 문서는 검토된 한국어 번역이다. CodeSpace 소비 안내도 영어·한국어를 함께 유지한다.
 
 **계약 기준은 DG-0 회계·영속성·fake backend 시험이다.** DG-1은 완료되었다. 여섯 구현 PR로 C01~C12를 전달했고, 측정한 호스트와 정책에서 release `0.1.0-5daee5d-b3fa569e`의 macOS SLO qualification을 마쳤다. Linux 강제 보호와 CodeSpace 결합은 아직 qualification하지 않았다. 실제 이행 기록은 [DG-0](milestones/DG-0.md), 선택 근거와 immutable source는 [결정 기록](decisions.md)에 있다.
 
@@ -11,7 +11,7 @@
 | 순서/문서 | 필요한 판단 | 원본으로 소유하는 정보 |
 | --- | --- | --- |
 | 1. [승인 독립 설계](../../design.ko.md) / [checksum](../../design-source.json) | 설립 목적과 큰 계약 | 승인 원문; byte 그대로 보존 |
-| 2. [설계 개정 1](../design-revision-1.md) | CS-RG 실행 계층을 어떻게 바꾸었는가 | 2026-09-27에 채택한 실행 소유권·D1~D3·재사용 정책 |
+| 2. [설계 개정 1](../design-revision-1.md), [설계 개정 2](../design-revision-2.md) | CS-RG 실행 계층과 외부 의존 정책을 어떻게 바꾸었는가 | 2026-09-27에 채택한 실행 소유권·D1~D3·재사용 정책; 2026-09-30에 채택하여 D3를 대체한 외부 의존·upstream pin 정책 |
 | 3. [결정 기록](decisions.md) | 왜 Runner 단일 등록과 Gateway 한정 복구, 공통 실행 소유권인가 | 후속 결정·대안·재검토 조건·기준 source |
 | 4. [최소 소비 조건](consumer-readiness.md) | 지금 어떤 수준으로 도입할 수 있는가 | 범용 readiness gate·platform claim |
 | 5. 아래 마일스톤 상세 문서 | 무엇을 어떤 commit/PR로 구현할 것인가 | 작업 ID·선행·시험·완료 증거·rollback·인계 |
@@ -38,7 +38,7 @@ flowchart LR
 
 DG-1은 독립 CLI/daemon·개발 workload·자기 적용을 검증한다. CS-RG는 결합된 Runner·MCP·승인·replay를 추가 검증한다. DG-1에 미구현 CS-RG를 선행 요구하지 않는다. P1 복구는 독립 Runner가 살아 있는 동안 Gateway만 재시작하는 opt-in 모드다. InProcess나 Runner 자체의 I/O 복원을 완료 범위에 넣지 않는다.
 
-설계 개정 1(2026-09-27)은 CodeSpace의 실행 상태와 소유권 조정을 공통화한다. 실행 경계를 먼저 검증하는 CSRG-C00과, 최종 qualification 전에 legacy `off` backend를 결정하는 CSRG-C09를 추가한다. DevGuard의 Codex 무의존은 영구 금지가 아니라 현재의 공학적 선택으로 유지하며, 출처를 기록한 제한적 adaptation을 허용한다. 계획을 바꾸며 구현·qualification 상태는 바꾸지 않는다.
+설계 개정 1(2026-09-27)은 CodeSpace의 실행 상태와 소유권 조정을 공통화한다. 실행 경계를 먼저 검증하는 CSRG-C00과, 최종 qualification 전에 legacy `off` backend를 결정하는 CSRG-C09를 추가한다. 계획을 바꾸며 구현·qualification 상태는 바꾸지 않는다. [설계 개정 2](../design-revision-2.md)(2026-09-30)는 개정 1의 의존성 선택을 대체한다. Codex를 포함한 외부 구현은 검토된 불변 pin을 가진 선언된 adapter를 통해서만 들어오며, 가져와 고친 코드는 출처를 기록한다. 개정 2는 의존성을 선택하지 않으며 구현을 바꾸지 않는다.
 
 | 마일스톤 | 소유 | 예정 작업 commit 수 | 예정 PR 묶음 수 | 현재 구현 |
 | --- | --- | --- | --- | --- |

@@ -1,6 +1,6 @@
 # CodeSpace 결합 명세
 
-> **상태: 구현 지시로서 효력 중지.** CodeSpace 소유 관리형 실행 전송을 전제로 한 이 문서의 통합 명세는 구현하지 않습니다. 관찰된 기준선 항목은 고정 커밋의 CodeSpace를 기술하는 사실로 남고, 계획된 경계는 나머지와 함께 효력이 중지됩니다. CodeSpace 통합 계획에 대해 소유자가 지시한 검토인 CS-RG 통합 경계 재검증(작업 단위가 아닙니다)이 끝날 때까지 적용됩니다. 대체 구조는 승인되지 않았으며, 소유자가 재검증 결과를 검토한 뒤 결정합니다. 이 표기는 지시의 효력만 중지하며 어떤 안전 요구도 완화하지 않습니다. 아래 내용은 이력 추적을 위해 바꾸지 않고 남깁니다.
+> **상태: 구현 지시로서 효력 중지.** CodeSpace 소유 관리형 실행 전송을 전제로 한 이 문서의 통합 명세는 구현하지 않습니다. 관찰된 기준선 항목은 고정 커밋의 CodeSpace를 기술하는 사실로 남고, 계획된 경계는 나머지와 함께 효력이 중지됩니다. CodeSpace 통합 계획에 대해 소유자가 지시한 검토인 CS-RG 통합 경계 재검증(작업 단위가 아닙니다)이 끝날 때까지 적용됩니다. 대체 구조는 승인되지 않았으며, 소유자가 재검증 결과를 검토한 뒤 결정합니다. 이 표기는 지시의 효력만 중지하며 어떤 안전 요구도 완화하지 않습니다. 아래 내용은 이력 추적을 위해 바꾸지 않고 남깁니다. 다만 ‘backend 결정’의 D3 의존 서술에는 그것이 [설계 개정 2](../design-revision-2.md)(2026-09-30)로 대체되었다는 날짜가 붙은 주석을 달았으며, 그 서술은 더 이상 현행이 아닙니다.
 
 확인 기준: CodeSpace `b6e7ed22e2c730ac987297455e250cbd6e8e8b0c`([설계 개정 1](../design-revision-1.md), 2026-09-27). 초기 분석 기준인 CodeSpace `e94d21475643608ad2a466256fb57266b86faa47`과 DevGuard `d59cbd43d206a9a9281328a946eddf1dc199f710`은 이력으로 보존하며, 아래 runtime 경로는 patch helper의 시험 재사용을 제외하면 두 CodeSpace 기준 사이에 바뀌지 않았다. 문서 기준일: 2026-09-22, 개정 2026-09-27. 현재 CodeSpace에 DevGuard dependency·daemon 소비·PrepareExec·복구 capability는 구현되지 않았다. DG1-C12는 완료되었고 macOS qualification을 마친 release `0.1.0-5daee5d-b3fa569e`가 pin 후보다. 설계 개정 1은 Codex `6b9826e3aa83b1a5947db50f4332cb9c65f1b340` pin을 유지하며, 이후의 pin 변경은 검증 결과에 근거한 별도 결정이다. 2026-09-26 검토에서 이 명세를 DG-1이 구현한 소비 인터페이스([계약](../contracts.md))에 맞췄고, 설계 개정 1이 실행 계층을 개정했다. 아래는 후속 구현 명세이며 [CS-RG](milestones/CS-RG.md)와 [P1-RECOVERY](milestones/P1-RECOVERY.md)가 상세 작업의 원본이다.
 
@@ -175,13 +175,15 @@ scope 추적 상실을 root reap으로 덮지 않는다. macOS에서 scope는 ro
 
 ## backend 결정
 
-> **상태: 구현 지시로서 효력 중지.** CS-RG 통합 경계 재검증이 끝날 때까지 이 절을 근거로 구현하지 않습니다. 대체 구조는 승인되지 않았고, 어떤 안전 요구도 완화되지 않습니다. 내용은 이력 추적을 위해 바꾸지 않고 남깁니다.
+> **상태: 구현 지시로서 효력 중지.** CS-RG 통합 경계 재검증이 끝날 때까지 이 절을 근거로 구현하지 않습니다. 대체 구조는 승인되지 않았고, 어떤 안전 요구도 완화되지 않습니다. 내용은 이력 추적을 위해 바꾸지 않고 남깁니다. 아래 D3의 날짜가 붙은 주석은 그 의존 서술이 [설계 개정 2](../design-revision-2.md)(2026-09-30)로 대체되었음을 표시하며, 그 서술은 더 이상 현행이 아닙니다.
 
 세 결정은 서로 독립이다([ADR-006](decisions.md#adr-006--codespace-실행-소유권과-재사용-정책)). CodeSpace가 child를 직접 소유한다는 결론에서 DevGuard의 영구 Codex 금지나 모든 `off` backend 교체가 도출되지 않는다.
 
 - **D1, `required` 실행.** 기본안은 현재 pin에서 가능한 CodeSpace 소유 Unix transport(A1)다. 유지 범위에는 master/slave 수명, signal·session 설정, resize, descriptor 실패 정리, 출력 처리, 취소·shutdown 연계가 포함되며, 몇 줄짜리 opener나 유일하게 가능한 설계로 표현하지 않는다. 새 코드를 쓰기 전에 기존 공개 API, 같은 계약의 upstream 후보, ADR-006 정책에 따른 제한적 adaptation, 자체 구현 순서로 재사용 가능성과 계약 차이를 기록한다.
 - **D2, legacy `off` backend.** 기존 동작을 보존하며 단계적으로 공통 계약으로 옮긴다. CSRG-C08 전에 CSRG-C09가 둘 중 하나를 결정한다. (A) 통합하고 해당 플랫폼·transport에서 대체된 코드·분기·fixture·의존성을 제거한다. (B) 남기는 이유, 남는 범위, 공통화된 부분과 중복된 부분, 제공하지 않는 capability, 재검토 시점, 제거 기준을 기록해 제한적 compatibility backend를 유지한다. “기존 코드”나 “parity 통과”만으로 결정하지 않으며 분기 유지도 교체와 같은 입증 부담을 진다. 측정 항목은 [검증](verification.md#cs-rg-실행-검증)에 있다.
 - **D3, DevGuard.** DevGuard는 지금 Codex 의존성을 추가하지 않는다. 기본 배포와 공용 client는 Codex 없이 유지하며, adapter 재사용은 조건부 정책을 따른다.
+
+  > **날짜가 붙은 주석(2026-09-30).** [설계 개정 2](../design-revision-2.md)가 앞으로를 향해 대체한다. DevGuard는 검토된 불변 pin을 가진 선언된 binding을 통해 Codex를 소비할 수 있다. CodeSpace가 링크하는 범용 client에는 Codex 타입이 없으며, CodeSpace 실행 파일에 링크되는 binding은 CodeSpace의 gitlink를 쓴다. 의존성 gate는 gate 변경 G 전까지 모든 `codex-`·`codespace-` package를 계속 거절한다.
 
 ## 관찰된 구조 조건과 최소 변경
 
