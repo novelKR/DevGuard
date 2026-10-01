@@ -1,8 +1,8 @@
 # DevGuard execution planning
 
-> **Status: suspended as an implementation directive.** The CS-RG plan and design revision 1's execution-ownership choices referenced here must not be implemented; see the notice in the CS-RG plan. This is pending the CS-RG integration-boundary revalidation, an owner-directed review of the CodeSpace integration plan; it is not a work unit. No replacement architecture has been approved; the owner decides after reviewing its results. This notice suspends directives only and relaxes no safety requirement. The text below is retained unchanged for historical traceability.
+> **Status: suspended as an implementation directive.** The CS-RG plan and design revision 1's execution-ownership choices referenced here must not be implemented; see the notice in the CS-RG plan. This is pending the CS-RG integration-boundary revalidation, an owner-directed review of the CodeSpace integration plan; it is not a work unit. No replacement architecture has been approved; the owner decides after reviewing its results. This notice suspends directives only and relaxes no safety requirement. The text below is retained unchanged for historical traceability, except that [design revision 2](../design-revision-2.md) (2026-09-30) replaced the statement that DevGuard stays free of Codex dependencies, which is no longer current, and added the revision to the reference date and reading order.
 
-Reference date: 2026-09-22; revised 2026-09-27 by design revision 1. Repository: `/Volumes/DevData/Projects/IdeaProjects/DevGuard`.
+Reference date: 2026-09-22; revised 2026-09-27 by design revision 1 and 2026-09-30 by design revision 2. Repository: `/Volumes/DevData/Projects/IdeaProjects/DevGuard`.
 English is the authoritative editorial source. [Reviewed Korean translations](../ko/planning/README.md) are maintained through the [translation registry](../translations.json).
 
 The contract baseline is DG-0: accounting, persistence and fake-backend tests. DG-1 is complete: its six implementation PRs delivered C01–C12, and its macOS SLO is qualified for release `0.1.0-5daee5d-b3fa569e` on the measured host and policy. Linux enforcement and CodeSpace integration remain unqualified. The [ledger](../../milestones.json) owns milestone IDs, dependencies and status. Individual milestone documents own work IDs, commit boundaries, tests, evidence and rollback.
@@ -10,7 +10,7 @@ The contract baseline is DG-0: accounting, persistence and fake-backend tests. D
 ## Reading order and ownership
 
 1. [Current English design reference](../design.md), the immutable [approved Korean source](../design.ko.md) and its [checksum](../design-source.json).
-2. [Design revision 1](../design-revision-1.md): CS-RG execution ownership, the D1–D3 decisions and the reuse policy adopted on 2026-09-27.
+2. [Design revision 1](../design-revision-1.md): CS-RG execution ownership, the D1–D3 decisions and the reuse policy adopted on 2026-09-27. [Design revision 2](../design-revision-2.md): the external-dependency and upstream-pin policy adopted on 2026-09-30, which supersedes D3.
 3. [Decisions and source baselines](decisions.md): single Runner registration, Gateway-only recovery, authority ownership, compatibility and execution ownership.
 4. [Consumer readiness](consumer-readiness.md): adoption levels and platform claims.
 5. The milestone documents below: proposed commits and logical PR groups.
@@ -37,7 +37,7 @@ flowchart LR
 
 DG-1 qualifies standalone daemon/CLI, development workloads and bounded self-use. CS-RG separately qualifies the integrated Runner, MCP, approvals and replay. This avoids requiring unimplemented CS-RG features to complete DG-1. Initial recovery requires a live independent Runner; InProcess and restoration of I/O after Runner restart are excluded.
 
-Design revision 1 (2026-09-27) makes CodeSpace's execution state and ownership coordination common. It adds CSRG-C00, which verifies the execution boundary first, and CSRG-C09, which decides the legacy `off` backends before final qualification. It keeps DevGuard free of Codex dependencies as a present engineering choice, not a permanent prohibition, and permits bounded adaptation with recorded provenance. It changes the plan, not implementation or qualification status.
+Design revision 1 (2026-09-27) makes CodeSpace's execution state and ownership coordination common. It adds CSRG-C00, which verifies the execution boundary first, and CSRG-C09, which decides the legacy `off` backends before final qualification. It changes the plan, not implementation or qualification status. [Design revision 2](../design-revision-2.md) (2026-09-30) replaces revision 1's dependency choice: external implementations, Codex included, enter only through declared adapters with reviewed, immutable pins, and adapted code records its provenance. It selects no dependency and changes no implementation.
 
 | Milestone | Owner | Proposed work commits | Logical PR groups | Baseline state |
 | --- | --- | --- | --- | --- |

@@ -7,8 +7,8 @@
       "id": "design",
       "source": "docs/design.md",
       "translation": "docs/ko/design.md",
-      "reviewed_source_sha256": "9abf04e51061e7d95ebbe037025c779c20866e52417ff63287be901b12d4f6f4",
-      "reviewed_translation_sha256": "70f31388aa673231b48b13ad0960960640e2e597ebe0a1d620d6f708a5123954"
+      "reviewed_source_sha256": "4c31d51be0183aae02c0000e62fb704dc7fb74c6863b6d0d7a74b6ac04f9ccf7",
+      "reviewed_translation_sha256": "db1dff04a20fd7d25937ca9a819a99b906e1dd00fc1944ad45505aadda0bddbc"
     },
     {
       "id": "design-revision-1",
@@ -18,18 +18,25 @@
       "reviewed_translation_sha256": "60a61550d59496a4c7befd1aaf4ec8137e6547f7a14d667941069a3a494ed24f"
     },
     {
+      "id": "design-revision-2",
+      "source": "docs/design-revision-2.md",
+      "translation": "docs/ko/design-revision-2.md",
+      "reviewed_source_sha256": "7b2233656acc2e4d71a973cb58de6a3d225ef634f9bdac6dbd1b33104661c4e5",
+      "reviewed_translation_sha256": "e8f08fe59842cb36ae20f1887f98c020009adf93a9bbc73f2d131828ee188a5e"
+    },
+    {
       "id": "planning-readme",
       "source": "docs/planning/README.md",
       "translation": "docs/ko/planning/README.md",
-      "reviewed_source_sha256": "6d1f28675625eace37cf107fcd3ac972628deff36b0f82dcb8611dc1e319ad0c",
-      "reviewed_translation_sha256": "d9343c9173c10eaca681dbfec89e110585881146aaa0af50ae75a88b9d203205"
+      "reviewed_source_sha256": "ac47558c6247ea494363d29a0a5238a78cd82b29b69f4ab8d0c7ce5c9de99f41",
+      "reviewed_translation_sha256": "f99c63658bdfdb4224078fdc88a9c2f9236a7086e98c8317e77c95f9d57d26be"
     },
     {
       "id": "planning-codespace-integration",
       "source": "docs/planning/codespace-integration.md",
       "translation": "docs/ko/planning/codespace-integration.md",
-      "reviewed_source_sha256": "0df5f6b84ae7a4e7bdcad8c12c64539d9497d8d4675773982b3ea962266da8fc",
-      "reviewed_translation_sha256": "324032281780355447b2ee1c0467b6acf20758cae144c031360d700fe5301000"
+      "reviewed_source_sha256": "1ed4902a3cc2a79853d796dc11a0c18a07b03534128eb13cdcf7b8957eaa3ed7",
+      "reviewed_translation_sha256": "a031b94fabb0df1bb0f5dd7f369155acd9d1da7d7af9d8c6999a4a6b5cd19bad"
     },
     {
       "id": "planning-consumer-readiness",
@@ -42,8 +49,8 @@
       "id": "planning-decisions",
       "source": "docs/planning/decisions.md",
       "translation": "docs/ko/planning/decisions.md",
-      "reviewed_source_sha256": "d558d50dac8273fff3e0c1593a935b4db3d5e73ef4733e0ab7c915e3074a2b3a",
-      "reviewed_translation_sha256": "2ede9e36c27a813a6dba9dc1d7d52aef5cf184a5e41cbb0d3ba671f5a43434d0"
+      "reviewed_source_sha256": "86688f12eccfd19b267f04d65412260302c1243395972dcb03bf739fb82a5e54",
+      "reviewed_translation_sha256": "eb70d0926852578a10b29c3767df0702dd7f9a48fa2bc2eb04afc1b6b4dbba1f"
     },
     {
       "id": "planning-milestones-cs-rg",

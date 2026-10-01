@@ -1,9 +1,9 @@
 # DevGuard 설계 참조
 
-> **상태: 구현 지시로서 효력 중지.** ‘실행 소유권(개정 1)’ 절은 구현하지 않습니다. 이 참조 문서의 나머지는 영향이 없습니다. CodeSpace 통합 계획에 대해 소유자가 지시한 검토인 CS-RG 통합 경계 재검증(작업 단위가 아닙니다)이 끝날 때까지 적용됩니다. 대체 구조는 승인되지 않았으며, 소유자가 재검증 결과를 검토한 뒤 결정합니다. 이 표기는 지시의 효력만 중지하며 어떤 안전 요구도 완화하지 않습니다. 아래 내용은 이력 추적을 위해 바꾸지 않고 남깁니다.
+> **상태: 구현 지시로서 효력 중지.** ‘실행 소유권(개정 1)’ 절은 구현하지 않습니다. 이 참조 문서의 나머지는 영향이 없습니다. CodeSpace 통합 계획에 대해 소유자가 지시한 검토인 CS-RG 통합 경계 재검증(작업 단위가 아닙니다)이 끝날 때까지 적용됩니다. 대체 구조는 승인되지 않았으며, 소유자가 재검증 결과를 검토한 뒤 결정합니다. 이 표기는 지시의 효력만 중지하며 어떤 안전 요구도 완화하지 않습니다. 아래 내용은 이력 추적을 위해 바꾸지 않고 남깁니다. 다만 [설계 개정 2](design-revision-2.md)(2026-09-30)가 ‘책임과 정체성’의 Codex 무의존 근거를 대체했으며 그 근거는 더 이상 현행이 아닙니다. 개정 2는 개정 링크도 추가했습니다.
 
-기준일: 2026-09-22, [설계 개정 1](design-revision-1.md)로 2026-09-27 개정. 로컬 소스: `/Volumes/DevData/Projects/IdeaProjects/DevGuard`.
-이 문서는 [영문 편집 정본](../design.md)의 관리되는 한국어 대응 문서다. 전체 승인 원문 [design.ko.md](../design.ko.md)와 [checksum](../design-source.json)은 byte 그대로 보존한다. 이 참조 문서는 승인 설계, 후속 [결정](planning/decisions.md), [개정 1](design-revision-1.md)처럼 사용자가 지시한 설계 개정을 종합하며 원래 승인 artifact라고 주장하지 않는다. 역사적 승인본은 당시 결정을 보존하고 이 참조는 현재 편집 기준이며, 마일스톤 상태는 실제 구현·검증에 따라서만 바뀐다. 구체 작업은 [계획](planning/README.md), 현재 구현 사실은 [계약](../contracts.md)이 소유한다.
+기준일: 2026-09-22, [설계 개정 1](design-revision-1.md)로 2026-09-27 개정, [설계 개정 2](design-revision-2.md)로 2026-09-30 개정. 로컬 소스: `/Volumes/DevData/Projects/IdeaProjects/DevGuard`.
+이 문서는 [영문 편집 정본](../design.md)의 관리되는 한국어 대응 문서다. 전체 승인 원문 [design.ko.md](../design.ko.md)와 [checksum](../design-source.json)은 byte 그대로 보존한다. 이 참조 문서는 승인 설계, 후속 [결정](planning/decisions.md), [개정 1](design-revision-1.md), [개정 2](design-revision-2.md)처럼 사용자가 지시한 설계 개정을 종합하며 원래 승인 artifact라고 주장하지 않는다. 역사적 승인본은 당시 결정을 보존하고 이 참조는 현재 편집 기준이며, 마일스톤 상태는 실제 구현·검증에 따라서만 바뀐다. 구체 작업은 [계획](planning/README.md), 현재 구현 사실은 [계약](../contracts.md)이 소유한다.
 
 ## 목적과 신뢰 범위
 
@@ -13,7 +13,7 @@
 
 ## 책임과 정체성
 
-daemon은 용량·정적 예약·admission·lease·압력과 후속 cache 정책을 소유한다. launcher는 payload 전 scope·정책을 확인하며 범용 프로세스 서버가 아니다. CLI는 직접 시작한 명령을 관제한다. contract/client·core·native backend·launcher·daemon/CLI·언어 adapter를 분리하고 core에 제품 타입을 넣지 않는다. contract·core·범용 client에는 Codex 제품 타입·모델 세션·CodeSpace workspace 권한·PTY 소유권을 넣지 않는다. DevGuard의 기본 배포와 공용 client는 현재 CodeSpace/Codex 없이 빌드·시험·릴리스하며 CodeSpace가 작은 client를 전체 SHA로 고정해 소비한다. 이는 영구 금지가 아니라 현재의 공학적 선택이다. 실행·플랫폼 adapter의 저수준 유틸리티 재사용은 실제로 대체하는 코드·계약 적합성·의존성 전파·복구 경로·재검증 비용으로 결정한다([개정 1, D3](design-revision-1.md#103-d3--devguard-의존성-정책)).
+daemon은 용량·정적 예약·admission·lease·압력과 후속 cache 정책을 소유한다. launcher는 payload 전 scope·정책을 확인하며 범용 프로세스 서버가 아니다. CLI는 직접 시작한 명령을 관제한다. contract/client·core·native backend·launcher·daemon/CLI·언어 adapter를 분리하고 core에 제품 타입을 넣지 않는다. contract·core·범용 client에는 Codex 제품 타입·모델 세션·CodeSpace workspace 권한·PTY 소유권을 넣지 않는다. DevGuard의 기본 배포와 공용 client는 현재 CodeSpace/Codex 없이 빌드·시험·릴리스하며 CodeSpace가 작은 client를 전체 SHA로 고정해 소비한다. Codex를 포함한 외부 구현은 검토된 불변 pin을 가진 선언된 adapter 또는 binding 경계를 통해서만 소비할 수 있으며, 각각 무엇을 대체하는지와 비용을 어떻게 통제하는지로 정당화한다. 첫 실제 adapter 구성 요소를 추가하는 검토된 PR이 바꾸기 전까지 의존성 gate는 모든 `codex-`·`codespace-` package를 계속 거절한다([개정 2](design-revision-2.md)).
 
 운영 계정·executor 호스트마다 canonical state와 배타 소유권을 가진 정상 authority 하나만 둔다. 다른 socket/state 경로로 정상 전체 예산을 추가할 수 없다. 원격 worker는 실제 실행 호스트의 authority를 소비하며 host와 guest의 용량을 독립 여유분으로 합산하지 않는다.
 
