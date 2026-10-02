@@ -1,6 +1,8 @@
 # CS-RG — CodeSpace 소비와 관제 보호
 
 > **상태: 구현 지시로서 효력 중지.** 이 계획의 작업 단위, 특히 CSRG-C00·CSRG-C03·CSRG-C09와 이들이 전제한 CodeSpace 소유 관리형 실행 전송은 구현하지 않습니다. 다른 단위는 모두 CSRG-C00에 의존하므로 어떤 CS-RG 단위도 시작할 수 없습니다. CodeSpace 통합 계획에 대해 소유자가 지시한 검토인 CS-RG 통합 경계 재검증(작업 단위가 아닙니다)이 끝날 때까지 적용됩니다. 대체 구조는 승인되지 않았으며, 소유자가 재검증 결과를 검토한 뒤 결정합니다. 이 표기는 지시의 효력만 중지하며 어떤 안전 요구도 완화하지 않습니다. 아래 내용은 이력 추적을 위해 바꾸지 않고 남깁니다.
+>
+> *2026-10-03 현재 상태:* 소유자는 2026-10-02에 이 효력 중지와 별도로 CS-RG 구현을 CodeSpace의 U1–U6 단위로 지시했으며, 이 효력 중지는 이 계획의 단위에 계속 적용됩니다. U1과 그 보강은 병합·검증되었고 U2가 진행 중인 단위이며 U3–U6은 시작하지 않았습니다. 원장은 CS-RG를 `in-progress`, qualification `not-run`으로 기록합니다. 아래의 기준 상태는 시작하지 않은 이 계획의 단위에 대한 것입니다.
 
 소유 저장소: CodeSpace. 상태: `not-started` / `not-run`. 진입: DG1-C12의 검증된 macOS 조합과 설계 개정 1의 CodeSpace 대응 문서 CSP-D04의 전달([PR 전달](../pr-delivery.md)). DG1-C12는 완료되었고, macOS qualification을 마친 release `0.1.0-5daee5d-b3fa569e`가 pin 후보다. 계약 검토·adapter 초안은 앞서 준비할 수 있지만 일상 `required` 소비 자격을 앞당기지 않는다. 완료: CSRG-C09의 backend 결정 뒤 남은 head에서 고정 client·artifact·wire 조합이 기존 권한/승인/workspace/PTY 계약과 관제 SLO를 함께 통과.
 

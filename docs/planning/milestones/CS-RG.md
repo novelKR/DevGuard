@@ -1,6 +1,8 @@
 # CS-RG — CodeSpace consumption and control protection
 
 > **Status: suspended as an implementation directive.** This plan's work units, in particular CSRG-C00, CSRG-C03 and CSRG-C09 and the CodeSpace-owned managed execution transport they assume, must not be implemented. Every other unit depends on CSRG-C00, so no CS-RG unit may start. This is pending the CS-RG integration-boundary revalidation, an owner-directed review of the CodeSpace integration plan; it is not a work unit. No replacement architecture has been approved; the owner decides after reviewing its results. This notice suspends directives only and relaxes no safety requirement. The text below is retained unchanged for historical traceability.
+>
+> *Current state, 2026-10-03:* on 2026-10-02 the owner directed CS-RG implementation as units U1–U6 in CodeSpace, outside this suspension, which still applies to this plan's units. U1 and its hardening are merged and verified, U2 is the active unit, and U3–U6 have not started; the ledger records CS-RG as `in-progress`, qualification `not-run`. The baseline status below is that of this plan's units, which have not started.
 
 Owner: CodeSpace. Baseline implementation: `not-started`; qualification: `not-run`. Entry: DG1-C12, which is complete, and delivery of CSP-D04, the CodeSpace counterpart documentation of design revision 1 ([PR delivery](../pr-delivery.md)); release `0.1.0-5daee5d-b3fa569e` is macOS-qualified and is the pin candidate. Completion: Qualify the pinned client/artifact/wire combination on the head left by the CSRG-C09 backend decision, while preserving authorization, approvals, workspace and PTY contracts. Preparation may precede qualification, but required runtime adoption may not.
 

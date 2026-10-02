@@ -22,7 +22,7 @@ The contract baseline is DG-0: accounting, persistence and fake-backend tests. D
 
 ## Dependencies
 
-> **Status:** CS-RG, including design revision 1's execution-ownership choices, is suspended as an implementation directive while the CS-RG integration-boundary revalidation is pending; no CS-RG unit may start. See the notice in the CS-RG plan.
+> **Status:** CS-RG, including design revision 1's execution-ownership choices, is suspended as an implementation directive while the CS-RG integration-boundary revalidation is pending; no CS-RG unit may start. See the notice in the CS-RG plan. *Current state, 2026-10-03:* the owner directed CS-RG implementation as units U1–U6 in CodeSpace on 2026-10-02, outside this suspension; U1 and its hardening are merged and U2 is active. This plan's units remain suspended and not started.
 
 ```mermaid
 flowchart LR
