@@ -28,8 +28,8 @@
       "id": "planning-readme",
       "source": "docs/planning/README.md",
       "translation": "docs/ko/planning/README.md",
-      "reviewed_source_sha256": "ac47558c6247ea494363d29a0a5238a78cd82b29b69f4ab8d0c7ce5c9de99f41",
-      "reviewed_translation_sha256": "f99c63658bdfdb4224078fdc88a9c2f9236a7086e98c8317e77c95f9d57d26be"
+      "reviewed_source_sha256": "78420d29f758d03416590abbba97e51458a1b9aacf38f2fc6f8a0f7c5842eeed",
+      "reviewed_translation_sha256": "96abe6d526968832fedc9229d0dadd3f65a59c4b0d140ae882148c3381f521f6"
     },
     {
       "id": "planning-codespace-integration",
@@ -56,8 +56,8 @@
       "id": "planning-milestones-cs-rg",
       "source": "docs/planning/milestones/CS-RG.md",
       "translation": "docs/ko/planning/milestones/CS-RG.md",
-      "reviewed_source_sha256": "332e5ed1d020c5fffa7a11d3486645fa853f634ab69decfeef10ade832bb0af9",
-      "reviewed_translation_sha256": "73bd75fa5d889a5cf91e093d931f917e856a8d0824768075c03674fffe85549c"
+      "reviewed_source_sha256": "5216cebf38630535aab06010af5198680abb5de15efb7095fb6db464544e4564",
+      "reviewed_translation_sha256": "8a89f4ea2c7ef61d0d2ee3d5b31ee8a0ff58de9545096bb66cfd8d4bd0e5d499"
     },
     {
       "id": "planning-milestones-dg-0",
