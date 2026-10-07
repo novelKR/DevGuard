@@ -72,6 +72,14 @@ pub unsafe fn take_inherited(fd: RawFd) -> Result<Secret> {
 }
 
 pub fn read_owned(fd: OwnedFd) -> Result<Secret> {
+    read_owned_by(fd, Instant::now() + Duration::from_millis(250))
+}
+
+/// The deadline bounds waiting for bytes that have not arrived. Once it has passed, only
+/// bytes and an EOF that are already readable are taken, so a reader that was not
+/// scheduled in time still accepts a secret written and closed in time, while a writer
+/// that never writes or never closes still fails.
+fn read_owned_by(fd: OwnedFd, deadline: Instant) -> Result<Secret> {
     if fd.as_raw_fd() < 3 {
         return Err(failed());
     }
@@ -90,22 +98,27 @@ pub fn read_owned(fd: OwnedFd) -> Result<Secret> {
     let mut file = File::from(fd);
     let mut bytes = [0; 65];
     let mut size = 0;
-    let deadline = Instant::now() + Duration::from_millis(250);
     while size < bytes.len() {
-        let remaining = deadline
-            .checked_duration_since(Instant::now())
-            .ok_or_else(failed)?;
-        if remaining.is_zero() {
-            return Err(failed());
-        }
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        // Past the deadline poll does not wait, and a read that makes no progress fails,
+        // so every further pass takes a byte or the EOF.
+        let late = remaining.is_zero();
+        let timeout = if late {
+            0
+        } else {
+            remaining.as_millis().max(1) as i32
+        };
         let mut poll = libc::pollfd {
             fd: raw,
             events: libc::POLLIN,
             revents: 0,
         };
         // SAFETY: poll points to one live pollfd and timeout is at most 250 ms.
-        let ready = unsafe { libc::poll(&mut poll, 1, remaining.as_millis().max(1) as i32) };
-        if ready < 0 && std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted {
+        let ready = unsafe { libc::poll(&mut poll, 1, timeout) };
+        if ready < 0
+            && !late
+            && std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted
+        {
             continue;
         }
         if ready <= 0 {
@@ -115,10 +128,11 @@ pub fn read_owned(fd: OwnedFd) -> Result<Secret> {
             Ok(0) => break,
             Ok(n) => size += n,
             Err(e)
-                if matches!(
-                    e.kind(),
-                    std::io::ErrorKind::Interrupted | std::io::ErrorKind::WouldBlock
-                ) => {}
+                if !late
+                    && matches!(
+                        e.kind(),
+                        std::io::ErrorKind::Interrupted | std::io::ErrorKind::WouldBlock
+                    ) => {}
             Err(_) => return Err(failed()),
         }
     }
@@ -127,4 +141,34 @@ pub fn read_owned(fd: OwnedFd) -> Result<Secret> {
     }
     Secret::new(String::from_utf8(bytes[..size].to_vec()).map_err(|_| failed())?)
         .map_err(|_| failed())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SECRET: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+    // A deadline that has already passed stands for a reader that was not scheduled
+    // during the whole 250 ms after fixing it.
+
+    #[test]
+    fn a_secret_written_and_closed_in_time_is_read_after_the_deadline() {
+        let (reader, mut writer) = UnixStream::pair().unwrap();
+        writer.write_all(SECRET.as_bytes()).unwrap();
+        drop(writer);
+        let secret = read_owned_by(reader.into(), Instant::now()).unwrap();
+        assert!(secret.expose() == SECRET);
+    }
+
+    #[test]
+    fn after_the_deadline_a_missing_secret_or_eof_still_fails() {
+        for written in [&b""[..], &SECRET.as_bytes()[..32], SECRET.as_bytes()] {
+            let (reader, mut writer) = UnixStream::pair().unwrap();
+            writer.write_all(written).unwrap();
+            let error = read_owned_by(reader.into(), Instant::now()).unwrap_err();
+            assert_eq!(error.code, ErrorCode::Unauthorized);
+            drop(writer);
+        }
+    }
 }

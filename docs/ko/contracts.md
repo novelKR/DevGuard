@@ -20,7 +20,7 @@ Frame은 4-byte 길이와 최대 64 KiB JSON payload로 구성한다. Frame·mes
 
 Framing은 poll·descriptor O_NONBLOCK·호출별 nonblocking socket I/O를 사용한다. Darwin에서는 호출별 flag만으로 큰 write가 제한되지 않을 수 있으므로 descriptor nonblocking도 적용한다. Peer 종료 후 Darwin timeout 옵션 변경이 EINVAL로 실패할 수 있어 옵션을 바꾸지 않고 버퍼에 남은 마지막 데이터를 읽는다. 잘못되거나 잘린 응답, 만료·통신 장애에서 실행이나 회수를 추정하지 않는다. Client는 자동 재시도나 비관리 authority·실행 fallback을 하지 않는다.
 
-CredentialHandoff는 전용 상속 descriptor로 caller secret 하나를 전달하고 부모의 복사본에는 close-on-exec을 유지한다. take_inherited/read_owned는 제한된 길이와 250 ms 읽기 기한을 적용하며 성공·실패 모두 receiver descriptor를 소비하고 닫는다. Secret은 로컬 인증 교환을 위해 명시 직렬화하고 debug·파서 오류에서는 정제한다. Subprocess 시험은 후속 exec 전에 FD가 닫히고 argv·환경·출력에 secret이 없음을 관측한다. 이는 transport 위생 검증이며 C05 helper 권한·READY·사용자 프로그램 시작·격리의 qualification이 아니다.
+CredentialHandoff는 전용 상속 descriptor로 caller secret 하나를 전달하고 부모의 복사본에는 close-on-exec을 유지한다. take_inherited/read_owned는 제한된 길이를 적용하고 secret과 EOF를 기다리는 시간을 250 ms로 제한하며, 성공·실패 모두 receiver descriptor를 소비하고 닫는다. 기한이 지나면 이미 읽을 수 있는 byte와 EOF만 받는다. 따라서 제때 스케줄되지 못한 receiver도 기한 안에 쓰이고 닫힌 secret은 받아들이고, 쓰지 않거나 닫지 않는 writer는 그대로 실패한다. Secret은 로컬 인증 교환을 위해 명시 직렬화하고 debug·파서 오류에서는 정제한다. Subprocess 시험은 후속 exec 전에 FD가 닫히고 argv·환경·출력에 secret이 없음을 관측한다. 이는 transport 위생 검증이며 C05 helper 권한·READY·사용자 프로그램 시작·격리의 qualification이 아니다.
 
 ## Native macOS 호스트 증거
 
