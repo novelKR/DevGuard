@@ -2,7 +2,7 @@
 
 > **Status: suspended as an implementation directive.** The R3 CodeSpace runtime entry and the gates that cite CS-RG units depend on suspended CS-RG work and must not be used as implementation targets; the rest of this document is unaffected. This is pending the CS-RG integration-boundary revalidation, an owner-directed review of the CodeSpace integration plan; it is not a work unit. No replacement architecture has been approved; the owner decides after reviewing its results. This notice suspends directives only and relaxes no safety requirement. The text below is retained unchanged for historical traceability.
 
-These gates are language/product independent. Only CodeSpace's actual code paths have been inspected. The [ledger](../../milestones.json) owns implementation status; [decisions](decisions.md) own rationale. DG-1 now permits R2 and RS on the measured host with release `0.1.0-5daee5d-b3fa569e`; R3 still requires CS-RG, whose first group CSRG-P0 starts only after CSP-D04 is delivered ([PR delivery](pr-delivery.md)).
+These gates are language/product independent. Only CodeSpace's actual code paths have been inspected. The [ledger](../../milestones.json) owns implementation status; [decisions](decisions.md) own rationale. DG-1 now permits R2 and RS on the measured host with release `0.1.0-6e7e065-94d85365`; R3 still requires CS-RG, whose first group CSRG-P0 starts only after CSP-D04 is delivered ([PR delivery](pr-delivery.md)).
 
 ## Adoption levels
 
