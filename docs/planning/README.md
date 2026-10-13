@@ -5,7 +5,7 @@
 Reference date: 2026-09-22; revised 2026-09-27 by design revision 1 and 2026-09-30 by design revision 2. Repository: `/Volumes/DevData/Projects/IdeaProjects/DevGuard`.
 English is the authoritative editorial source. [Reviewed Korean translations](../ko/planning/README.md) are maintained through the [translation registry](../translations.json).
 
-The contract baseline is DG-0: accounting, persistence and fake-backend tests. DG-1 is complete: its six implementation PRs delivered C01–C12, and its macOS SLO is qualified for release `0.1.0-5daee5d-b3fa569e` on the measured host and policy. Linux enforcement and CodeSpace integration remain unqualified. The [ledger](../../milestones.json) owns milestone IDs, dependencies and status. Individual milestone documents own work IDs, commit boundaries, tests, evidence and rollback.
+The contract baseline is DG-0: accounting, persistence and fake-backend tests. DG-1 is complete: its six implementation PRs delivered C01–C12, and its macOS SLO is qualified for release `0.1.0-6e7e065-94d85365` on the measured host and policy. Linux enforcement and CodeSpace integration remain unqualified. The [ledger](../../milestones.json) owns milestone IDs, dependencies and status. Individual milestone documents own work IDs, commit boundaries, tests, evidence and rollback.
 
 ## Reading order and ownership
 
@@ -42,7 +42,7 @@ Design revision 1 (2026-09-27) makes CodeSpace's execution state and ownership c
 | Milestone | Owner | Proposed work commits | Logical PR groups | Baseline state |
 | --- | --- | --- | --- | --- |
 | [DG-0](milestones/DG-0.md) | DevGuard | One actual initial commit, documented retrospectively | No invented historical PRs | Implemented contract/fake scope |
-| [DG-1](milestones/DG-1.md) | DevGuard | 12 | 6 | Implemented (C01–C12); macOS SLO qualified for release `0.1.0-5daee5d-b3fa569e` |
+| [DG-1](milestones/DG-1.md) | DevGuard | 12 | 6 | Implemented (C01–C12); macOS SLO qualified for release `0.1.0-6e7e065-94d85365` |
 | [CS-RG](milestones/CS-RG.md) | CodeSpace | 10 | 6 | Not started |
 | [P1-RECOVERY](milestones/P1-RECOVERY.md) | CodeSpace | 6 | 3 | Not started |
 | [DG-LINUX](milestones/DG-LINUX.md) | DevGuard and CodeSpace | 6 | 3 | Not started; required overall |

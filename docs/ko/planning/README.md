@@ -4,7 +4,7 @@
 
 문서 기준일: 2026-09-22, 설계 개정 1로 2026-09-27 개정, 설계 개정 2로 2026-09-30 개정. 기준 저장소: `/Volumes/DevData/Projects/IdeaProjects/DevGuard`. 이 문서 집합은 승인 설계를 구현 가능한 작업·도입 gate·시험·PR 경계로 구체화한다. 영문 문서가 편집 정본이며 이 문서는 검토된 한국어 번역이다. CodeSpace 소비 안내도 영어·한국어를 함께 유지한다.
 
-**계약 기준은 DG-0 회계·영속성·fake backend 시험이다.** DG-1은 완료되었다. 여섯 구현 PR로 C01~C12를 전달했고, 측정한 호스트와 정책에서 release `0.1.0-5daee5d-b3fa569e`의 macOS SLO qualification을 마쳤다. Linux 강제 보호와 CodeSpace 결합은 아직 qualification하지 않았다. 실제 이행 기록은 [DG-0](milestones/DG-0.md), 선택 근거와 immutable source는 [결정 기록](decisions.md)에 있다.
+**계약 기준은 DG-0 회계·영속성·fake backend 시험이다.** DG-1은 완료되었다. 여섯 구현 PR로 C01~C12를 전달했고, 측정한 호스트와 정책에서 release `0.1.0-6e7e065-94d85365`의 macOS SLO qualification을 마쳤다. Linux 강제 보호와 CodeSpace 결합은 아직 qualification하지 않았다. 실제 이행 기록은 [DG-0](milestones/DG-0.md), 선택 근거와 immutable source는 [결정 기록](decisions.md)에 있다.
 
 ## 읽는 순서와 문서 소유권
 
@@ -43,7 +43,7 @@ DG-1은 독립 CLI/daemon·개발 workload·자기 적용을 검증한다. CS-RG
 | 마일스톤 | 소유 | 예정 작업 commit 수 | 예정 PR 묶음 수 | 현재 구현 |
 | --- | --- | --- | --- | --- |
 | [DG-0](milestones/DG-0.md) | DevGuard | 실제 초기 commit 1개에 대한 이행 기록 | 과거 PR 재구성 없음 | 계약·fake backend 구현 |
-| [DG-1](milestones/DG-1.md) | DevGuard | 12 | 6 | 구현(C01–C12); release `0.1.0-5daee5d-b3fa569e`에 대해 macOS SLO qualified |
+| [DG-1](milestones/DG-1.md) | DevGuard | 12 | 6 | 구현(C01–C12); release `0.1.0-6e7e065-94d85365`에 대해 macOS SLO qualified |
 | [CS-RG](milestones/CS-RG.md) | CodeSpace | 10 | 6 | 미착수 |
 | [P1-RECOVERY](milestones/P1-RECOVERY.md) | CodeSpace | 6 | 3 | 미착수 |
 | [DG-LINUX](milestones/DG-LINUX.md) | DevGuard + CodeSpace | 6 | 3 | 미착수; 전체 제품 필수 |

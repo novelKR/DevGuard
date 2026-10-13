@@ -28,8 +28,8 @@
       "id": "planning-readme",
       "source": "docs/planning/README.md",
       "translation": "docs/ko/planning/README.md",
-      "reviewed_source_sha256": "5ae20eb9f6ad702fa41bb3885cba1c6ea01f2d55d612cc0b97388d4ff9b14fe8",
-      "reviewed_translation_sha256": "d002f8bdabe99376b40d4668674a255f29b399818c4073a9362cd932025a1ed9"
+      "reviewed_source_sha256": "0babde68472ae41a45cc7197346fb90c0181683f92d5a1936fca39f01c0fe799",
+      "reviewed_translation_sha256": "839a5aa85daeacdaf220f5956641e5d52bcf21eecca8baff678725001c1242aa"
     },
     {
       "id": "planning-codespace-integration",
@@ -42,8 +42,8 @@
       "id": "planning-consumer-readiness",
       "source": "docs/planning/consumer-readiness.md",
       "translation": "docs/ko/planning/consumer-readiness.md",
-      "reviewed_source_sha256": "2afd896591a1c5004624dbc70e0c71afb9f25e3e52666436d805034e88e57239",
-      "reviewed_translation_sha256": "885624e1b4401805884039be8d6118db29d6724de0fee3fff75d5bf2f6039c91"
+      "reviewed_source_sha256": "17f9e5205199064d905f0fae2730baa6ee269b677d6dddd05b085e405fb2790f",
+      "reviewed_translation_sha256": "5a125fa4583da3de543db23c34af8ecabc6cb2de44810d5ab4d94644f285f372"
     },
     {
       "id": "planning-decisions",
@@ -56,8 +56,8 @@
       "id": "planning-milestones-cs-rg",
       "source": "docs/planning/milestones/CS-RG.md",
       "translation": "docs/ko/planning/milestones/CS-RG.md",
-      "reviewed_source_sha256": "0c4af70d5fb9552144e4e196735726ffaf5c3aad11b17fa6c2a40db68dc6ea03",
-      "reviewed_translation_sha256": "87b3dd90b6184c497e039b27f93065162cd97b3f64e79324de1c08fdcb1f97f7"
+      "reviewed_source_sha256": "10bfcf3e4bad642445d38b86440cd4ae0788e23d1f32d1427645f99924eaccc5",
+      "reviewed_translation_sha256": "40b68c11e36f2bcbd7773a41176f5cffb3d39442724862c7d623af3756cf3ce7"
     },
     {
       "id": "planning-milestones-dg-0",
@@ -70,8 +70,8 @@
       "id": "planning-milestones-dg-1",
       "source": "docs/planning/milestones/DG-1.md",
       "translation": "docs/ko/planning/milestones/DG-1.md",
-      "reviewed_source_sha256": "10de8d6b2d7a23b8f4ccd934456ef538ac8693b394d54b8bd946eace7028daf6",
-      "reviewed_translation_sha256": "46d250ef90658382b38ef578d6f057b0a9c2aa1a3804b27674e8b7cf027257a9"
+      "reviewed_source_sha256": "3300a422bdb221e54c43c14fec6eb3316b8b649f7bdcf0600604d1886078ad1c",
+      "reviewed_translation_sha256": "b023c4e6d54161510c2e513b44810032388e5be8ee62286db0c82e7199238bf5"
     },
     {
       "id": "planning-milestones-dg-adapters",
@@ -112,8 +112,8 @@
       "id": "planning-verification",
       "source": "docs/planning/verification.md",
       "translation": "docs/ko/planning/verification.md",
-      "reviewed_source_sha256": "c8afea075d25a82255ead448fb18873fa31668362eab628c96de3502f6420c73",
-      "reviewed_translation_sha256": "528a502e836684d24b2273747e75d9bdb82b2d4fd87a5f2151da8fa2bac97a6e"
+      "reviewed_source_sha256": "1827b33df20f2e89e18d2e30cabf256583bf67413e481fcde8b611066405a6b0",
+      "reviewed_translation_sha256": "b6149aea58970342f478ccd4e30346137381536a7b825508f915a98648b7b920"
     },
     {
       "id": "operations",

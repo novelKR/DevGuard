@@ -2,7 +2,7 @@
 
 > **상태: 구현 지시로서 효력 중지.** R3 CodeSpace runtime 항목과 CS-RG 단위를 인용한 gate는 효력이 중지된 CS-RG 작업에 의존하므로 구현 목표로 쓰지 않습니다. 나머지는 영향이 없습니다. CodeSpace 통합 계획에 대해 소유자가 지시한 검토인 CS-RG 통합 경계 재검증(작업 단위가 아닙니다)이 끝날 때까지 적용됩니다. 대체 구조는 승인되지 않았으며, 소유자가 재검증 결과를 검토한 뒤 결정합니다. 이 표기는 지시의 효력만 중지하며 어떤 안전 요구도 완화하지 않습니다. 아래 내용은 이력 추적을 위해 바꾸지 않고 남깁니다.
 
-이 문서는 특정 언어나 제품에 독립적인 도입 gate다. DG-1은 측정한 호스트에서 release `0.1.0-5daee5d-b3fa569e`로 R2와 RS를 허용하며, R3에는 여전히 CS-RG가 필요하며, 그 첫 묶음 CSRG-P0은 CSP-D04가 전달된 뒤 시작한다([PR 전달](pr-delivery.md)). 실제 코드 경로를 대조한 소비자는 CodeSpace이며 다른 저장소의 구현 적합성까지 검증한 문서가 아니다. 구현 상태의 원본은 [milestones.json](../../../milestones.json), 선택 근거는 [decisions.md](decisions.md)다.
+이 문서는 특정 언어나 제품에 독립적인 도입 gate다. DG-1은 측정한 호스트에서 release `0.1.0-6e7e065-94d85365`로 R2와 RS를 허용하며, R3에는 여전히 CS-RG가 필요하며, 그 첫 묶음 CSRG-P0은 CSP-D04가 전달된 뒤 시작한다([PR 전달](pr-delivery.md)). 실제 코드 경로를 대조한 소비자는 CodeSpace이며 다른 저장소의 구현 적합성까지 검증한 문서가 아니다. 구현 상태의 원본은 [milestones.json](../../../milestones.json), 선택 근거는 [decisions.md](decisions.md)다.
 
 ## 도입 수준
 

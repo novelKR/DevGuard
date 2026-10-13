@@ -1,6 +1,6 @@
 # DG-1 — macOS 개발 적용과 자기 적용
 
-소유 저장소: DevGuard. 현재 구현 상태: `implemented`(C01–C12) / qualification: 측정한 호스트와 정책에서 release `0.1.0-5daee5d-b3fa569e`에 대해 macOS `qualified`, Linux `not-run`. 진입: DG-0 정확한 source의 계약 검증. 종료: 실제 macOS 실행·회수, generic/Cargo 소비, 상위 예산 안의 후보 시험, 독립 복구, 개발·foreground SLO를 통과한 artifact/정책/환경 조합 확보.
+소유 저장소: DevGuard. 현재 구현 상태: `implemented`(C01–C12) / qualification: 측정한 호스트와 정책에서 release `0.1.0-6e7e065-94d85365`에 대해 macOS `qualified`, Linux `not-run`. 진입: DG-0 정확한 source의 계약 검증. 종료: 실제 macOS 실행·회수, generic/Cargo 소비, 상위 예산 안의 후보 시험, 독립 복구, 개발·foreground SLO를 통과한 artifact/정책/환경 조합 확보.
 
 아래 ID·제목·PR 묶음은 **예정 값**이다. 실제 SHA나 GitHub PR 번호가 아니다. 모듈 경로는 구현 전까지 예정 책임을 나타낸다. 현재 daemon/client crate는 존재하며 launcher·platform-macos·cli·adapters는 후속 책임이다. crate 추가는 해당 PR에서 명시적 의존 allowlist와 전체 그래프 검증을 함께 확장하고 검사를 제거하지 않는다. 실제 상태는 ledger가 소유한다.
 

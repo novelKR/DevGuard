@@ -1,6 +1,6 @@
 # DG-1 — macOS development and bounded self-use
 
-Owner: DevGuard. Current implementation: `implemented` (C01–C12); qualification: macOS `qualified` for release `0.1.0-5daee5d-b3fa569e` on the measured host and policy, Linux `not-run`. Entry: DG-0. Completion: DG1-C12 qualifies actual macOS launch/reconciliation, generic/Cargo consumption, parent-budget self-use, independent repair and development/foreground SLO for the measured artifact/policy/environment.
+Owner: DevGuard. Current implementation: `implemented` (C01–C12); qualification: macOS `qualified` for release `0.1.0-6e7e065-94d85365` on the measured host and policy, Linux `not-run`. Entry: DG-0. Completion: DG1-C12 qualifies actual macOS launch/reconciliation, generic/Cargo consumption, parent-budget self-use, independent repair and development/foreground SLO for the measured artifact/policy/environment.
 
 All work IDs, commit titles and logical PR labels below are **proposed values**, not future SHAs or GitHub numbers. Module paths describe planned responsibilities until implemented. Each added workspace crate updates the explicit dependency allowlist in the same PR without removing full-graph validation. The ledger owns actual status.
 
