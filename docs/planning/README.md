@@ -22,7 +22,7 @@ The contract baseline is DG-0: accounting, persistence and fake-backend tests. D
 
 ## Dependencies
 
-> **Status:** CS-RG, including design revision 1's execution-ownership choices, is suspended as an implementation directive while the CS-RG integration-boundary revalidation is pending; no CS-RG unit may start. See the notice in the CS-RG plan. *Current state, 2026-10-14:* the owner directed CS-RG implementation as units U1–U6 in CodeSpace on 2026-10-02, outside this suspension; U1 to U6 are merged and verified, and CS-RG is qualified on macOS for one exact combination. This plan's units remain suspended and not started. P1-RECOVERY started on the owner's direction of 2026-10-14, as re-baselined in its plan; P1R-C01 is active.
+> **Status:** CS-RG, including design revision 1's execution-ownership choices, is suspended as an implementation directive while the CS-RG integration-boundary revalidation is pending; no CS-RG unit may start. See the notice in the CS-RG plan. *Current state, 2026-10-14:* the owner directed CS-RG implementation as units U1–U6 in CodeSpace on 2026-10-02, outside this suspension; U1 to U6 are merged and verified, and CS-RG is qualified on macOS for one exact combination. This plan's units remain suspended and not started. P1-RECOVERY started on the owner's direction of 2026-10-14, as re-baselined in its plan; P1R-C01 is merged and verified, and P1R-C02 is active.
 
 ```mermaid
 flowchart LR
