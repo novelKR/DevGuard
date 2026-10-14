@@ -1,8 +1,31 @@
 # P1-RECOVERY — 독립 Runner 생존 중 Gateway 복구
 
+> *2026-10-14 현재 상태:* 소유자는 2026-10-14에 P1-RECOVERY 구현을 CodeSpace에서 P1R-C01부터 P1R-C06까지 단위마다 PR 하나로 차례로 진행하도록 지시했습니다. 각 단위는 앞 단위가 병합·검증된 뒤 소유자의 승인으로 시작하며, 지금 진행하는 단위는 P1R-C01입니다. 원장은 P1-RECOVERY를 `in-progress`, qualification `not-run`으로 기록하고, 새 모드는 P1R-C06의 qualification 전까지 지원 모드가 아닙니다. 아래 [재기준](#재기준-2026-10-14)이 이 계획의 나머지와 다르면 재기준을 따르며, 나머지는 이력으로 바꾸지 않고 남깁니다.
+
 소유 저장소: CodeSpace. 상태: `not-started` / `not-run`. 진입: CSRG-C08. 완료: 운영자 선택 모드에서 독립 Runner가 기존 프로세스·입출력·timeout을 계속 소유하고 Gateway 반복 재시작과 재연결을 복구한다. InProcess 및 Runner 자체 재시작 후 PTY 복원은 최초 범위에 포함하지 않는다.
 
 기존 모드의 종료 정책은 그대로 유지한다. 새 모드는 정상 종료, 명시적 서비스 중지, 재시작용 detach, 예기치 않은 연결 소실을 구별한다. 아래 ID·제목·PR은 **예정 값**이다. 현재 검증은 CodeSpace `python3 scripts/validate-upstream.py all`과 해당 플랫폼별 stage이며, `python3 scripts/qualify-devguard.py <suite>`는 각 작업에서 제공할 **미구현 예정 명령**이다.
+
+## 재기준, 2026-10-14
+
+이 계획은 실제로 만들지 않은 CS-RG의 C 단위와 예정 PR을 전제로 썼습니다. CS-RG는 소유자가 지시한 U1–U6 단위로 구현되었고, 정확히 한 조합(CodeSpace `ca306ee`, DevGuard 원장 `970acf5`)에 대해 macOS qualification을 마쳤습니다. 그래서 P1-RECOVERY를 시작하면서 진입 조건, 전달 방식, 일부 선행 조건을 실제에 맞춰 다시 잡았습니다. 아래 각 작업의 문제, 불변 조건, 시험, rollback은 그대로 적용하며, 이 표가 그 아래 본문과 다르면 표를 따릅니다.
+
+| 계획 문구 | 실제 | 재기준 |
+| --- | --- | --- |
+| 진입 CSRG-C08, P1R-P1의 선행 PR CSRG-P5 | CSRG-C08은 만들지 않았습니다 | 진입 조건은 CS-RG `implemented`, `macos-qualified`(조합 CodeSpace `ca306ee`) |
+| 예정 PR P1R-P1–P1R-P3, 각각 작업 두 개 | CS-RG는 소유자가 지시한 단위마다 PR 하나로 진행했습니다 | P1R-C01부터 P1R-C06까지 단위마다 CodeSpace PR 하나를 차례로 병합. 아래 예정 PR 표는 이력 |
+| P1R-C01: 독립 시작과 서비스 소유 | gateway가 관리 worker를 띄우거나, `--runner-socket`으로 이미 있는 worker에 붙습니다 | 독립 Runner는 운영자나 qualification 하네스가 띄우고 gateway는 연결만 합니다. 독립 Runner는 소비자 자격 파일을 직접 읽습니다([ADR-001](../decisions.md#adr-001--실행-소유자인-runner의-단일-등록)) |
+| P1R-C02: process 전용 기록과 single writer | operations DB에는 patch operations와 승인이 있고, `--operations-db`가 없으면 DB는 메모리에 있습니다 | process 기록은 operations DB 안의 별도 표이며 schema 버전을 가집니다. 독립 모드에서는 `--operations-db`가 필수이고, 한 번에 gateway 하나가 배타 lock을 잡고 씁니다. 이전 gateway가 끝나기를 상한 안에서 기다립니다 |
+| P1R-C03: control/data session의 원자적 결합 | Runner wire는 한 stream이고 두 번째 lane은 없습니다 | 한 연결을 유지합니다. 제어권은 다음 epoch를 발급하는 `Claim`으로 넘기고, 상태를 바꾸는 요청은 모두 그 epoch를 가집니다 |
+| P1R-C03: 보호된 endpoint와 자격, 잘못된 자격 거절 | 지금 worker는 연결을 한 번만 받습니다. 같은 UID 확인만으로는 그 사용자의 어떤 프로세스든 받아들입니다 | 살아 있는 controller가 있으면 `Claim`을 거부하고, peer UID, operations store id, epoch를 확인합니다. gateway가 없는 사이에는 같은 사용자의 어떤 프로세스든 `Claim`할 수 있으며, 운영자 안내에 이를 적습니다. 잘못된 자격 시험은 다른 UID, controller가 있을 때의 `Claim`, 다른 store id로 바뀝니다 |
+| P1R-C04: CS-RG attempt·approval mapping | 승인과 attempt나 프로세스를 잇는 기록이 없습니다 | P1R-C02의 기록이 승인, attempt, 프로세스를 처음으로 잇습니다 |
+| P1R-C05: owner 손실 뒤 미해결 lease | `Lookup`은 attempt를 소유한 instance만 할 수 있고, CodeSpace의 `codespace` 소비자는 instance가 하나입니다 | Runner 손실 뒤 운영자 runbook이 관리 요청 `Quiescence`로 남은 attempt를 확인하고, 이전 instance가 retire된 뒤에 새 Runner가 등록합니다. `off` 점유는 운영자가 프로세스별로 확인해 풉니다 |
+| 작업마다 `qualify-devguard.py recovery-*` 명령 | CS-RG는 마지막 단위에서 하네스를 더했습니다 | P1R-C01–P1R-C05는 CodeSpace CI의 통합 시험으로 확인하고, P1R-C06이 하네스 suite를 모두 더합니다 |
+| P1R-C06: 통과한 CS-RG 기준선 | CS-RG 기준선은 후보 `ca306ee`입니다 | P1R-C06은 P1-RECOVERY 후보에서 CS-RG suite도 다시 돌립니다. 범위는 독립 모드의 macOS `uds`, pipe와 PTY, `off`와 `required`이고, Linux `off`는 CI에서만 확인합니다 |
+
+이 마일스톤을 위해 release, DevGuard client pin, Codex pin, 설치된 서비스, 정책을 소유자 승인 없이 바꾸지 않습니다. 뒤 단위가 기대는 선택은 그 단위를 시작할 때 소유자에게 확인합니다.
+
+## PR 순서와 활성화
 
 | 예정 PR | 작업 | 선행 PR | 함께 검토할 경계 |
 | --- | --- | --- | --- |
