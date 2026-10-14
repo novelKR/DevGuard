@@ -5,7 +5,7 @@
 Reference date: 2026-09-22; revised 2026-09-27 by design revision 1 and 2026-09-30 by design revision 2. Repository: `/Volumes/DevData/Projects/IdeaProjects/DevGuard`.
 English is the authoritative editorial source. [Reviewed Korean translations](../ko/planning/README.md) are maintained through the [translation registry](../translations.json).
 
-The contract baseline is DG-0: accounting, persistence and fake-backend tests. DG-1 is complete: its six implementation PRs delivered C01–C12, and its macOS SLO is qualified for release `0.1.0-6e7e065-94d85365` on the measured host and policy. Linux enforcement and CodeSpace integration remain unqualified. The [ledger](../../milestones.json) owns milestone IDs, dependencies and status. Individual milestone documents own work IDs, commit boundaries, tests, evidence and rollback.
+The contract baseline is DG-0: accounting, persistence and fake-backend tests. DG-1 is complete: its six implementation PRs delivered C01–C12, and its macOS SLO is qualified for release `0.1.0-6e7e065-94d85365` on the measured host and policy. CodeSpace's integration (CS-RG) is qualified on macOS for one exact combination; Linux enforcement remains unqualified. The [ledger](../../milestones.json) owns milestone IDs, dependencies and status. Individual milestone documents own work IDs, commit boundaries, tests, evidence and rollback.
 
 ## Reading order and ownership
 
@@ -22,7 +22,7 @@ The contract baseline is DG-0: accounting, persistence and fake-backend tests. D
 
 ## Dependencies
 
-> **Status:** CS-RG, including design revision 1's execution-ownership choices, is suspended as an implementation directive while the CS-RG integration-boundary revalidation is pending; no CS-RG unit may start. See the notice in the CS-RG plan. *Current state, 2026-10-12:* the owner directed CS-RG implementation as units U1–U6 in CodeSpace on 2026-10-02, outside this suspension; U1, its hardening, U2, U3, U4 and U5 are merged, and U6 is active. This plan's units remain suspended and not started.
+> **Status:** CS-RG, including design revision 1's execution-ownership choices, is suspended as an implementation directive while the CS-RG integration-boundary revalidation is pending; no CS-RG unit may start. See the notice in the CS-RG plan. *Current state, 2026-10-14:* the owner directed CS-RG implementation as units U1–U6 in CodeSpace on 2026-10-02, outside this suspension; U1 to U6 are merged and verified, and CS-RG is qualified on macOS for one exact combination. This plan's units remain suspended and not started.
 
 ```mermaid
 flowchart LR

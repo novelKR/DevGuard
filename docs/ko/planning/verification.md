@@ -14,7 +14,7 @@
 | V-DG1-SLO | 독립 CLI/daemon·개발·self-use | DG1-C12 개발/foreground 및 standalone control 측정 | 대상 호스트에서 release `0.1.0-6e7e065-94d85365`에 대해 qualified(2026-10-13, CodeSpace의 `codespace` 소비자를 포함한 정책: cold·warm 각 세 반복 모두 통과, 승격). 2026-09-26의 protocol-2는 `0.1.0-5daee5d-b3fa569e`를 qualified로 기록; CS-RG 기능을 선행 요구하지 않음 |
 | V-CS-DOC | CodeSpace 한·영 registry/site | paired hash·기존 docs tests·고정 환경 build·integrity·화면 검토 | 기존 명령 제공 |
 | V-CS-UPSTREAM | CodeSpace 기존 Codex qualification | pin/policy/format/dependency/adapter/PTY/filesystem/platform gates | 기존 제공, 실제 platform별 수행 |
-| V-CS-RG | CodeSpace 결합 | CSRG-C00 실행 경계 적합성, 한 프로세스 안의 혼합 실행을 포함한 C07 모드 동등성, C09 backend 결정, C08 승인·replay·관제 포화 SLO | 미구현 |
+| V-CS-RG | CodeSpace 결합 | CSRG-C00 실행 경계 적합성, 한 프로세스 안의 혼합 실행을 포함한 C07 모드 동등성, C09 backend 결정, C08 승인·replay·관제 포화 SLO | 대상 호스트에서 2026-10-14에 이 계획의 단위 대신 CodeSpace의 소유자 지시 단위 CSRG-U6으로 정확히 한 조합에 대해 qualified([qualification 보고서](https://github.com/novelKR/CodeSpace/blob/241cf6c4ee95111a70f581319ac04ee16beaf94e/docs/cs-rg-qualification-report.md)): 두 runner 모드와 pipe·PTY의 기능 행렬, 장애, authority 장애, 관제 경로 SLO, 한 gateway 안의 혼합 실행, 기존 `off` 경로 결정 |
 | V-P1 | 독립 Runner+Gateway 재시작 | P1R-C06의 동일 실행·fence·timeout·출력/unknown | 미구현 |
 | V-LINUX | 실제 Linux scope와 제품 조합 | DGL-C05/C06 controller·ancestor·권한·자손·SLO | 미구현; fake cgroup과 분리 |
 | V-CACHE / V-ADAPTER | cache/tool/executor | DGC-C06, DGA-C02/C04/C06/C08의 해당 조합 | 미구현 |

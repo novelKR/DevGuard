@@ -28,8 +28,8 @@
       "id": "planning-readme",
       "source": "docs/planning/README.md",
       "translation": "docs/ko/planning/README.md",
-      "reviewed_source_sha256": "0babde68472ae41a45cc7197346fb90c0181683f92d5a1936fca39f01c0fe799",
-      "reviewed_translation_sha256": "839a5aa85daeacdaf220f5956641e5d52bcf21eecca8baff678725001c1242aa"
+      "reviewed_source_sha256": "9876e83711058d7bb7b6f5180f42bcd325f4e862e8d7b3130a4058a447e7c26b",
+      "reviewed_translation_sha256": "aa4736bbed9b7ff4b5e2d11fbd1b6451b6e6b37b7f2218ca1fec15dc0d6a54d7"
     },
     {
       "id": "planning-codespace-integration",
@@ -42,8 +42,8 @@
       "id": "planning-consumer-readiness",
       "source": "docs/planning/consumer-readiness.md",
       "translation": "docs/ko/planning/consumer-readiness.md",
-      "reviewed_source_sha256": "17f9e5205199064d905f0fae2730baa6ee269b677d6dddd05b085e405fb2790f",
-      "reviewed_translation_sha256": "5a125fa4583da3de543db23c34af8ecabc6cb2de44810d5ab4d94644f285f372"
+      "reviewed_source_sha256": "7c2a2c56b4d82f176933852ddf521a8f61028413427e23cb04d2a8285cf04f90",
+      "reviewed_translation_sha256": "de95384d9a0a59349bb687aba97afe8707533fd9fe0834a173c058c75ed4734f"
     },
     {
       "id": "planning-decisions",
@@ -56,8 +56,8 @@
       "id": "planning-milestones-cs-rg",
       "source": "docs/planning/milestones/CS-RG.md",
       "translation": "docs/ko/planning/milestones/CS-RG.md",
-      "reviewed_source_sha256": "10bfcf3e4bad642445d38b86440cd4ae0788e23d1f32d1427645f99924eaccc5",
-      "reviewed_translation_sha256": "40b68c11e36f2bcbd7773a41176f5cffb3d39442724862c7d623af3756cf3ce7"
+      "reviewed_source_sha256": "8611b862436e72886a1297e36c3f28d2e5572c7fa07f4bd9f162fdcc928cab5a",
+      "reviewed_translation_sha256": "b4069b0875db471cf3c403880d31be9c9ffa6e1b01d158ab95fd88068be9cdfb"
     },
     {
       "id": "planning-milestones-dg-0",
@@ -112,8 +112,8 @@
       "id": "planning-verification",
       "source": "docs/planning/verification.md",
       "translation": "docs/ko/planning/verification.md",
-      "reviewed_source_sha256": "1827b33df20f2e89e18d2e30cabf256583bf67413e481fcde8b611066405a6b0",
-      "reviewed_translation_sha256": "b6149aea58970342f478ccd4e30346137381536a7b825508f915a98648b7b920"
+      "reviewed_source_sha256": "a2d35a4f5f3f733ad01514a613c3ab36801be467502e7707ee9b836bcc946d0b",
+      "reviewed_translation_sha256": "13f7ed4b423f7bd8110fb3942dc9d2d0ead667f06f644ee85e4e6013d14f99c6"
     },
     {
       "id": "operations",
