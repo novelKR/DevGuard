@@ -1,6 +1,8 @@
 # CodeSpace integration specification
 
 > **Status: suspended as an implementation directive.** The integration specification in this document, which assumes a CodeSpace-owned managed execution transport, must not be implemented. Observed-baseline entries describe CodeSpace at a fixed commit and remain facts; planned boundaries are suspended with the rest. This is pending the CS-RG integration-boundary revalidation, an owner-directed review of the CodeSpace integration plan; it is not a work unit. No replacement architecture has been approved; the owner decides after reviewing its results. This notice suspends directives only and relaxes no safety requirement. The text below is retained unchanged for historical traceability, except for a dated annotation marking the D3 dependency statement under "Backend decisions" as superseded by [design revision 2](../design-revision-2.md) (2026-09-30); that statement is no longer current.
+>
+> *Current state, 2026-10-14:* on 2026-10-14 the owner directed P1-RECOVERY's implementation in CodeSpace outside this suspension, as re-baselined in the [P1-RECOVERY plan](milestones/P1-RECOVERY.md#re-baseline-2026-10-14). The [recovery mode](#recovery-mode) section applies to that work; the rest of this suspension is unchanged.
 
 This is a future consumer specification. [Design revision 1](../design-revision-1.md) (2026-09-27) re-fixed its confirmation baseline at CodeSpace `b6e7ed22e2c730ac987297455e250cbd6e8e8b0c` and keeps the initial inspection baseline `e94d21475643608ad2a466256fb57266b86faa47` as history; the runtime paths below did not change between the two except for the patch helper's test reuse. It does not install a runtime pin. DG-1 remains independent; CS-RG begins adoption after DG1-C12, which is complete: release `0.1.0-5daee5d-b3fa569e` is macOS-qualified and is the pin candidate. Revision 1 keeps Codex `6b9826e3aa83b1a5947db50f4332cb9c65f1b340`, and any later pin change is a separate decision based on verification. Preserve existing authorization, approval, workspace, PTY and shutdown behavior. The 2026-09-26 review aligned this specification with DG-1's implemented consumer interface ([contracts](../contracts.md)); revision 1 revised its execution layer.
 
@@ -160,6 +162,8 @@ Expose such attempts in diagnostics rather than hiding them. Measure control req
 ## Recovery mode
 
 > **Status: suspended as an implementation directive.** Do not implement from this section while the CS-RG integration-boundary revalidation is pending. No replacement architecture has been approved, and no safety requirement is relaxed. The text is retained unchanged for historical traceability.
+>
+> *Current state, 2026-10-14:* this section is excepted from the suspension for P1-RECOVERY, which the owner directed on 2026-10-14; it applies together with the re-baseline in the [P1-RECOVERY plan](milestones/P1-RECOVERY.md#re-baseline-2026-10-14).
 
 Preserve all current mode termination policies. In the new independent Runner mode, distinguish normal shutdown, explicit service stop, planned detach and unexpected Gateway disconnect. Stop drains/terminates and reconciles; detach/disconnect lets the live Runner maintain original deadlines and I/O. InProcess is excluded. Runner/host loss remains uncertain until observed; records cannot recreate pipes or PTYs.
 

@@ -1,8 +1,29 @@
 # P1-RECOVERY — Gateway recovery with a surviving independent Runner
 
+> *Current state, 2026-10-14:* on 2026-10-14 the owner directed P1-RECOVERY's implementation in CodeSpace, one pull request per unit from P1R-C01 to P1R-C06, in order. Each unit starts on the owner's approval after the previous one is merged and verified; P1R-C01 is the active unit. The ledger records P1-RECOVERY as `in-progress`, qualification `not-run`, and the new mode is not a supported mode until P1R-C06 qualifies it. Where the [re-baseline](#re-baseline-2026-10-14) below differs from the rest of this plan, the re-baseline applies; the rest is kept unchanged as history.
+
 Owner: CodeSpace. Baseline implementation: `not-started`; qualification: `not-run`. Entry: CSRG-C08. Completion: Qualify repeated Gateway restart/reconnect while the same independent Runner retains processes, I/O and original deadlines. Preserve existing modes; exclude InProcess and I/O restoration after Runner restart.
 
 All work IDs, commit titles and logical PR labels below are **proposed values**, not future SHAs or GitHub numbers. Module paths describe planned responsibilities until implemented. Each added workspace crate updates the explicit dependency allowlist in the same PR without removing full-graph validation. The ledger owns actual status.
+
+## Re-baseline, 2026-10-14
+
+This plan was written against CS-RG's C-series units and logical groups, which were never built: CS-RG was implemented as the owner-directed units U1–U6 and qualified on macOS for one exact combination (CodeSpace `ca306ee`, DevGuard ledger `970acf5`). When P1-RECOVERY started, its entry, delivery and some prerequisites were re-based on what exists. Each unit's problem, invariants, tests and rollback below still apply; where this table differs from the text below it, the table applies.
+
+| Plan text | What exists | Re-baselined |
+| --- | --- | --- |
+| Entry CSRG-C08; group P1R-P1 follows CSRG-C08 | CSRG-C08 was not built | Entry is CS-RG `implemented` and `macos-qualified` (combination CodeSpace `ca306ee`) |
+| Three logical groups, P1R-P1 to P1R-P3, with two units each | CS-RG shipped one pull request per owner-directed unit | One CodeSpace pull request per unit, P1R-C01 to P1R-C06, merged in order; the groups below are history |
+| P1R-C01: independent startup and service ownership | The Gateway starts a managed worker, or attaches to an existing one with `--runner-socket` | The operator or a qualification harness starts the independent Runner, and the Gateway only connects to it. The independent Runner reads the consumer credential file itself ([ADR-001](../decisions.md#adr-001--one-registration-by-the-execution-owner)) |
+| P1R-C02: a separate process store with a single writer | The operations database holds patch operations and approvals, and without `--operations-db` it is in memory | Process records are a separate table, with a schema version, in the operations database. In the independent mode `--operations-db` is required, and one Gateway at a time writes it under an exclusive lock, waiting a bounded time for a previous Gateway to exit |
+| P1R-C03: atomic control/data session pairing | The Runner wire is one stream; no second lane exists | One connection. Control passes by a `Claim` that issues the next epoch, and every mutating request carries it |
+| P1R-C03: protected endpoint and credentials; reject wrong credentials | The current worker accepts exactly one connection. A same-UID check alone admits any process of that user | A `Claim` is refused while a live controller is attached, and checks the peer UID, the operations store ID and the epoch. While no Gateway is attached, any process of the same user can `Claim`; the operator guidance states this. The wrong-credential tests become a different UID, a `Claim` while a controller is attached and a different store ID |
+| P1R-C04: CS-RG attempt and approval mapping | Nothing links an approval to an attempt or a process | P1R-C02's records link approval, attempt and process for the first time |
+| P1R-C05: unresolved leases after owner loss | `Lookup` answers only the instance that owns an attempt, and CodeSpace's `codespace` consumer has one instance | After a Runner loss, the operator runbook checks the remaining attempts with the administrative `Quiescence` request, and a new Runner registers only after the old instance retires. The operator releases `off` occupancy process by process |
+| Per-unit `qualify-devguard.py recovery-*` commands | CS-RG added its harness in its last unit | P1R-C01 to P1R-C05 are verified by integration tests in CodeSpace CI; P1R-C06 adds every harness suite |
+| P1R-C06: a passed CS-RG baseline | The CS-RG baseline is candidate `ca306ee` | P1R-C06 also re-runs the CS-RG suites on the P1-RECOVERY candidate. Its scope is macOS `uds` in the independent mode with pipe and PTY, `off` and `required`; Linux `off` is checked in CI only |
+
+Releases, the DevGuard client pin, the Codex pin, installed services and policy do not change for this milestone without the owner's approval. Choices that a later unit depends on are confirmed with the owner when that unit starts.
 
 ## PR sequence and activation
 

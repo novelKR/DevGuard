@@ -28,15 +28,15 @@
       "id": "planning-readme",
       "source": "docs/planning/README.md",
       "translation": "docs/ko/planning/README.md",
-      "reviewed_source_sha256": "9876e83711058d7bb7b6f5180f42bcd325f4e862e8d7b3130a4058a447e7c26b",
-      "reviewed_translation_sha256": "aa4736bbed9b7ff4b5e2d11fbd1b6451b6e6b37b7f2218ca1fec15dc0d6a54d7"
+      "reviewed_source_sha256": "43e750d8a8eb25c95a259bd0e36b845dde1d3f47622cb983f959840f89aa1da5",
+      "reviewed_translation_sha256": "57ad51306e61ba7f0449002938648b133527f657074390dc8ed495f0831e2c57"
     },
     {
       "id": "planning-codespace-integration",
       "source": "docs/planning/codespace-integration.md",
       "translation": "docs/ko/planning/codespace-integration.md",
-      "reviewed_source_sha256": "1ed4902a3cc2a79853d796dc11a0c18a07b03534128eb13cdcf7b8957eaa3ed7",
-      "reviewed_translation_sha256": "a031b94fabb0df1bb0f5dd7f369155acd9d1da7d7af9d8c6999a4a6b5cd19bad"
+      "reviewed_source_sha256": "91285f54c19cbc6cb05b0bd174ce692605a7ce9b574e8fe8b567fe0af20b2907",
+      "reviewed_translation_sha256": "1b68176613a18ea27d4b950221f5d6d4efa200951c3a784d21f5f73b2df47695"
     },
     {
       "id": "planning-consumer-readiness",
@@ -49,8 +49,8 @@
       "id": "planning-decisions",
       "source": "docs/planning/decisions.md",
       "translation": "docs/ko/planning/decisions.md",
-      "reviewed_source_sha256": "86688f12eccfd19b267f04d65412260302c1243395972dcb03bf739fb82a5e54",
-      "reviewed_translation_sha256": "eb70d0926852578a10b29c3767df0702dd7f9a48fa2bc2eb04afc1b6b4dbba1f"
+      "reviewed_source_sha256": "f36de4224c3a41b2089210043d011015949929fe3a254801c7871f83c708dd13",
+      "reviewed_translation_sha256": "2c42541f4048a7804e1cd5481334f5cacc49e7ffaa05837da7af7ec67823df49"
     },
     {
       "id": "planning-milestones-cs-rg",
@@ -98,8 +98,8 @@
       "id": "planning-milestones-p1-recovery",
       "source": "docs/planning/milestones/P1-RECOVERY.md",
       "translation": "docs/ko/planning/milestones/P1-RECOVERY.md",
-      "reviewed_source_sha256": "35cd557b220a40978c76be300560007fc117f64dcd0b4182e01771a209fc12d5",
-      "reviewed_translation_sha256": "b605ed445a446c1a547ee0786f6de179a305351cc2a1fe7783b53d95494267b1"
+      "reviewed_source_sha256": "c7d9d850cf6b5be0969b01f6bf0b5106ea7278c7cbe3731a03e29220f13196e2",
+      "reviewed_translation_sha256": "78838ec433470881b648d141b91dfef3bbf1cb9bb84b4d1101e2c6af021b066d"
     },
     {
       "id": "planning-pr-delivery",
