@@ -1,6 +1,6 @@
 # P1-RECOVERY — 독립 Runner 생존 중 Gateway 복구
 
-> *2026-10-14 현재 상태:* 소유자는 2026-10-14에 P1-RECOVERY 구현을 CodeSpace에서 P1R-C01부터 P1R-C06까지 단위마다 PR 하나로 차례로 진행하도록 지시했습니다. 각 단위는 앞 단위가 병합·검증된 뒤 소유자의 승인으로 시작합니다. P1R-C01과 P1R-C02는 병합·검증되었고(novelKR/CodeSpace#102와 #103, CodeSpace `main` `5976df0`), 지금 진행하는 단위는 P1R-C03입니다. 원장은 P1-RECOVERY를 `in-progress`, qualification `not-run`으로 기록하고, 새 모드는 P1R-C06의 qualification 전까지 지원 모드가 아닙니다. 아래 [재기준](#재기준-2026-10-14)이 이 계획의 나머지와 다르면 재기준을 따르며, 나머지는 이력으로 바꾸지 않고 남깁니다.
+> *2026-10-15 현재 상태:* 소유자는 2026-10-14에 P1-RECOVERY 구현을 CodeSpace에서 P1R-C01부터 P1R-C06까지 단위마다 PR 하나로 차례로 진행하도록 지시했습니다. 각 단위는 앞 단위가 병합·검증된 뒤 소유자의 승인으로 시작합니다. P1R-C01부터 P1R-C03까지 병합·검증되었고(novelKR/CodeSpace#102, #103, #104, CodeSpace `main` `1fda789`), 지금 진행하는 단위는 P1R-C04입니다. 원장은 P1-RECOVERY를 `in-progress`, qualification `not-run`으로 기록하고, 새 모드는 P1R-C06의 qualification 전까지 지원 모드가 아닙니다. 아래 [재기준](#재기준-2026-10-14)이 이 계획의 나머지와 다르면 재기준을 따르며, 나머지는 이력으로 바꾸지 않고 남깁니다.
 
 소유 저장소: CodeSpace. 상태: `not-started` / `not-run`. 진입: CSRG-C08. 완료: 운영자 선택 모드에서 독립 Runner가 기존 프로세스·입출력·timeout을 계속 소유하고 Gateway 반복 재시작과 재연결을 복구한다. InProcess 및 Runner 자체 재시작 후 PTY 복원은 최초 범위에 포함하지 않는다.
 
