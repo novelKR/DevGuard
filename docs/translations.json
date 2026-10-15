@@ -28,8 +28,8 @@
       "id": "planning-readme",
       "source": "docs/planning/README.md",
       "translation": "docs/ko/planning/README.md",
-      "reviewed_source_sha256": "c333db5c187d69ccda45bf7b6c802af0da7a5976f9702606035415b5d9be2e0d",
-      "reviewed_translation_sha256": "d6b4ee307c134feb800496c27ad1a37fd59b0b848ee0b3de7c9840d55a932db7"
+      "reviewed_source_sha256": "6d35c252ddef36c799c0f0d941570c9ad9bb203d302997a4cbff62b9e3358c45",
+      "reviewed_translation_sha256": "e25aeffb9b2a560b78ec5438061c830c1f9dbee65830c526a6b9ed7881cd1e14"
     },
     {
       "id": "planning-codespace-integration",
@@ -98,8 +98,8 @@
       "id": "planning-milestones-p1-recovery",
       "source": "docs/planning/milestones/P1-RECOVERY.md",
       "translation": "docs/ko/planning/milestones/P1-RECOVERY.md",
-      "reviewed_source_sha256": "f066f0c38ad4e615196f55f249ac40e100f83b7c4e604af3e9e331641ccb0672",
-      "reviewed_translation_sha256": "8dab9b97c4feb7521c9630155294afd582a4a4a25dc932af3f56cf924d65ae3e"
+      "reviewed_source_sha256": "adfa84758db9b793381a7a04f76403751c8180b81a1530b16b736a4d79ae374d",
+      "reviewed_translation_sha256": "fe62c68770449ec7f0ea67297c42dc222c1b48380d674774989880473aa29bd7"
     },
     {
       "id": "planning-pr-delivery",
