@@ -51,6 +51,8 @@ devguardd status
 
 `package.py` builds a release package from a clean tree. `install` must run from that package. It refuses while an authority serves, while the agent exists, or without the existing authority state. It copies the release to an immutable `releases/<release-id>` and starts it as the current user's LaunchAgent `io.github.novelkr.devguard`, which runs `releases/<release-id>/bin/devguardd serve`. It selects the release only after verifying that launchd runs exactly that binary. `devguardd status` reports the installed service and exits 1 unless it runs the verified current release. Replacing a release is an upgrade (C11, below). See [contracts](contracts.md#installation-and-the-current-user-service).
 
+`package.py` remaps the checkout, the Cargo home and the toolchain inside the binaries, pins the macOS deployment target to 14.0, and refuses a build that still names a build path or the builder's home. The binaries therefore carry no user name, and two checkouts of one commit built with the same toolchain and SDK make the same release id. A release that the release workflow published is installed from its download instead; see [Installing a published release](#installing-a-published-release).
+
 A candidate build is verified under a parent lease of the running service:
 
 ```sh
@@ -91,6 +93,58 @@ The host must be set aside for the whole run. It takes about five hours: two com
 `devguard exec [--project ID] [--adapter auto|generic|cargo|cargo-pipeline] [--wait DURATION] [--cpu MILLICPU] [--memory SIZE] [--tasks N] [--receipt PATH] [--lease CONSUMER/GENERATION/ATTEMPT --lease-token-fd N] -- PROGRAM [ARGS...]` admits the command, starts it through `devguard-launch` and waits for it. The program and its arguments follow `--`, and no shell is used. It exits with the command's status or ends by its signal, and exits 125 when nothing was started. Without `--wait` a denial ends it at once; `--wait` retries capacity and pressure denials until the deadline, and refuses at once a request larger than the host's work capacity. `--receipt` writes a private JSON receipt. `--lease` makes the command a child of that parent lease, admitted against its remainder with the token read from descriptor N. `devguard doctor` prints a JSON diagnosis, and `--require admission,registration,macos-cooperative` makes it fail unless each requirement holds. See [contracts](contracts.md#command-line-owner).
 
 `--adapter cargo` fits `cargo`'s compiler jobs to the reservation, and `--adapter cargo-pipeline` shares one jobserver across the Cargo runs of a program such as a validation script. `auto`, the default, selects the Cargo adapter for `cargo` commands that compile. A reservation that cannot fit one Cargo job (1 CPU and 2 GiB) is refused. See [contracts](contracts.md#cargo-adapter).
+
+On a terminal, `devguardd` and `devguard` show their own refusals and failures in bold red, an unknown outcome in yellow, an interruption or a failure of the tool itself in magenta, and the success of `devguardd init` in green. The scripts (`validate.py`, `qualify.py`, `measure.py`, `package.py`, `release.py`, `check_docs.py` and the CI helpers) color the status words of the lines a person reads in the same way, with details dim and headers bold. JSON, reports, receipts, evidence, manifests and service logs are never colored, and neither is anything written to a file or a pipe. Color needs a terminal, `NO_COLOR` unset and `TERM` other than `dumb`. Each script also takes `--color auto|always|never`: `auto` is the default, and `never` writes exactly the text without color.
+
+## Installing a published release
+
+The release workflow (`.github/workflows/release.yml`) publishes a package that an Apple silicon Mac with macOS 14 or later can install. A manual run on `main` builds it once, on a macOS arm64 runner with Rust 1.95.0 from a clean checkout, and only after "Required checks" has passed on that commit. It attests the build provenance of the archive and the manifest, and publishes a GitHub pre-release whose tag and title are the release id, with three assets:
+
+- `devguard-<release-id>-aarch64-apple-darwin.tar.gz`, which extracts to the package directory `<release-id>/`;
+- `MANIFEST.json`, the package's manifest;
+- `SHA256SUMS`, the SHA-256 of the other two.
+
+A published release is a functional artifact (`slo_qualified: false`) like any package; the milestone ledger names the qualified release. An existing release or tag is never replaced. A pull request that changes what a package is built from builds it twice, from two checkout paths, and fails when the release ids differ. See [contracts](contracts.md#installation-and-the-current-user-service).
+
+Download a release with `gh` or `curl`, not a browser. The binaries carry only the linker's ad-hoc signature, without Developer ID signing or notarization, so macOS may refuse to run them once a browser has marked the download as quarantined. Verifying the provenance needs `gh` signed in to GitHub.
+
+```sh
+RELEASE=<release-id>
+ARCHIVE="devguard-$RELEASE-aarch64-apple-darwin.tar.gz"
+mkdir "$RELEASE-download" && cd "$RELEASE-download"
+gh release download "$RELEASE" --repo novelKR/DevGuard
+# or, without gh:
+for asset in "$ARCHIVE" MANIFEST.json SHA256SUMS; do
+  curl -fsSLO "https://github.com/novelKR/DevGuard/releases/download/$RELEASE/$asset"
+done
+shasum -a 256 -c SHA256SUMS
+for asset in "$ARCHIVE" MANIFEST.json; do
+  gh attestation verify "$asset" --repo novelKR/DevGuard \
+    --signer-workflow novelKR/DevGuard/.github/workflows/release.yml \
+    --source-ref refs/heads/main --deny-self-hosted-runners
+done
+tar -xzf "$ARCHIVE"
+cmp MANIFEST.json "$RELEASE/MANIFEST.json"
+```
+
+`shasum` must report `OK` for both files, and `gh attestation verify` must verify both as built by this repository's release workflow from `main`. The archive extracts to `<release-id>/`, which holds exactly `MANIFEST.json` and the three binaries in `bin/`: a package that `install` and `stage` accept, after their own checks of every hash.
+
+On a host without DevGuard, the package's own `devguardd` creates the authority state and then installs the release; no source checkout is needed:
+
+```sh
+"$RELEASE/bin/devguardd" init
+"$RELEASE/bin/devguardd" install --package "$PWD/$RELEASE"
+"$RELEASE/bin/devguardd" status
+```
+
+On a host whose service runs an earlier release, stage the package and upgrade to it (C11, above):
+
+```sh
+"$RELEASE/bin/devguardd" stage --package "$PWD/$RELEASE"
+"$HOME/Library/Application Support/DevGuard/releases/$RELEASE/bin/devguard" upgrade --release "$RELEASE"
+```
+
+`install` and `stage` copy the release into `releases/<release-id>`, so the download directory can be removed afterwards.
 
 ## Canonical ownership and paths
 

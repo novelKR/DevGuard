@@ -13,6 +13,7 @@ import sys
 import time
 import uuid
 
+import devguard_color as color
 from validate import PINNED_RUST, ROOT, source_contract, source_fingerprint
 
 SUITES = {
@@ -191,6 +192,10 @@ def not_run_cases(output, files):
     return found
 
 
+def stage_line(name,stage):
+    return name+": "+color.status(stage["status"])+color.paint(" ("+str(stage["tests_passed"])+")","dim")
+
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument("suite",choices=sorted(SUITES))
@@ -199,7 +204,9 @@ def main():
     # Only for environments known to be unable to produce a case (for example
     # hosted runners that clamp every process): the report stays incomplete.
     parser.add_argument("--allow-incomplete",action="store_true")
+    color.add_option(parser)
     args=parser.parse_args()
+    color.choose(args.color)
     run_id=datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")+"-"+uuid.uuid4().hex[:8]
     output=(args.output or ROOT/"target/qualification"/(args.suite+"-"+run_id)).resolve()
     if not output.is_relative_to(ROOT) or subprocess.run(["git","check-ignore","-q",str(output/"report.json")],cwd=ROOT).returncode:
@@ -267,7 +274,7 @@ def main():
                 stage["not_run_cases"]=not_run_cases(output,files)
                 skipped.extend(stage["not_run_cases"])
             stage["status"]="incomplete" if stage.get("not_run_cases") else "passed"
-            print(name+": "+stage["status"]+" ("+str(stage["tests_passed"])+")",flush=True)
+            print(stage_line(name,stage),flush=True)
         if source_fingerprint()!=before: raise RuntimeError("source changed during qualification")
         # A case the environment could not produce is not a pass.
         report["status"]="incomplete" if skipped else "passed"
@@ -277,7 +284,7 @@ def main():
         (output/"report.json").write_text(json.dumps(report,indent=2)+"\n")
         print(json.dumps({"status":report["status"],"report":str(output/"report.json")}))
     if report["status"]=="incomplete" and args.allow_incomplete:
-        print("incomplete accepted by --allow-incomplete; the report still records it",flush=True)
+        print(color.paint("incomplete accepted by --allow-incomplete; the report still records it","warn"),flush=True)
         return 0
     return {"passed":0,"incomplete":2,"not_run":2}.get(report["status"],1)
 

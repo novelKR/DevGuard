@@ -2,6 +2,7 @@ use devguard_contract::{Error, ErrorCode, Result};
 use devguard_core::AuthorityStorage;
 use devguard_daemon::{
     candidate::{Candidate, CandidateSpec, Closure},
+    color::{self, Tone},
     config::{self, HostConfig},
     install::{self, InstallOptions, Launchctl},
     paths::AuthorityPaths,
@@ -117,7 +118,13 @@ fn run() -> Result<()> {
         ),
         "init" => {
             config::initialize(&paths)?;
-            println!("Explicit bootstrap complete; runtime admission remains unavailable.");
+            println!(
+                "{}",
+                color::stdout(
+                    Tone::Pass,
+                    "Explicit bootstrap complete; runtime admission remains unavailable."
+                )
+            );
         }
         "check" => {
             paths.validate_existing()?;
@@ -151,7 +158,7 @@ fn run() -> Result<()> {
 
 fn main() {
     if let Err(error) = run() {
-        eprintln!("{error}");
+        eprintln!("{}", color::stderr(Tone::Fail, &error.to_string()));
         std::process::exit(1);
     }
 }

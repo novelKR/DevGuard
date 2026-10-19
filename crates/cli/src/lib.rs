@@ -19,6 +19,7 @@ pub mod signals;
 pub mod terminal;
 
 use devguard_contract::Result;
+use devguard_daemon::color::{self, Tone};
 use devguard_daemon::install::{InstallOptions, Launchctl};
 use devguard_daemon::paths::AuthorityPaths;
 use devguard_daemon::upgrade::UpgradeOptions;
@@ -73,7 +74,10 @@ pub fn run(
     let command = match args::parse(args) {
         Ok(command) => command,
         Err(error) => {
-            eprintln!("devguard: {}\n\n{USAGE}", error.message);
+            eprintln!(
+                "{}\n\n{USAGE}",
+                color::stderr(Tone::Fail, &format!("devguard: {}", error.message))
+            );
             return Exit::Code(exec::NOT_STARTED);
         }
     };
@@ -89,14 +93,14 @@ pub fn run(
         args::Command::Exec(exec) => match locate() {
             Ok((paths, helper)) => exec::run(exec, &paths, &helper),
             Err(error) => {
-                eprintln!("devguard: {}; nothing was started", error.message);
+                fail(&format!("devguard: {}; nothing was started", error.message));
                 Exit::Code(exec::NOT_STARTED)
             }
         },
         args::Command::Doctor(doctor) => match locate() {
             Ok((paths, helper)) => doctor::run(doctor, &paths, &helper),
             Err(error) => {
-                eprintln!("devguard: {}", error.message);
+                fail(&format!("devguard: {}", error.message));
                 Exit::Code(1)
             }
         },
@@ -117,7 +121,7 @@ pub fn run(
                 )
             }),
             Err(error) => {
-                eprintln!("devguard: {}", error.message);
+                fail(&format!("devguard: {}", error.message));
                 Exit::Code(1)
             }
         },
@@ -132,7 +136,7 @@ pub fn run(
                 )
             }),
             Err(error) => {
-                eprintln!("devguard: {}", error.message);
+                fail(&format!("devguard: {}", error.message));
                 Exit::Code(1)
             }
         },
@@ -146,18 +150,29 @@ pub fn run(
                 )
             }),
             Err(error) => {
-                eprintln!("devguard: {}", error.message);
+                fail(&format!("devguard: {}", error.message));
                 Exit::Code(1)
             }
         },
         args::Command::TestCandidate(candidate) => match locate() {
             Ok((paths, _)) => candidate::run_args(&candidate, &paths),
             Err(error) => {
-                eprintln!("devguard: {}; nothing was started", error.message);
+                fail(&format!("devguard: {}; nothing was started", error.message));
                 Exit::Code(exec::NOT_STARTED)
             }
         },
     }
+}
+
+/// Write one of the CLI's own lines to standard error, in `tone` on a terminal that takes
+/// color; elsewhere the line is unchanged.
+pub(crate) fn stderr_line(tone: Tone, line: &str) {
+    eprintln!("{}", color::stderr(tone, line));
+}
+
+/// Write a refusal or failure of the CLI to standard error.
+pub(crate) fn fail(line: &str) {
+    stderr_line(Tone::Fail, line);
 }
 
 static CANCEL: AtomicBool = AtomicBool::new(false);
@@ -193,12 +208,12 @@ fn operate<T: serde::Serialize>(operation: impl FnOnce() -> Result<T>) -> Exit {
                 Exit::Code(0)
             }
             Err(_) => {
-                eprintln!("devguard: the report could not be encoded");
+                stderr_line(Tone::Internal, "devguard: the report could not be encoded");
                 Exit::Code(1)
             }
         },
         Err(error) => {
-            eprintln!("devguard: {:?}: {}", error.code, error.message);
+            fail(&format!("devguard: {:?}: {}", error.code, error.message));
             Exit::Code(1)
         }
     }

@@ -29,6 +29,7 @@ import threading
 import time
 import traceback
 
+import devguard_color as color
 from validate import source_fingerprint
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -509,7 +510,7 @@ def stage_binary(binary, stage, expected):
     shutil.copy2(binary, staged)
     digest = sha256(staged)
     if digest != expected:
-        raise SystemExit("measure: the staged qualify binary differs from the one that was hashed")
+        color.refuse("measure: the staged qualify binary differs from the one that was hashed")
     return staged, digest
 
 
@@ -520,7 +521,7 @@ def remove_stage(stage, attempts=5):
         if not stage.exists():
             return True
         time.sleep(1)
-    print(f"measure: could not remove {stage}", flush=True)
+    print(color.paint(f"measure: could not remove {stage}", "warn"), flush=True)
     return False
 
 
@@ -1529,7 +1530,7 @@ def await_front(fixture, limit=120):
         time.sleep(1)
         if frontmost_pid() == fixture.process.pid:
             return True
-        print("measure: waiting for the fixture window to be frontmost; click it once", flush=True)
+        print(color.paint("measure: waiting for the fixture window to be frontmost; click it once", "warn"), flush=True)
         time.sleep(4)
     return False
 
@@ -1540,11 +1541,16 @@ def other_chrome():
     return [int(pid) for pid in listing.split()]
 
 
+def repetition_line(name, verdict, reasons):
+    """A repetition's verdict for the console: its name, the verdict and the reasons."""
+    return f"measure: {name} {color.status(verdict)} {color.paint(str(reasons), 'dim')}"
+
+
 def repetition_run(args, release, plan, combination, repetition, out, work, fixture):
     name = f"{combination}-{repetition}"
     raw = out / name
     raw.mkdir()
-    print(f"measure: {name} starting", flush=True)
+    print(f"measure: {color.paint(name, 'bold')} starting", flush=True)
     report = {"schema": "devguard-slo-repetition/v2", "combination": combination, "repetition": repetition,
               "rehearsal": args.rehearsal, "headless": args.headless, "chrome": fixture.version,
               "fixture_sha256": sha256(FIXTURE), "intervals": {}}
@@ -1555,7 +1561,7 @@ def repetition_run(args, release, plan, combination, repetition, out, work, fixt
         report["service_after"] = service_state(release)
         report["verdict"], report["reasons"] = verdict, reasons
         (raw / "report.json").write_text(json.dumps(report, indent=2) + "\n")
-        print(f"measure: {name} {verdict} {reasons}", flush=True)
+        print(repetition_line(name, verdict, reasons), flush=True)
         return report
 
     if not report["service_before"]["runs_release"]:
@@ -1596,35 +1602,35 @@ def protocol(args):
         plan["combinations"] = args.combinations.split(",")
     if args.repetitions is not None:
         if args.repetitions < 1:
-            raise SystemExit("measure: --repetitions must be at least 1")
+            color.refuse("measure: --repetitions must be at least 1")
         plan["repetitions"] = args.repetitions
     out, work = args.out.resolve(), args.work.resolve()
     for path in (out, work):
         if path.exists():
-            raise SystemExit(f"measure: {path} already exists")
+            color.refuse(f"measure: {path} already exists")
         if path.is_relative_to(ROOT) and subprocess.run(["git", "check-ignore", "-q", str(path)], cwd=ROOT).returncode:
-            raise SystemExit(f"measure: {path} is inside this checkout and not ignored")
+            color.refuse(f"measure: {path} is inside this checkout and not ignored")
     if platform.system() != "Darwin":
-        raise SystemExit("measure: the macOS protocol runs only on macOS")
+        color.refuse("measure: the macOS protocol runs only on macOS")
     if not CHROME.exists():
-        raise SystemExit("measure: the fixture needs Google Chrome in /Applications")
+        color.refuse("measure: the fixture needs Google Chrome in /Applications")
     # A headful fixture is brought to the front through LaunchServices, which must not find
     # another Chrome; a headless one is never activated.
     if not args.headless and other_chrome():
-        raise SystemExit("measure: quit Google Chrome first; the fixture must be the only Chrome")
+        color.refuse("measure: quit Google Chrome first; the fixture must be the only Chrome")
     rustc = run_text("rustc", "--version") or ""
     if not rustc.startswith(f"rustc {PINNED_RUST} "):
-        raise SystemExit(f"measure: the Cargo load needs Rust {PINNED_RUST} first in PATH")
+        color.refuse(f"measure: the Cargo load needs Rust {PINNED_RUST} first in PATH")
     release = Release(args.release)
     service = service_state(release)
     if not service["runs_release"]:
-        raise SystemExit(f"measure: the service does not run {args.release}: {service}")
+        color.refuse(f"measure: the service does not run {args.release}: {service}")
     charged = journal_counts()
     if "error" in charged or charged["charged_attempts"] or charged["charged_leases"]:
-        raise SystemExit(f"measure: the service has charged work or an unreadable journal: {charged}")
+        color.refuse(f"measure: the service has charged work or an unreadable journal: {charged}")
     diagnosis = doctor(release)
     if not diagnosis["satisfied"] or not diagnosis["configuration_fingerprint"]:
-        raise SystemExit(f"measure: devguard doctor does not report a ready service: {diagnosis}")
+        color.refuse(f"measure: devguard doctor does not report a ready service: {diagnosis}")
     out.mkdir(parents=True)
     work.mkdir(parents=True)
     manifest = json.loads(release.manifest.read_text())
@@ -1829,6 +1835,7 @@ def main():
     macos.add_argument("--headless", action="store_true", help="functional only; always inconclusive")
     macos.add_argument("--combinations")
     macos.add_argument("--repetitions", type=int)
+    color.add_option(macos)
     check = commands.add_parser("fixture-check", help="run the fixture alone for the functional suite")
     check.add_argument("--out", type=Path, required=True)
     check.add_argument("--seconds", type=float, default=15)
@@ -1840,6 +1847,7 @@ def main():
         return fixture_check(args)
     if args.command == "promote":
         return promote(args)
+    color.choose(args.color)
     args.seed_source = random.SystemRandom()
 
     def interrupted(signum, frame):
@@ -1852,12 +1860,12 @@ def main():
         code = protocol(args)
     except KeyboardInterrupt:
         code = 130
-        print("measure: interrupted; nothing is promoted", flush=True)
+        print(color.paint("measure: interrupted; nothing is promoted", "internal"), flush=True)
     except SystemExit:
         raise
     except Exception:
         traceback.print_exc()
-        print("measure: the harness failed; nothing is promoted", flush=True)
+        print(color.paint("measure: the harness failed; nothing is promoted", "internal"), flush=True)
     finally:
         settle_live()
     return code

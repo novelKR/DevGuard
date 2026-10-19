@@ -19,6 +19,8 @@ import sys
 import time
 import uuid
 
+import devguard_color as color
+
 ROOT = Path(__file__).resolve().parents[1]
 PINNED_RUST = "1.95.0"
 POLICY = "scripts/ci-policy.json"
@@ -201,7 +203,9 @@ def main():
                         + "; default: every stage except whitespace")
     parser.add_argument("--diff-base", metavar="COMMIT",
                         help="check whitespace in COMMIT..HEAD; without it the whole tree at HEAD is checked")
+    color.add_option(parser)
     args = parser.parse_args()
+    color.choose(args.color)
     try:
         selected = parse_stages(args.stages) if args.stages is not None else list(DEFAULT_STAGES)
     except ValueError as error:
@@ -283,7 +287,7 @@ def main():
                 dependency_boundary(args.offline, environment, output)
                 current["status"] = "passed"
             failed |= current["status"] != "passed"
-            print(name + ": " + current["status"], flush=True)
+            print(name + ": " + color.status(current["status"]), flush=True)
         current = None
         if source_fingerprint() != before:
             raise RuntimeError("source inputs changed during qualification")

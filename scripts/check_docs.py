@@ -8,6 +8,8 @@ import re
 import sys
 from urllib.parse import unquote
 
+import devguard_color as color
+
 ROOT = Path(__file__).resolve().parents[1]
 # Numbering is explicit: design revision 1 added CSRG-C00 in group CSRG-P0.
 UNITS = {"DG1": range(1, 13), "CSRG": range(0, 10), "P1R": range(1, 7), "DGL": range(1, 7),
@@ -160,7 +162,9 @@ def main():
     sub = parser.add_subparsers(dest="command")
     record = sub.add_parser("record", help="Record hashes only after reviewing both documents")
     record.add_argument("--id", required=True)
+    color.add_option(parser)
     args = parser.parse_args()
+    color.choose(args.color)
     try:
         if args.command == "record":
             data = registry(ROOT)
@@ -171,11 +175,11 @@ def main():
             for field in ("source", "translation"):
                 pair["reviewed_" + field + "_sha256"] = digest(ROOT / pair[field])
             (ROOT / "docs/translations.json").write_text(json.dumps(data, indent=2) + "\n")
-            print("Recorded reviewed pair: " + args.id)
+            print(color.paint("Recorded reviewed pair:", "pass") + " " + args.id)
         else:
             print(json.dumps(check()))
     except (ValueError, KeyError, OSError) as error:
-        print(str(error), file=sys.stderr)
+        print(color.paint(str(error), "fail", sys.stderr), file=sys.stderr)
         return 1
     return 0
 
