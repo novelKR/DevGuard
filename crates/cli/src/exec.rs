@@ -21,6 +21,7 @@ use devguard_contract::{
     AdmissionRequest, AttemptKey, AttemptPhase, AttemptRecord, ErrorCode, ReleaseReason,
     ResourceIntent, Secret,
 };
+use devguard_daemon::color::Tone;
 use devguard_daemon::paths::AuthorityPaths;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
@@ -88,7 +89,7 @@ impl Run {
 
     fn not_started(&mut self, reason: impl Into<String>) -> Exit {
         let reason = reason.into();
-        eprintln!("devguard: {reason}; nothing was started");
+        crate::fail(&format!("devguard: {reason}; nothing was started"));
         self.receipt.result = ExecResult::NotStarted;
         self.receipt.reason = Some(reason);
         Exit::Code(NOT_STARTED)
@@ -389,7 +390,10 @@ impl Run {
             // helper claimed is still settled only by its scope.
             self.abandon(service, key, AbandonReason::HelperExited);
             self.observe_after_reap(service, key);
-            eprintln!("devguard: {reason}; whether the command started is unknown");
+            crate::stderr_line(
+                Tone::Warn,
+                &format!("devguard: {reason}; whether the command started is unknown"),
+            );
             self.receipt.result = ExecResult::Uncertain;
             self.receipt.reason = Some(reason);
             return Step::Finished(exit);
@@ -441,14 +445,20 @@ impl Run {
             (None, None) => "the helper ended before READY".to_string(),
         };
         if let Exit::Signal(signal) = exit {
-            eprintln!("devguard: interrupted by signal {signal} before the command started");
+            crate::stderr_line(
+                Tone::Internal,
+                &format!("devguard: interrupted by signal {signal} before the command started"),
+            );
             self.receipt.reason = Some(reason);
             return Step::Finished(Exit::Signal(signal));
         }
         // A signal received and forwarded during the launch cancels the run,
         // even when the helper ended for another reason.
         if let Some(signal) = interrupted {
-            eprintln!("devguard: cancelled by signal {signal} before the command started");
+            crate::stderr_line(
+                Tone::Internal,
+                &format!("devguard: cancelled by signal {signal} before the command started"),
+            );
             self.receipt.wait.cancelled_by_signal = Some(signal);
             self.receipt.reason = Some(format!("{reason}; cancelled by signal {signal}"));
             return Step::Finished(Exit::Signal(signal));
@@ -569,7 +579,9 @@ pub fn run(args: ExecArgs, paths: &AuthorityPaths, helper: &Path) -> Exit {
         Some(path) => match ReceiptFile::create(path) {
             Ok(file) => Some(file),
             Err(error) => {
-                eprintln!("devguard: cannot create the receipt file: {error}; nothing was started");
+                crate::fail(&format!(
+                    "devguard: cannot create the receipt file: {error}; nothing was started"
+                ));
                 return Exit::Code(NOT_STARTED);
             }
         },
@@ -611,7 +623,10 @@ pub fn run(args: ExecArgs, paths: &AuthorityPaths, helper: &Path) -> Exit {
     run.receipt.finished_unix_ms = crate::receipt::unix_ms();
     if let Some(file) = receipt_file {
         if let Err(error) = file.write(&run.receipt) {
-            eprintln!("devguard: cannot write the receipt: {error}");
+            crate::stderr_line(
+                Tone::Internal,
+                &format!("devguard: cannot write the receipt: {error}"),
+            );
         }
     }
     exit

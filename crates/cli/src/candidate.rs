@@ -27,6 +27,7 @@ use devguard_contract::{
     Secret,
 };
 use devguard_daemon::candidate::{budget_text, key_text, CandidateSpec};
+use devguard_daemon::color::Tone;
 use devguard_daemon::config::{self, HostConfig};
 use devguard_daemon::paths::{read_private, AuthorityPaths};
 use serde::Serialize;
@@ -728,10 +729,10 @@ pub fn run(plan: &Plan, env: &Environment) -> Exit {
         finished_unix_ms: 0,
     };
     if let Err(error) = std::fs::DirBuilder::new().mode(0o700).create(&plan.report) {
-        eprintln!(
+        crate::fail(&format!(
             "devguard: cannot create the report directory {}: {error}; nothing was started",
             plan.report.display()
-        );
+        ));
         return Exit::Code(crate::exec::NOT_STARTED);
     }
     let mut orchestrator = Orchestrator {
@@ -774,7 +775,10 @@ pub fn run(plan: &Plan, env: &Environment) -> Exit {
             file.sync_all()
         });
     if let Err(error) = written {
-        eprintln!("devguard: cannot write the report: {error}");
+        crate::stderr_line(
+            Tone::Internal,
+            &format!("devguard: cannot write the report: {error}"),
+        );
         return Exit::Code(1);
     }
     println!(
@@ -903,14 +907,16 @@ pub fn run_args(args: &CandidateArgs, paths: &AuthorityPaths) -> Exit {
     let plan = match plan(args, &environment) {
         Ok(plan) => plan,
         Err(error) => {
-            eprintln!("devguard: {}; nothing was started", error.message);
+            crate::fail(&format!("devguard: {}; nothing was started", error.message));
             return Exit::Code(crate::exec::NOT_STARTED);
         }
     };
     let executable = match std::env::current_exe() {
         Ok(executable) => executable,
         Err(error) => {
-            eprintln!("devguard: cannot locate this CLI: {error}; nothing was started");
+            crate::fail(&format!(
+                "devguard: cannot locate this CLI: {error}; nothing was started"
+            ));
             return Exit::Code(crate::exec::NOT_STARTED);
         }
     };
