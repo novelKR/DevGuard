@@ -20,6 +20,8 @@ from pathlib import Path
 import re
 import subprocess
 
+import devguard_color as color
+
 ROOT = Path(__file__).resolve().parents[1]
 POLICY = "scripts/ci-policy.json"
 SCHEMA = "devguard-ci-plan/v1"
@@ -193,11 +195,19 @@ def summary(plan):
     return "\n".join(lines) + "\n"
 
 
+def plan_line(plan):
+    """The plan in one line for the job log."""
+    return (color.paint("CI plan:", "bold") + f" {plan['profile']}; repository checks "
+            f"{', '.join(plan['repository_stages'])}; Rust {'selected' if plan['rust'] else 'not selected'}")
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--base", help="print the plan for the committed diff BASE..HEAD instead")
     parser.add_argument("--head", default="HEAD")
+    color.add_option(parser)
     args = parser.parse_args(argv)
+    color.choose(args.color)
     try:
         if args.base:
             policy, digest = read_policy()
@@ -216,10 +226,9 @@ def main(argv=None):
         if os.environ.get("GITHUB_STEP_SUMMARY"):
             with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as handle:
                 handle.write(summary(plan))
-        print(f"CI plan: {plan['profile']}; repository checks {', '.join(plan['repository_stages'])}; "
-              f"Rust {'selected' if plan['rust'] else 'not selected'}")
+        print(plan_line(plan))
     except (OSError, ValueError, KeyError, TypeError, subprocess.CalledProcessError, PlanError) as error:
-        raise SystemExit(f"CI planning failed ({error}); no reduced coverage is authorized")
+        color.refuse(f"CI planning failed ({error}); no reduced coverage is authorized")
 
 
 if __name__ == "__main__":

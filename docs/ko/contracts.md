@@ -131,6 +131,7 @@ DG1-C07은 관리 실행의 명령행 owner인 `devguard`를 추가한다. 명�
 - **종료값.** CLI는 workload의 종료값으로 끝나거나 같은 signal로 끝난다. Signal로 스스로 끝나기 전에 자신의 core file 상한을 0으로 설정하므로 core dump는 workload만 남길 수 있다. 아무것도 시작하지 않았으면 `env`·`timeout`처럼 125로 끝나며, helper의 126·127은 그대로 전달한다.
 - **Receipt.** `--receipt PATH`는 admission 전에 새 private 파일을 만들고 `devguard-exec-receipt/v1`을 기록한다. 결과(`completed`·`exec_failed`·`not_started`·`uncertain`), 명령, adapter 보고, 예산과 그 출처, 프로젝트, authority, 예약과 lease ID를 포함한 모든 attempt, 비교에 쓴 작업 용량을 포함한 대기, helper phase, 종료값, reap 전후의 관측, 받은 signal·전달한 signal·무시 상태로 상속한 signal을 담는다. Adapter가 설정하거나 제거한 변수는 이름만 기록하고 상속된 값은 기록하지 않으며, permit과 호출자 자격은 담지 않는다.
 - **Doctor.** `devguard doctor`는 경로, 설정, helper, 서비스의 정체성·capability·상태를 보고하고, 선택적으로 등록과 프로젝트도 확인한다. 관리 실행을 사용할 수 있는지와 관리되지 않는 대체 실행이 없다는 점을 밝힌다. `--require admission,registration,macos-cooperative`를 주면 요구 사항이 하나라도 충족되지 않을 때 1로 끝난다.
+- **터미널 색.** 표준 오류가 터미널이고 `NO_COLOR`가 설정되지 않았으며 `TERM`이 `dumb`가 아니면, CLI는 자기 거절과 실패를 굵은 빨간색으로, 알 수 없는 결과(명령이 시작했는지)를 노란색으로, 쓸 수 없는 receipt나 보고서 같은 자기 중단이나 실패를 자홍색으로 쓴다. `devguardd`도 오류를 같은 방식으로 쓰며, 표준 출력이 그런 터미널이면 `init`의 성공을 초록색으로 쓴다. JSON·보고서·receipt·사용법 텍스트와 파일이나 pipe에 쓰는 모든 줄은 바뀌지 않으며, workload 자신의 출력은 건드리지 않는다.
 - **중첩 실행.** Workload가 `devguard exec`를 다시 실행하면 자체 예약과 scope를 가진 별도의 관리 실행이 시작된다. 이 실행은 바깥 scope에 과금되지 않고 바깥 scope에 포함되지도 않는다. 중첩 작업을 부모 예산 안으로 제한하려면 명시적인 부모 lease(`--lease`, C10)가 필요하다.
 - **Adapter.** C07은 admission과 분리된 adapter 인터페이스를 정의한다. Adapter는 실행될 예약에 맞춰 인자와 환경을 바꿀 수 있으며 무엇을 했는지 보고한다. Generic adapter는 아무것도 바꾸지 않는다. Cargo adapter는 아래에서 설명한다.
 
@@ -153,11 +154,21 @@ DG1-C09는 패키지로 만든 release를 현재 사용자의 LaunchAgent로 설
 - **패키지.** `scripts/package.py`는 깨끗한 tree와 Rust 1.95.0을 요구한다. 한 번의 release build로 `devguardd`·`devguard`·`devguard-launch`를 만들며, C10 전까지 이 build는 bootstrap으로 표시한다. 그리고 `devguard-release-manifest/v1`에 다음을 기록한다.
   - release id: `<version>-<commit7>-<artifact digest>`;
   - source commit·tree·qualification tree digest;
-  - build 명령과 toolchain;
+  - build 명령과 toolchain, 고정한 macOS deployment target, build 경로를 다시 매핑한 이름, linker flag, 호스트의 C compiler와 macOS에서는 Xcode·SDK·linker 버전;
   - 각 바이너리의 SHA-256과 크기;
   - build에 컴파일된 호환성. `devguardd version --json`이 이를 출력하며, 패키지 버전·wire 버전·protocol·capability·journal schema·설정 schema를 담는다.
 
   패키지는 기능 artifact(`scope: functional`, `slo_qualified: false`)이며, release를 qualification하는 것은 C12뿐이다.
+
+  Build는 checkout·Cargo home·toolchain을 상속된 Rust flag 대신 `--remap-path-prefix`로 `/devguard`·`/cargo`·`/toolchain`으로 다시 매핑하고, checkout의 `target`에 build하며, `MACOSX_DEPLOYMENT_TARGET`을 native suite를 실행하는 CI runner의 가장 오래된 macOS인 14.0으로 고정한다. macOS에서는 toolchain library를 경로로 가리키는 linker의 debug map도 link에서 뺀다(`-Wl,-S`). 이 map은 release build가 어차피 나중에 제거한다. 따라서 한 commit의 두 checkout을 같은 toolchain과 SDK로 build하면 같은 바이너리와 같은 release id가 나온다. Build 경로나 builder의 home이 남은 바이너리나 manifest는 아무것도 쓰기 전에 거절한다.
+- **게시된 release.** `.github/workflows/release.yml`은 패키지를 GitHub release로 게시한다.
+  - `main`에서의 수동 실행만 게시하며, 그 commit에서 GitHub Actions의 가장 최근 "Required checks" 실행이 통과한 뒤에만 게시한다.
+  - Job 하나가 macOS arm64 runner(`macos-14`)에서 Rust 1.95.0으로 깨끗한 checkout의 패키지를 build한다. `scripts/release.py archive`는 이를 세 asset, 즉 `devguard-<release-id>-<target>.tar.gz`·`MANIFEST.json`·`SHA256SUMS`로 만든다. Archive에는 `<release-id>/MANIFEST.json`과 세 바이너리가 든 `<release-id>/bin/`만 있다. 항목은 정렬되고, 소유자는 0:0, mode는 0755와 0644, 시각은 0이며, gzip은 이름과 시각을 기록하지 않으므로 archive의 byte는 패키지에만 의존한다.
+  - 별도 job이 archive와 manifest의 build provenance를 증명(attest)한다(`actions/attest-build-provenance`). Build job은 읽기 권한만 가지며 서명할 수 없다.
+  - `publish`는 그 id의 release나 tag가 있으면 거절한다. Asset을 release id를 tag와 제목으로 쓰는 draft pre-release에 올리고, 다시 내려받아 각각을 build와 비교하며, 하나라도 다르면 draft를 지운다. 그런 뒤에만 draft를 게시해 commit에 tag를 만들고, 그 tag가 그 commit을 가리키는지 확인한다.
+  - 패키지를 만드는 입력을 바꾸는 pull request는 Cargo home과 toolchain home을 따로 둔 두 checkout 경로에서 macOS로 패키지를 두 번 build한다. Release id가 다르면 실패하며, 아무것도 게시하지 않는다.
+
+  게시된 release는 다른 패키지처럼 설치하며, 새 호스트에서는 그 release 자신의 `devguardd init`이 authority 상태를 만들 수 있다. Installer 검증과 release id 형식은 바뀌지 않으며, 게시된 release는 C12가 어느 호스트에서 qualification할 때까지 기능 artifact이다.
 - **검증.**
   - 패키지나 설치된 release에는 정확히 `MANIFEST.json`과 세 바이너리가 든 `bin/`만 있어야 한다. 바이너리는 symlink가 아닌 실행 가능한 일반 파일이어야 하며, 크기와 hash가 manifest와 일치해야 한다.
   - Manifest의 호환성은 installer 자신의 build와 같아야 한다.

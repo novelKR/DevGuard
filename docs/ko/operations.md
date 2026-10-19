@@ -51,6 +51,8 @@ devguardd status
 
 `package.py`는 깨끗한 tree에서 release 패키지를 만든다. `install`은 그 패키지에서 실행해야 하며, authority가 제공 중이거나 agent가 있거나 기존 authority 상태가 없으면 거절한다. Release를 변경 불가능한 `releases/<release-id>`로 복사하고, 현재 사용자 LaunchAgent `io.github.novelkr.devguard`로 시작한다. 이 agent는 `releases/<release-id>/bin/devguardd serve`를 실행한다. launchd가 정확히 그 바이너리를 실행한다고 검증한 뒤에만 release를 선택한다. `devguardd status`는 설치된 서비스를 보고하며, 검증된 current release를 실행하지 않으면 1로 끝난다. Release 교체는 upgrade(C11, 아래)이다. [계약 문서](contracts.md#설치와-현재-사용자-서비스)를 참조한다.
 
+`package.py`는 바이너리 안의 checkout·Cargo home·toolchain 경로를 다시 매핑하고, macOS deployment target을 14.0으로 고정하며, build 경로나 builder의 home이 남은 build를 거절한다. 따라서 바이너리에는 사용자 이름이 들어가지 않으며, 한 commit의 두 checkout을 같은 toolchain과 SDK로 build하면 같은 release id가 나온다. Release workflow가 게시한 release는 대신 내려받아 설치한다. [게시된 release 설치](#게시된-release-설치)를 참조한다.
+
 후보 build는 실행 중인 서비스의 부모 lease 안에서 검증한다.
 
 ```sh
@@ -91,6 +93,58 @@ python3 scripts/measure.py promote --summary <증거 디렉터리>/summary.json
 `devguard exec [--project ID] [--adapter auto|generic|cargo|cargo-pipeline] [--wait DURATION] [--cpu MILLICPU] [--memory SIZE] [--tasks N] [--receipt PATH] [--lease CONSUMER/GENERATION/ATTEMPT --lease-token-fd N] -- PROGRAM [ARGS...]`는 명령을 admission하고 `devguard-launch`로 시작한 뒤 끝날 때까지 기다린다. 프로그램과 인자는 `--` 뒤에 두며 shell은 사용하지 않는다. 명령의 종료값으로 끝나거나 그 signal로 끝나며, 아무것도 시작하지 않았으면 125로 끝난다. `--wait`가 없으면 거절 즉시 끝나고, `--wait`가 있으면 용량·압력 거절을 기한까지 다시 시도하며, 호스트의 작업 용량보다 큰 요청은 즉시 거절한다. `--receipt`는 private JSON receipt를 기록한다. `--lease`는 명령을 그 부모 lease의 자식으로 만들며, descriptor N에서 읽은 token으로 lease의 남은 예산에 대해 admission한다. `devguard doctor`는 JSON 진단을 출력하며, `--require admission,registration,macos-cooperative`를 주면 요구 사항이 하나라도 충족되지 않을 때 실패한다. [계약 문서](contracts.md#명령행-owner)를 참조한다.
 
 `--adapter cargo`는 `cargo`의 compiler job을 예약에 맞추고, `--adapter cargo-pipeline`은 검증 script 같은 프로그램이 실행하는 Cargo들이 jobserver 하나를 공유하게 한다. 기본값인 `auto`는 compile하는 `cargo` 명령에 Cargo adapter를 고른다. Cargo job 하나(CPU 1개와 2 GiB)도 수용할 수 없는 예약은 거절한다. [계약 문서](contracts.md#cargo-adapter)를 참조한다.
+
+터미널에서 `devguardd`와 `devguard`는 자기 거절과 실패를 굵은 빨간색으로, 알 수 없는 결과를 노란색으로, 도구 자신의 중단이나 실패를 자홍색으로, `devguardd init`의 성공을 초록색으로 표시한다. Script(`validate.py`·`qualify.py`·`measure.py`·`package.py`·`release.py`·`check_docs.py`와 CI 도우미)도 사람이 읽는 줄의 상태 단어를 같은 방식으로 색칠하며, 세부 사항은 흐리게, 제목은 굵게 표시한다. JSON·보고서·receipt·증거·manifest·서비스 log는 색칠하지 않으며, 파일이나 pipe에 쓰는 출력도 색칠하지 않는다. 색은 터미널이고 `NO_COLOR`가 설정되지 않았으며 `TERM`이 `dumb`가 아닐 때만 쓴다. 각 script는 `--color auto|always|never`도 받는다. 기본값은 `auto`이며, `never`는 색 없이 정확히 같은 텍스트를 쓴다.
+
+## 게시된 release 설치
+
+Release workflow(`.github/workflows/release.yml`)는 macOS 14 이상의 Apple silicon Mac이 설치할 수 있는 패키지를 게시한다. `main`에서 수동으로 실행하면, 그 commit에서 "Required checks"가 통과한 뒤에만 macOS arm64 runner에서 Rust 1.95.0으로 깨끗한 checkout을 한 번 build한다. Archive와 manifest의 build provenance를 증명(attest)하고, release id를 tag와 제목으로 쓰는 GitHub pre-release에 다음 세 asset을 게시한다.
+
+- `devguard-<release-id>-aarch64-apple-darwin.tar.gz`: 패키지 디렉터리 `<release-id>/`로 풀린다.
+- `MANIFEST.json`: 패키지의 manifest.
+- `SHA256SUMS`: 나머지 두 파일의 SHA-256.
+
+게시된 release도 다른 패키지처럼 기능 artifact(`slo_qualified: false`)이며, qualification된 release는 마일스톤 ledger가 지정한다. 이미 있는 release나 tag는 교체하지 않는다. 패키지를 만드는 입력을 바꾸는 pull request는 두 checkout 경로에서 패키지를 두 번 build하고, release id가 다르면 실패한다. [계약 문서](contracts.md#설치와-현재-사용자-서비스)를 참조한다.
+
+Release는 브라우저가 아니라 `gh`나 `curl`로 내려받는다. 바이너리에는 linker의 ad-hoc 서명만 있고 Developer ID 서명이나 notarization이 없으므로, 브라우저가 내려받은 파일을 quarantine으로 표시하면 macOS가 실행을 거절할 수 있다. Provenance 검증에는 GitHub에 로그인한 `gh`가 필요하다.
+
+```sh
+RELEASE=<release-id>
+ARCHIVE="devguard-$RELEASE-aarch64-apple-darwin.tar.gz"
+mkdir "$RELEASE-download" && cd "$RELEASE-download"
+gh release download "$RELEASE" --repo novelKR/DevGuard
+# gh 없이는:
+for asset in "$ARCHIVE" MANIFEST.json SHA256SUMS; do
+  curl -fsSLO "https://github.com/novelKR/DevGuard/releases/download/$RELEASE/$asset"
+done
+shasum -a 256 -c SHA256SUMS
+for asset in "$ARCHIVE" MANIFEST.json; do
+  gh attestation verify "$asset" --repo novelKR/DevGuard \
+    --signer-workflow novelKR/DevGuard/.github/workflows/release.yml \
+    --source-ref refs/heads/main --deny-self-hosted-runners
+done
+tar -xzf "$ARCHIVE"
+cmp MANIFEST.json "$RELEASE/MANIFEST.json"
+```
+
+`shasum`은 두 파일 모두 `OK`를 보고해야 하고, `gh attestation verify`는 두 파일 모두 이 저장소의 release workflow가 `main`에서 build한 것으로 검증해야 한다. Archive는 정확히 `MANIFEST.json`과 `bin/`의 세 바이너리를 담은 `<release-id>/`로 풀린다. 이는 `install`과 `stage`가 모든 hash를 스스로 검사한 뒤 받아들이는 패키지이다.
+
+DevGuard가 없는 호스트에서는 패키지 자신의 `devguardd`가 authority 상태를 만든 뒤 release를 설치한다. Source checkout은 필요 없다.
+
+```sh
+"$RELEASE/bin/devguardd" init
+"$RELEASE/bin/devguardd" install --package "$PWD/$RELEASE"
+"$RELEASE/bin/devguardd" status
+```
+
+서비스가 이전 release를 실행 중인 호스트에서는 패키지를 stage한 뒤 그 release로 upgrade한다(C11, 위).
+
+```sh
+"$RELEASE/bin/devguardd" stage --package "$PWD/$RELEASE"
+"$HOME/Library/Application Support/DevGuard/releases/$RELEASE/bin/devguard" upgrade --release "$RELEASE"
+```
+
+`install`과 `stage`는 release를 `releases/<release-id>`로 복사하므로, 내려받은 디렉터리는 나중에 지워도 된다.
 
 ## 정상 소유권과 경로
 

@@ -119,15 +119,15 @@
       "id": "operations",
       "source": "docs/operations.md",
       "translation": "docs/ko/operations.md",
-      "reviewed_source_sha256": "0f1c210a0993495fdfb36da56fd445e58943e4887e129fcc8add8d0f6c74f0e7",
-      "reviewed_translation_sha256": "7ea67931f66a81b514176ea07a2672aaaedfb883fa9f53c63df85667a55e9190"
+      "reviewed_source_sha256": "847f139d350a3fc20940e5d846f16fe456fc4a3779f85ceb668f9dc3494e80fe",
+      "reviewed_translation_sha256": "24c6ada50913a42be48f461e49f2dc8a386e966e48e187f4452a341ea8e892f6"
     },
     {
       "id": "contracts",
       "source": "docs/contracts.md",
       "translation": "docs/ko/contracts.md",
-      "reviewed_source_sha256": "c8cc8539952d4a2f72d563c5a74bee0cff77df979a9be30ace035b175897acc6",
-      "reviewed_translation_sha256": "797f61a7b2a2edd34d6f2f43dad2a1f59bd6c04f983a0356befa1081c974bfd3"
+      "reviewed_source_sha256": "f9d9207496610bdf9ec4ea0c05be15182de3babd7a689e90dd3d5b4927d4553a",
+      "reviewed_translation_sha256": "270d006b79121263fb39e0edf3f931dcea4a63d84b5b3142bd750c62908748bd"
     }
   ]
 }

@@ -672,5 +672,24 @@ class Promotion(unittest.TestCase):
                             measure.policy_identity({**policy, "host_toml_sha256": "b"}))
 
 
+class ConsoleLines(unittest.TestCase):
+    def choose(self, choice):
+        previous = measure.color._choice
+        measure.color.choose(choice)
+        self.addCleanup(measure.color.choose, previous)
+
+    def test_a_repetition_line_without_color_is_the_line_of_before(self):
+        self.choose("never")
+        self.assertEqual(measure.repetition_line("cold-1", "inconclusive", ["too few status samples"]),
+                         "measure: cold-1 inconclusive ['too few status samples']")
+
+    def test_a_repetition_line_with_color_colors_the_verdict_and_dims_the_reasons(self):
+        self.choose("always")
+        self.assertEqual(measure.repetition_line("warm-2", "pass", []),
+                         "measure: warm-2 \033[32mpass\033[0m \033[2m[]\033[0m")
+        self.assertEqual(measure.repetition_line("warm-3", "fail", ["late"]),
+                         "measure: warm-3 \033[1;31mfail\033[0m \033[2m['late']\033[0m")
+
+
 if __name__ == "__main__":
     unittest.main()

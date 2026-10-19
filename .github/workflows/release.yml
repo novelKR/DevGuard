@@ -1,0 +1,171 @@
+name: Release package
+
+# A manual run on main publishes the release package of its commit, once "Required checks" has
+# passed on that commit: one build on macOS arm64 with the pinned toolchain from a clean checkout,
+# build provenance for the archive and the manifest, and a GitHub Release and tag named by the
+# release id that carry the archive, MANIFEST.json and SHA256SUMS. An existing release or tag is
+# never replaced. Each job holds only the permissions it needs, and the build can write nothing.
+# A pull request that changes what a package is built from builds it twice instead, from two
+# checkout paths with separate Cargo and toolchain homes, fails when the release ids differ, and
+# publishes nothing. Re-run a failed run with all its jobs: each attempt builds its own assets.
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/release.yml'
+      - '.cargo/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - 'crates/**'
+      - '!crates/qualify/**'
+      - 'scripts/devguard_color.py'
+      - 'scripts/package.py'
+      - 'scripts/release.py'
+      - 'scripts/validate.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # A newer push to a pull request replaces its running dry run; manual runs wait for each other,
+  # so that two never publish at once.
+  group: release-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || 'publish' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  reproducible:
+    name: Reproducible package
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: macos-14
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          path: first/DevGuard
+          persist-credentials: false
+      - uses: actions/checkout@v5
+        with:
+          path: second/elsewhere/DevGuard
+          persist-credentials: false
+      - name: Select the release toolchain
+        run: rustup toolchain install 1.95.0 --profile minimal --component clippy --component rustfmt
+      - name: Build the first package
+        working-directory: first/DevGuard
+        run: python3 -B scripts/package.py --output target/release-package
+      - name: Archive the first package
+        working-directory: first/DevGuard
+        run: python3 -B scripts/release.py archive --package target/release-package --dist target/release-dist
+      - name: Select the release toolchain in a second home
+        # rustup itself stays in the first home, so the second one cannot update it.
+        env:
+          CARGO_HOME: ${{ runner.temp }}/second-cargo
+          RUSTUP_HOME: ${{ runner.temp }}/second-rustup
+        run: rustup toolchain install 1.95.0 --profile minimal --component clippy --component rustfmt --no-self-update
+      - name: Build the second package
+        working-directory: second/elsewhere/DevGuard
+        env:
+          CARGO_HOME: ${{ runner.temp }}/second-cargo
+          RUSTUP_HOME: ${{ runner.temp }}/second-rustup
+        run: python3 -B scripts/package.py --output target/release-package
+      - name: Archive the second package
+        working-directory: second/elsewhere/DevGuard
+        run: python3 -B scripts/release.py archive --package target/release-package --dist target/release-dist
+      - name: Require one release id
+        run: python3 -B first/DevGuard/scripts/release.py compare first/DevGuard/target/release-dist second/elsewhere/DevGuard/target/release-dist
+      - name: Preserve both builds for comparison
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: release-reproducible-${{ github.run_attempt }}
+          path: |
+            first/DevGuard/target/release-package/
+            second/elsewhere/DevGuard/target/release-package/
+          if-no-files-found: warn
+
+  required:
+    name: Verify the required checks
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      checks: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: Require that Required checks passed on this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 -B scripts/release.py required
+
+  build:
+    name: Build the package
+    needs: required
+    runs-on: macos-14
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: Select the release toolchain
+        run: rustup toolchain install 1.95.0 --profile minimal --component clippy --component rustfmt
+      - name: Build the package
+        run: python3 -B scripts/package.py --output target/release-package
+      - name: Archive the package
+        run: python3 -B scripts/release.py archive --package target/release-package --dist target/release-dist
+      - name: Hand the assets to attestation and publication
+        uses: actions/upload-artifact@v6
+        with:
+          name: release-assets-${{ github.run_attempt }}
+          path: target/release-dist/
+          if-no-files-found: error
+
+  attest:
+    name: Attest the build provenance
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    # Only this job can sign: the build, which runs the dependencies' build scripts, cannot.
+    permissions:
+      attestations: write
+      contents: read
+      id-token: write
+    steps:
+      - name: Download the assets
+        uses: actions/download-artifact@v7
+        with:
+          name: release-assets-${{ github.run_attempt }}
+          path: target/release-dist
+      - name: Attest the archive and the manifest
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: |
+            target/release-dist/*.tar.gz
+            target/release-dist/MANIFEST.json
+
+  publish:
+    name: Publish the release
+    needs: [required, build, attest]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: Download the assets
+        uses: actions/download-artifact@v7
+        with:
+          name: release-assets-${{ github.run_attempt }}
+          path: target/release-dist
+      - name: Publish the release named by its release id
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 -B scripts/release.py publish --dist target/release-dist

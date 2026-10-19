@@ -20,6 +20,7 @@ import subprocess
 import sys
 
 import ci_plan
+import devguard_color as color
 import qualify
 import validate
 
@@ -178,6 +179,10 @@ def bind_contracts(env, platform, root=ROOT):
     return 0
 
 
+def suite_line(suite, status, problems):
+    return f"{suite}: {color.status(status)}" + "".join("\n  - " + color.paint(problem, "dim") for problem in problems)
+
+
 def run_contracts(env, platform, root=ROOT, runner=subprocess.run):
     plan = load_plan(env, root)
     policy, _ = ci_plan.read_policy(root)
@@ -206,7 +211,7 @@ def run_contracts(env, platform, root=ROOT, runner=subprocess.run):
             status, problems = "failed", problems + [f"exit code {completed.returncode}"]
         results.append({"suite": suite, "command": command, "exit_code": completed.returncode,
                         "status": status, "problems": problems})
-        print(f"{suite}: {status}" + "".join("\n  - " + problem for problem in problems), flush=True)
+        print(suite_line(suite, status, problems), flush=True)
     failed = any(result["status"] == "failed" for result in results)
     write_json(out / "leg.json", {"schema": LEG_SCHEMA, "job": "contracts", "platform": platform,
                                   "suites": results, "status": "failed" if failed else "passed"})
@@ -255,7 +260,9 @@ def main(argv=None):
     parser.add_argument("command", choices=["repository", "bind", "contracts", "summary"])
     parser.add_argument("job", nargs="?", choices=["contracts"])
     parser.add_argument("--os", dest="platform")
+    color.add_option(parser)
     args = parser.parse_args(argv)
+    color.choose(args.color)
     if args.command in ("bind", "contracts", "summary") and not args.platform:
         parser.error(args.command + " needs --os")
     if args.command == "bind" and args.job != "contracts":
@@ -270,9 +277,9 @@ def main(argv=None):
         return summarize(os.environ, args.platform)
     except (RunError, OSError, ValueError, KeyError, TypeError, subprocess.CalledProcessError) as error:
         if args.command == "summary":
-            print(f"no summary: {error}")
+            print(color.paint(f"no summary: {error}", "warn"))
             return 0
-        print(f"CI job refused: {error}", file=sys.stderr)
+        print(color.paint(f"CI job refused: {error}", "fail", sys.stderr), file=sys.stderr)
         return 1
 
 

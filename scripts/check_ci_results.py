@@ -18,6 +18,7 @@ import subprocess
 
 import ci_plan
 import ci_run
+import devguard_color as color
 import validate
 
 ROOT = ci_plan.ROOT
@@ -170,10 +171,18 @@ def problems(results, plan_text, env, event, artifacts, root=ROOT):
     return found, table
 
 
+def verdict_lines(found):
+    """The gate's verdict and each problem, for the job log."""
+    return "\n".join(["Required checks: " + color.status("failed" if found else "passed")]
+                     + ["- " + color.paint(line, "dim") for line in found])
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--artifacts", type=Path, required=True, help="the directory of this run's downloaded artifacts")
+    color.add_option(parser)
     args = parser.parse_args(argv)
+    color.choose(args.color)
     env = os.environ
     try:
         event = json.loads(Path(env["GITHUB_EVENT_PATH"]).read_text())
@@ -181,7 +190,7 @@ def main(argv=None):
     except (OSError, ValueError, KeyError, TypeError, AttributeError, ci_run.RunError) as error:
         found, table = [f"cannot evaluate the CI results: {error}"], []
     verdict = "Required checks: " + ("failed" if found else "passed")
-    print("\n".join([verdict] + ["- " + line for line in found]))
+    print(verdict_lines(found))
     if env.get("GITHUB_STEP_SUMMARY"):
         rows = ["| Check | Result |", "| --- | --- |"] + [f"| {check} | {result} |" for check, result in table]
         with open(env["GITHUB_STEP_SUMMARY"], "a") as handle:
