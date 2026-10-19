@@ -5,7 +5,7 @@
 Reference date: 2026-09-22; revised 2026-09-27 by design revision 1 and 2026-09-30 by design revision 2. Repository: `/Volumes/DevData/Projects/IdeaProjects/DevGuard`.
 English is the authoritative editorial source. [Reviewed Korean translations](../ko/planning/README.md) are maintained through the [translation registry](../translations.json).
 
-The contract baseline is DG-0: accounting, persistence and fake-backend tests. DG-1 is complete: its six implementation PRs delivered C01–C12, and its macOS SLO is qualified for release `0.1.0-6e7e065-94d85365` on the measured host and policy. CodeSpace's integration (CS-RG) is qualified on macOS for one exact combination; Linux enforcement remains unqualified. The [ledger](../../milestones.json) owns milestone IDs, dependencies and status. Individual milestone documents own work IDs, commit boundaries, tests, evidence and rollback.
+The contract baseline is DG-0: accounting, persistence and fake-backend tests. DG-1 is complete: its six implementation PRs delivered C01–C12, and its macOS SLO is qualified for release `0.1.0-6e7e065-94d85365` on the measured host and policy. CodeSpace's integration (CS-RG) and its Gateway recovery with an independent Runner (P1-RECOVERY) are each qualified on macOS for one exact combination; Linux enforcement remains unqualified. The [ledger](../../milestones.json) owns milestone IDs, dependencies and status. Individual milestone documents own work IDs, commit boundaries, tests, evidence and rollback.
 
 ## Reading order and ownership
 
@@ -22,7 +22,7 @@ The contract baseline is DG-0: accounting, persistence and fake-backend tests. D
 
 ## Dependencies
 
-> **Status:** CS-RG, including design revision 1's execution-ownership choices, is suspended as an implementation directive while the CS-RG integration-boundary revalidation is pending; no CS-RG unit may start. See the notice in the CS-RG plan. *Current state, 2026-10-15:* the owner directed CS-RG implementation as units U1–U6 in CodeSpace on 2026-10-02, outside this suspension; U1 to U6 are merged and verified, and CS-RG is qualified on macOS for one exact combination. This plan's units remain suspended and not started. P1-RECOVERY started on the owner's direction of 2026-10-14, as re-baselined in its plan; P1R-C01 to P1R-C05 are merged and verified, and P1R-C06 is active.
+> **Status:** CS-RG, including design revision 1's execution-ownership choices, is suspended as an implementation directive while the CS-RG integration-boundary revalidation is pending; no CS-RG unit may start. See the notice in the CS-RG plan. *Current state, 2026-10-19:* the owner directed CS-RG implementation as units U1–U6 in CodeSpace on 2026-10-02, outside this suspension; U1 to U6 are merged and verified, and CS-RG is qualified on macOS for one exact combination. This plan's units remain suspended and not started. P1-RECOVERY started on the owner's direction of 2026-10-14, as re-baselined in its plan; P1R-C01 to P1R-C06 are merged and verified, and P1-RECOVERY is qualified on macOS for one exact combination.
 
 ```mermaid
 flowchart LR
@@ -44,7 +44,7 @@ Design revision 1 (2026-09-27) makes CodeSpace's execution state and ownership c
 | [DG-0](milestones/DG-0.md) | DevGuard | One actual initial commit, documented retrospectively | No invented historical PRs | Implemented contract/fake scope |
 | [DG-1](milestones/DG-1.md) | DevGuard | 12 | 6 | Implemented (C01–C12); macOS SLO qualified for release `0.1.0-6e7e065-94d85365` |
 | [CS-RG](milestones/CS-RG.md) | CodeSpace | 10 | 6 | Not started |
-| [P1-RECOVERY](milestones/P1-RECOVERY.md) | CodeSpace | 6 | 3 | Not started |
+| [P1-RECOVERY](milestones/P1-RECOVERY.md) | CodeSpace | 6 | 3 | Implemented (C01–C06, as re-baselined on 2026-10-14); qualified on macOS for one exact combination |
 | [DG-LINUX](milestones/DG-LINUX.md) | DevGuard and CodeSpace | 6 | 3 | Not started; required overall |
 | [DG-CACHE](milestones/DG-CACHE.md) | DevGuard | 6 | 3 | Not started; not a P1 prerequisite |
 | [DG-ADAPTERS](milestones/DG-ADAPTERS.md) | DevGuard | 8 | 4 | Not started; not a P1 prerequisite |

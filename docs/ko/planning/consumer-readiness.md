@@ -2,7 +2,7 @@
 
 > **상태: 구현 지시로서 효력 중지.** R3 CodeSpace runtime 항목과 CS-RG 단위를 인용한 gate는 효력이 중지된 CS-RG 작업에 의존하므로 구현 목표로 쓰지 않습니다. 나머지는 영향이 없습니다. CodeSpace 통합 계획에 대해 소유자가 지시한 검토인 CS-RG 통합 경계 재검증(작업 단위가 아닙니다)이 끝날 때까지 적용됩니다. 대체 구조는 승인되지 않았으며, 소유자가 재검증 결과를 검토한 뒤 결정합니다. 이 표기는 지시의 효력만 중지하며 어떤 안전 요구도 완화하지 않습니다. 아래 내용은 이력 추적을 위해 바꾸지 않고 남깁니다.
 
-이 문서는 특정 언어나 제품에 독립적인 도입 gate다. DG-1은 측정한 호스트에서 release `0.1.0-6e7e065-94d85365`로 R2와 RS를 허용한다. 이 계획의 CSRG-C 단위 대신 CodeSpace의 소유자 지시 단위 U1–U6으로 2026-10-14에 qualification을 마친 CS-RG는 그 호스트에서 qualification한 조합과 모드에 R3을 허용한다([CodeSpace qualification 보고서](https://github.com/novelKR/CodeSpace/blob/241cf6c4ee95111a70f581319ac04ee16beaf94e/docs/cs-rg-qualification-report.md)). 실제 코드 경로를 대조한 소비자는 CodeSpace이며 다른 저장소의 구현 적합성까지 검증한 문서가 아니다. 구현 상태의 원본은 [milestones.json](../../../milestones.json), 선택 근거는 [decisions.md](decisions.md)다.
+이 문서는 특정 언어나 제품에 독립적인 도입 gate다. DG-1은 측정한 호스트에서 release `0.1.0-6e7e065-94d85365`로 R2와 RS를 허용한다. 이 계획의 CSRG-C 단위 대신 CodeSpace의 소유자 지시 단위 U1–U6으로 2026-10-14에 qualification을 마친 CS-RG는 그 호스트에서 qualification한 조합과 모드에 R3을 허용한다([CodeSpace qualification 보고서](https://github.com/novelKR/CodeSpace/blob/241cf6c4ee95111a70f581319ac04ee16beaf94e/docs/cs-rg-qualification-report.md)). P1R-C06으로 2026-10-19에 qualification을 마친 P1-RECOVERY는 opt-in인 독립 Runner 모드(`uds`에 `--runner-lifecycle independent`)를, 그 호스트에서 qualification한 조합에 대해 R3의 qualification한 모드에 더한다([CodeSpace recovery qualification 보고서](https://github.com/novelKR/CodeSpace/blob/d0f2e49c1c4d14652172a87f95be4d67d25d0cf6/docs/recovery-qualification-report.md)). 실제 코드 경로를 대조한 소비자는 CodeSpace이며 다른 저장소의 구현 적합성까지 검증한 문서가 아니다. 구현 상태의 원본은 [milestones.json](../../../milestones.json), 선택 근거는 [decisions.md](decisions.md)다.
 
 ## 도입 수준
 

@@ -15,7 +15,7 @@
 | V-CS-DOC | CodeSpace 한·영 registry/site | paired hash·기존 docs tests·고정 환경 build·integrity·화면 검토 | 기존 명령 제공 |
 | V-CS-UPSTREAM | CodeSpace 기존 Codex qualification | pin/policy/format/dependency/adapter/PTY/filesystem/platform gates | 기존 제공, 실제 platform별 수행 |
 | V-CS-RG | CodeSpace 결합 | CSRG-C00 실행 경계 적합성, 한 프로세스 안의 혼합 실행을 포함한 C07 모드 동등성, C09 backend 결정, C08 승인·replay·관제 포화 SLO | 대상 호스트에서 2026-10-14에 이 계획의 단위 대신 CodeSpace의 소유자 지시 단위 CSRG-U6으로 정확히 한 조합에 대해 qualified([qualification 보고서](https://github.com/novelKR/CodeSpace/blob/241cf6c4ee95111a70f581319ac04ee16beaf94e/docs/cs-rg-qualification-report.md)): 두 runner 모드와 pipe·PTY의 기능 행렬, 장애, authority 장애, 관제 경로 SLO, 한 gateway 안의 혼합 실행, 기존 `off` 경로 결정 |
-| V-P1 | 독립 Runner+Gateway 재시작 | P1R-C06의 동일 실행·fence·timeout·출력/unknown | 미구현 |
+| V-P1 | 독립 Runner+Gateway 재시작 | P1R-C06의 동일 실행·fence·timeout·출력/unknown | 대상 호스트에서 2026-10-19에 P1R-C06으로 정확히 한 조합에 대해 qualified, 재시작 측정은 2026-10-18([qualification 보고서](https://github.com/novelKR/CodeSpace/blob/d0f2e49c1c4d14652172a87f95be4d67d25d0cf6/docs/recovery-qualification-report.md)): `off`와 `required`의 기능 suite 다섯, idle과 부하 구간의 Gateway 반복 재시작(각 3회), pipe·PTY, 한 gateway 안의 `off`와 `required` workspace, 같은 후보에서 다시 돌린 CS-RG suite. Runner 자체가 재시작한 뒤 프로세스를 되살리는 일은 계속 미지원 |
 | V-LINUX | 실제 Linux scope와 제품 조합 | DGL-C05/C06 controller·ancestor·권한·자손·SLO | 미구현; fake cgroup과 분리 |
 | V-CACHE / V-ADAPTER | cache/tool/executor | DGC-C06, DGA-C02/C04/C06/C08의 해당 조합 | 미구현 |
 
